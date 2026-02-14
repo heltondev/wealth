@@ -43,6 +43,7 @@ export interface Asset {
   country: 'BR' | 'US' | 'CA';
   currency: string;
   status: string;
+  quantity?: number;
   source?: string | null;
   createdAt: string;
 }

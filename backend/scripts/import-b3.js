@@ -34,15 +34,23 @@ const dynamo = DynamoDBDocumentClient.from(client);
 const generateId = () =>
 	`${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
+function normalizeQuantityForKey(value) {
+	const numeric = Number(value);
+	if (!Number.isFinite(numeric)) return '0';
+	if (Number.isInteger(numeric)) return String(numeric);
+	return numeric.toFixed(8).replace(/\.?0+$/, '');
+}
+
 /**
- * Parse quantity as integer for transaction storage.
- * Throws on fractional or invalid values to keep data consistent.
+ * Parse quantity for transaction storage.
+ * Accepts numeric quantities, including fractional values found in B3 reports
+ * (e.g. Tesouro fractions and odd-lot equity events).
  */
-function parseIntegerQuantity(value, context = '') {
+function parseTransactionQuantity(value, ticker = '', context = '') {
 	if (value === undefined || value === null || value === '') return 0;
 	const numeric = Number(value);
-	if (!Number.isFinite(numeric) || !Number.isInteger(numeric)) {
-		throw new Error(`Invalid quantity "${value}"${context ? ` (${context})` : ''}: quantity must be an integer`);
+	if (!Number.isFinite(numeric)) {
+		throw new Error(`Invalid quantity "${value}"${context ? ` (${context})` : ''}: quantity must be numeric`);
 	}
 	return numeric;
 }
@@ -102,8 +110,8 @@ async function loadExistingTransactionKeys() {
 			ExclusiveStartKey: lastKey,
 		}));
 		for (const item of (result.Items || [])) {
-			const quantity = Math.trunc(Number(item.quantity) || 0);
-			keys.add(`${item.ticker || ''}|${item.date}|${item.type}|${item.amount}|${quantity}`);
+			const quantityKey = normalizeQuantityForKey(item.quantity);
+			keys.add(`${item.ticker || ''}|${item.date}|${item.type}|${item.amount}|${quantityKey}`);
 		}
 		lastKey = result.LastEvaluatedKey;
 	} while (lastKey);
@@ -184,14 +192,17 @@ async function run() {
 	// Priority: posicao-*.xlsx (most current) > last relatorio (most recent annual/monthly)
 	// Files are sorted alphabetically which means chronologically for these naming patterns.
 	let allAssets;
+	let snapshotSource = null;
 	if (posicaoSnapshots.length > 0) {
 		const latest = posicaoSnapshots[posicaoSnapshots.length - 1];
 		console.log(`\nUsing position snapshot: ${path.relative(DATA_DIR, latest.file)}`);
 		allAssets = latest.assets;
+		snapshotSource = path.relative(DATA_DIR, latest.file);
 	} else if (positionSnapshots.length > 0) {
 		const latest = positionSnapshots[positionSnapshots.length - 1];
 		console.log(`\nUsing relatorio snapshot: ${path.relative(DATA_DIR, latest.file)}`);
 		allAssets = latest.assets;
+		snapshotSource = path.relative(DATA_DIR, latest.file);
 	} else {
 		allAssets = new Map();
 	}
@@ -220,9 +231,13 @@ async function run() {
 			await dynamo.send(new UpdateCommand({
 				TableName: TABLE_NAME,
 				Key: { PK: `PORTFOLIO#${PORTFOLIO_ID}`, SK: `ASSET#${assetId}` },
-				UpdateExpression: 'SET #s = :status',
+				UpdateExpression: 'SET #s = :status, quantity = :quantity, updatedAt = :updatedAt',
 				ExpressionAttributeNames: { '#s': 'status' },
-				ExpressionAttributeValues: { ':status': 'inactive' },
+				ExpressionAttributeValues: {
+					':status': 'inactive',
+					':quantity': 0,
+					':updatedAt': now,
+				},
 			}));
 			stats.deactivated++;
 		}
@@ -230,15 +245,28 @@ async function run() {
 
 	// Write/update active assets
 	for (const [ticker, asset] of allAssets) {
+		const normalizedAssetQuantity = Number.isFinite(Number(asset.quantity))
+			? Number(asset.quantity)
+			: 0;
+
 		if (existingAssets.has(ticker)) {
-			// Update existing asset to ensure it's active with correct class
+			// Update existing asset to ensure it reflects the latest position snapshot
 			const assetId = existingAssets.get(ticker);
 			await dynamo.send(new UpdateCommand({
 				TableName: TABLE_NAME,
 				Key: { PK: `PORTFOLIO#${PORTFOLIO_ID}`, SK: `ASSET#${assetId}` },
-				UpdateExpression: 'SET #s = :status, assetClass = :cls, #n = :name',
-				ExpressionAttributeNames: { '#s': 'status', '#n': 'name' },
-				ExpressionAttributeValues: { ':status': 'active', ':cls': asset.assetClass, ':name': asset.name },
+				UpdateExpression: 'SET #s = :status, assetClass = :cls, #n = :name, country = :country, currency = :currency, quantity = :quantity, #src = :source, updatedAt = :updatedAt',
+				ExpressionAttributeNames: { '#s': 'status', '#n': 'name', '#src': 'source' },
+				ExpressionAttributeValues: {
+					':status': 'active',
+					':cls': asset.assetClass,
+					':name': asset.name,
+					':country': asset.country || 'BR',
+					':currency': asset.currency || 'BRL',
+					':quantity': normalizedAssetQuantity,
+					':source': snapshotSource || null,
+					':updatedAt': now,
+				},
 			}));
 			stats.skipped++;
 			continue;
@@ -255,6 +283,8 @@ async function run() {
 			assetClass: asset.assetClass,
 			country: asset.country || 'BR',
 			currency: asset.currency || 'BRL',
+			quantity: normalizedAssetQuantity,
+			source: snapshotSource || null,
 			status: 'active',
 			createdAt: now,
 		};
@@ -267,8 +297,8 @@ async function run() {
 	// Write transactions (with dedup)
 	for (const trans of allTransactions) {
 		const ticker = trans.ticker;
-		const quantity = parseIntegerQuantity(trans.quantity, `${ticker} ${trans.date} ${trans.type}`);
-		const dedupKey = `${ticker}|${trans.date}|${trans.type}|${trans.amount}|${quantity}`;
+		const quantity = parseTransactionQuantity(trans.quantity, ticker, `${ticker} ${trans.date} ${trans.type}`);
+		const dedupKey = `${ticker}|${trans.date}|${trans.type}|${trans.amount}|${normalizeQuantityForKey(quantity)}`;
 
 		if (existingTransKeys.has(dedupKey)) {
 			stats.skipped++;
@@ -291,6 +321,8 @@ async function run() {
 				assetClass: BaseParser.inferAssetClass(ticker),
 				country: 'BR',
 				currency: 'BRL',
+				quantity: 0,
+				source: trans.source || 'transaction-import',
 				status: isActive ? 'active' : 'inactive',
 				createdAt: now,
 			};

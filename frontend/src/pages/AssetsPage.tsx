@@ -5,7 +5,6 @@ import DataTable, { type DataTableColumn, type DataTableFilter } from '../compon
 import RecordDetailsModal, { type RecordDetailsSection } from '../components/RecordDetailsModal';
 import { api, type Asset, type Portfolio, type Transaction } from '../services/api';
 import { useToast } from '../context/ToastContext';
-import { formatNumber } from '../utils/formatters';
 import './AssetsPage.scss';
 
 type StatusFilter = 'active' | 'inactive' | 'all';
@@ -22,8 +21,9 @@ const COUNTRY_NAME_MAP: Record<string, string> = {
   US: 'United States',
   CA: 'Canada',
 };
+
 const AssetsPage = () => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { showToast } = useToast();
   const [portfolios, setPortfolios] = useState<Portfolio[]>([]);
   const [selectedPortfolio, setSelectedPortfolio] = useState<string>('');
@@ -111,6 +111,19 @@ const AssetsPage = () => {
     return String(value);
   }, [t]);
 
+  const numberLocale = i18n.language?.startsWith('pt') ? 'pt-BR' : 'en-US';
+
+  const formatAssetQuantity = useCallback((value: unknown) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return formatDetailValue(value);
+
+    const hasFraction = Math.abs(numeric % 1) > Number.EPSILON;
+    return numeric.toLocaleString(numberLocale, {
+      minimumFractionDigits: hasFraction ? 2 : 0,
+      maximumFractionDigits: hasFraction ? 4 : 0,
+    });
+  }, [formatDetailValue, numberLocale]);
+
   const assetQuantitiesById = useMemo(() => {
     const quantities: Record<string, number> = {};
 
@@ -119,7 +132,7 @@ const AssetsPage = () => {
       if (normalizedStatus !== 'confirmed') continue;
 
       const normalizedType = transaction.type?.toLowerCase() || '';
-      const normalizedQuantity = Math.trunc(Number(transaction.quantity || 0));
+      const normalizedQuantity = Number(transaction.quantity || 0);
 
       if (!Number.isFinite(normalizedQuantity)) continue;
 
@@ -151,7 +164,9 @@ const AssetsPage = () => {
   const assetRows = useMemo<AssetRow[]>(() => {
     return assets.map((asset) => ({
       ...asset,
-      quantity: assetQuantitiesById[asset.assetId] || 0,
+      quantity: Number.isFinite(Number(asset.quantity))
+        ? Number(asset.quantity)
+        : (assetQuantitiesById[asset.assetId] || 0),
       source: asset.source || assetSourcesById[asset.assetId] || null,
     }));
   }, [assetQuantitiesById, assetSourcesById, assets]);
@@ -182,7 +197,7 @@ const AssetsPage = () => {
       label: t('assets.quantity'),
       sortable: true,
       sortValue: (asset) => asset.quantity,
-      render: (asset) => formatNumber(Math.trunc(Number(asset.quantity || 0)), 0),
+      render: (asset) => formatAssetQuantity(asset.quantity),
     },
     {
       key: 'assetClass',
@@ -258,7 +273,7 @@ const AssetsPage = () => {
           {
             key: 'quantity',
             label: t('assets.modal.fields.quantity'),
-            value: formatNumber(Math.trunc(Number(selectedAsset.quantity || 0)), 0),
+            value: formatAssetQuantity(selectedAsset.quantity),
           },
           {
             key: 'assetClass',
@@ -296,7 +311,7 @@ const AssetsPage = () => {
         ],
       },
     ];
-  }, [formatCountryDetail, formatDetailValue, selectedAsset, t]);
+  }, [formatAssetQuantity, formatCountryDetail, formatDetailValue, selectedAsset, t]);
 
   return (
     <Layout>

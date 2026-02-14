@@ -124,6 +124,19 @@ test('handler POST /portfolios/{id}/assets requires ticker and name', async () =
 	assert.match(body.error, /ticker/i);
 });
 
+test('handler POST /portfolios/{id}/assets rejects negative quantity', async () => {
+	const response = await handler(
+		makeEvent('POST', '/portfolios/test-portfolio/assets', {
+			ticker: 'TEST3',
+			name: 'Test Asset',
+			quantity: -1,
+		})
+	);
+	assert.equal(response.statusCode, 400);
+	const body = JSON.parse(response.body);
+	assert.match(body.error, /asset quantity must be a non-negative number/i);
+});
+
 test('handler POST /portfolios/{id}/transactions requires assetId, type, date', async () => {
 	const response = await handler(
 		makeEvent('POST', '/portfolios/test-portfolio/transactions', {})

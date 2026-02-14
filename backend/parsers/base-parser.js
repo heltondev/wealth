@@ -63,6 +63,19 @@ class BaseParser {
 			return BaseParser.normalizeTicker(match[1]);
 		}
 
+		// Fixed-income product format:
+		// "CDB - CDB4222XOR0 - BANCO ...", "CDB-CDB4222XOR0-..."
+		const cdbMatch = str.match(/^CDB\s*-\s*([A-Z0-9]{6,})/i);
+		if (cdbMatch) {
+			return cdbMatch[1].toUpperCase();
+		}
+
+		// Treasury product format:
+		// "Tesouro IPCA+ 2029" -> "TESOURO-IPCA+-2029"
+		if (/^TESOURO\b/i.test(str)) {
+			return str.replace(/\s+/g, '-').toUpperCase();
+		}
+
 		// If it's just a ticker (e.g. "PETR4" in proventos)
 		if (/^[A-Z]{2,6}\d{1,2}[A-Z]?$/.test(str)) {
 			return BaseParser.normalizeTicker(str);

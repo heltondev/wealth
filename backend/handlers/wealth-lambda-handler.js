@@ -45,6 +45,15 @@ const parseIntegerQuantity = (value) => {
 	return numeric;
 };
 
+const parseAssetQuantity = (value) => {
+	if (value === undefined || value === null || value === '') return 0;
+	const numeric = Number(value);
+	if (!Number.isFinite(numeric) || numeric < 0) {
+		throw errorResponse(400, 'asset quantity must be a non-negative number');
+	}
+	return numeric;
+};
+
 const resolveCorsOrigin = (event) => {
 	const origin = event?.headers?.origin || event?.headers?.Origin || '';
 	if (CORS_ALLOWLIST.length === 0) return '*';
@@ -221,10 +230,11 @@ async function handleAssets(method, portfolioId, body) {
 	}
 
 	if (method === 'POST') {
-		const { ticker, name, assetClass, country, currency, status } =
+		const { ticker, name, assetClass, country, currency, status, quantity, source } =
 			parseBody(body);
 		if (!ticker || !name)
 			throw errorResponse(400, 'Ticker and name are required');
+		const normalizedAssetQuantity = parseAssetQuantity(quantity);
 
 		const assetId = generateId();
 		const now = new Date().toISOString();
@@ -239,6 +249,8 @@ async function handleAssets(method, portfolioId, body) {
 			country: country || 'BR',
 			currency: currency || 'BRL',
 			status: status || 'active',
+			quantity: normalizedAssetQuantity,
+			source: source || null,
 			createdAt: now,
 		};
 
@@ -264,7 +276,7 @@ async function handleAssetById(method, portfolioId, assetId, body) {
 	}
 
 	if (method === 'PUT') {
-		const { name, assetClass, country, currency, status } = parseBody(body);
+		const { name, assetClass, country, currency, status, quantity, source } = parseBody(body);
 		const now = new Date().toISOString();
 		const updates = ['updatedAt = :now'];
 		const names = {};
@@ -291,6 +303,14 @@ async function handleAssetById(method, portfolioId, assetId, body) {
 			updates.push('#s = :status');
 			names['#s'] = 'status';
 			values[':status'] = status;
+		}
+		if (quantity !== undefined) {
+			updates.push('quantity = :quantity');
+			values[':quantity'] = parseAssetQuantity(quantity);
+		}
+		if (source !== undefined) {
+			updates.push('source = :source');
+			values[':source'] = source || null;
 		}
 
 		const result = await dynamo.send(
@@ -503,6 +523,7 @@ async function handleImport(portfolioId, body) {
 	}
 
 	const parsed = parser.parse(workbook, { sourceFile: fileName });
+	const sourceFile = require('path').basename(fileName);
 	const now = new Date().toISOString();
 	const results = { assets: 0, transactions: 0, aliases: 0 };
 
@@ -521,6 +542,8 @@ async function handleImport(portfolioId, body) {
 				assetClass: asset.assetClass,
 				country: asset.country || 'BR',
 				currency: asset.currency || 'BRL',
+				quantity: parseAssetQuantity(asset.quantity),
+				source: sourceFile,
 				status: 'active',
 				createdAt: now,
 			},

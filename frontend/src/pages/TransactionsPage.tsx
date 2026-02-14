@@ -4,12 +4,13 @@ import Layout from '../components/Layout';
 import DataTable, { type DataTableColumn, type DataTableFilter } from '../components/DataTable';
 import RecordDetailsModal, { type RecordDetailsSection } from '../components/RecordDetailsModal';
 import { api, type Asset, type Portfolio, type Transaction } from '../services/api';
-import { formatCurrency, formatDate, formatNumber } from '../utils/formatters';
+import { formatCurrency, formatDate } from '../utils/formatters';
 import './TransactionsPage.scss';
 
 interface TransactionRow extends Transaction {
   ticker: string;
   name: string;
+  assetClass: Asset['assetClass'] | 'unknown';
 }
 
 const PAGE_SIZE_OPTIONS = [5, 10, 25, 50];
@@ -65,6 +66,7 @@ const TransactionsPage = () => {
         ...transaction,
         ticker: asset?.ticker || transaction.assetId,
         name: asset?.name || '-',
+        assetClass: asset?.assetClass || 'unknown',
       };
     });
   }, [assetsById, transactions]);
@@ -78,6 +80,18 @@ const TransactionsPage = () => {
   }, [rows]);
 
   const numberLocale = i18n.language?.startsWith('pt') ? 'pt-BR' : 'en-US';
+
+  const formatTransactionQuantity = useCallback((value: unknown) => {
+    if (value === undefined || value === null || value === '') return t('transactions.modal.noValue');
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return String(value);
+
+    const hasFraction = Math.abs(numeric % 1) > Number.EPSILON;
+    return numeric.toLocaleString(numberLocale, {
+      minimumFractionDigits: hasFraction ? 2 : 0,
+      maximumFractionDigits: hasFraction ? 4 : 0,
+    });
+  }, [numberLocale, t]);
 
   const columns: DataTableColumn<TransactionRow>[] = [
     {
@@ -127,7 +141,7 @@ const TransactionsPage = () => {
       label: t('transactions.quantity'),
       sortable: true,
       sortValue: (row) => Number(row.quantity || 0),
-      render: (row) => formatNumber(Math.trunc(Number(row.quantity || 0)), 0),
+      render: (row) => formatTransactionQuantity(row.quantity),
     },
     {
       key: 'price',
@@ -264,7 +278,7 @@ const TransactionsPage = () => {
           {
             key: 'quantity',
             label: t('transactions.modal.fields.quantity'),
-            value: formatNumber(Math.trunc(Number(selectedTransaction.quantity || 0)), 0),
+            value: formatTransactionQuantity(selectedTransaction.quantity),
           },
           {
             key: 'price',
@@ -292,7 +306,7 @@ const TransactionsPage = () => {
         ],
       },
     ];
-  }, [formatDetailValue, numberLocale, selectedTransaction, t]);
+  }, [formatDetailValue, formatTransactionQuantity, numberLocale, selectedTransaction, t]);
 
   return (
     <Layout>
@@ -333,8 +347,12 @@ const TransactionsPage = () => {
             searchPlaceholder={t('transactions.filters.searchPlaceholder')}
             searchTerm={searchTerm}
             onSearchTermChange={setSearchTerm}
-            matchesSearch={(row, normalizedSearch) =>
-              [
+            matchesSearch={(row, normalizedSearch) => {
+              const bondHints = row.assetClass === 'bond'
+                ? 'bond renda fixa tesouro direto cdb cri'
+                : '';
+
+              return [
                 row.date,
                 row.ticker,
                 row.name,
@@ -345,11 +363,13 @@ const TransactionsPage = () => {
                 row.currency,
                 row.status,
                 row.assetId,
+                row.assetClass,
+                bondHints,
               ]
                 .join(' ')
                 .toLowerCase()
-                .includes(normalizedSearch)
-            }
+                .includes(normalizedSearch);
+            }}
             filters={filters}
             itemsPerPage={itemsPerPage}
             onItemsPerPageChange={setItemsPerPage}

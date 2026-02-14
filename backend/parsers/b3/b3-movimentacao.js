@@ -8,22 +8,28 @@
 const BaseParser = require('../base-parser');
 
 const MOVEMENT_TYPE_MAP = {
-	'Rendimento': 'dividend',
-	'Dividendo': 'dividend',
-	'Juros Sobre Capital Próprio': 'jcp',
-	'Transferência - Liquidação': 'transfer',
-	'Direito de Subscrição': 'subscription',
-	'Cessão de Direitos': 'subscription',
-	'Cessão de Direitos - Solicitada': 'subscription',
-	'RESGATE': 'sell',
-	'Resgate': 'sell',
-	'Leilão de Fração': 'sell',
-	'Bonificação em Ativos': 'dividend',
-	'Atualização': 'update',
-	'Desdobramento': 'split',
-	'Grupamento': 'split',
-	'Fração em Ativos': 'dividend',
-	'Recibo de Subscrição': 'subscription',
+	'rendimento': 'dividend',
+	'dividendo': 'dividend',
+	'juros sobre capital proprio': 'jcp',
+	'transferencia - liquidacao': 'transfer',
+	'direito de subscricao': 'subscription',
+	'cessao de direitos': 'subscription',
+	'cessao de direitos - solicitada': 'subscription',
+	'resgate': 'sell',
+	'leilao de fracao': 'sell',
+	'bonificacao em ativos': 'dividend',
+	'atualizacao': 'update',
+	'desdobramento': 'split',
+	'grupamento': 'split',
+	'fracao em ativos': 'dividend',
+	'recibo de subscricao': 'subscription',
+	'compra': 'buy',
+	'venda': 'sell',
+	'transferencia': 'transfer',
+	'vencimento': 'sell',
+	'pagamento de juros': 'dividend',
+	'juros': 'dividend',
+	'cobranca de taxa semestral': 'tax',
 };
 
 const parser = new BaseParser({ id: 'b3-movimentacao', provider: 'b3' });
@@ -105,12 +111,28 @@ parser.parse = function (workbook, options = {}) {
 };
 
 function resolveType(movType, row) {
+	const normalizeText = (value) =>
+		(value || '')
+			.toString()
+			.normalize('NFD')
+			.replace(/[\u0300-\u036f]/g, '')
+			.toLowerCase()
+			.trim();
+
+	const normalizedMovType = normalizeText(movType);
+	const normalizedDirection = normalizeText(row['Entrada/Saída'] || row['Entrada/Saida'] || '');
+
+	if (normalizedMovType === 'compra / venda') {
+		if (normalizedDirection.includes('credito')) return 'buy';
+		if (normalizedDirection.includes('debito')) return 'sell';
+	}
+
 	// Direct match
-	if (MOVEMENT_TYPE_MAP[movType]) return MOVEMENT_TYPE_MAP[movType];
+	if (MOVEMENT_TYPE_MAP[normalizedMovType]) return MOVEMENT_TYPE_MAP[normalizedMovType];
 
 	// Partial match for compound types
 	for (const [key, value] of Object.entries(MOVEMENT_TYPE_MAP)) {
-		if (movType.includes(key)) return value;
+		if (normalizedMovType.includes(key)) return value;
 	}
 
 	return null;
