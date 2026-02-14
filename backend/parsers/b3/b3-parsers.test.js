@@ -88,16 +88,36 @@ test('parseNumber: handles various B3 formats', () => {
 	assert.equal(BaseParser.parseNumber(0), 0);
 });
 
-test('inferAssetClass: FII tickers', () => {
+test('inferAssetClass: FII tickers by pattern', () => {
 	assert.equal(BaseParser.inferAssetClass('HGLG11'), 'fii');
 	assert.equal(BaseParser.inferAssetClass('KNCR11'), 'fii');
 	assert.equal(BaseParser.inferAssetClass('ALZR11'), 'fii');
+});
+
+test('inferAssetClass: FII subscription receipts (12, 13, 14)', () => {
+	assert.equal(BaseParser.inferAssetClass('HGLG12'), 'fii');
+	assert.equal(BaseParser.inferAssetClass('ALZR12'), 'fii');
+	assert.equal(BaseParser.inferAssetClass('BTLG13'), 'fii');
+	assert.equal(BaseParser.inferAssetClass('XPML14'), 'fii');
+	assert.equal(BaseParser.inferAssetClass('XPML18'), 'fii');
+});
+
+test('inferAssetClass: FII from product name', () => {
+	assert.equal(BaseParser.inferAssetClass('BCFF12', 'FDO INV IMOB - FII BTG PACTUAL FUNDO DE FUNDOS'), 'fii');
+	assert.equal(BaseParser.inferAssetClass('XPLG12', 'XP LOG FUNDO DE INVESTIMENTO IMOBILIARIO FII'), 'fii');
+	assert.equal(BaseParser.inferAssetClass('GARE12', 'FUND. DE INVEST. IMOBILIÁRIO GUARDIAN REAL ESTATE'), 'fii');
 });
 
 test('inferAssetClass: stock tickers', () => {
 	assert.equal(BaseParser.inferAssetClass('PETR4'), 'stock');
 	assert.equal(BaseParser.inferAssetClass('BBAS3'), 'stock');
 	assert.equal(BaseParser.inferAssetClass('VALE3'), 'stock');
+});
+
+test('inferAssetClass: derivatives', () => {
+	assert.equal(BaseParser.inferAssetClass('WINM23'), 'derivative');
+	assert.equal(BaseParser.inferAssetClass('WDOG23'), 'derivative');
+	assert.equal(BaseParser.inferAssetClass('DOLZ22'), 'derivative');
 });
 
 test('transactionKey: creates consistent dedup key', () => {

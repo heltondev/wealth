@@ -53,6 +53,40 @@
     text-align: center;
     color: var(--text-secondary);
   }
+
+  &__table-controls {
+    @include glass-card;
+    display: flex;
+    flex-wrap: wrap;
+    gap: $spacing-md;
+    padding: $spacing-md;
+    margin-bottom: $spacing-md;
+  }
+
+  &__filter-group {
+    display: flex;
+    flex-direction: column;
+    gap: $spacing-xs;
+    min-width: 180px;
+    flex: 1;
+
+    label {
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+      font-weight: 600;
+      letter-spacing: 0.2px;
+    }
+
+    input,
+    select {
+      padding: $spacing-sm $spacing-md;
+      border-radius: 8px;
+      border: 1px solid var(--glass-border);
+      background: var(--bg-secondary);
+      color: var(--text-primary);
+      font-size: 0.9rem;
+    }
+  }
 }
 
 .assets-table-wrapper {
@@ -79,6 +113,26 @@
     font-weight: 600;
   }
 
+  &__sort-btn {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    gap: $spacing-sm;
+    align-items: center;
+    border: none;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-transform: inherit;
+    letter-spacing: inherit;
+    cursor: pointer;
+    padding: 0;
+
+    span:last-child {
+      opacity: 0.8;
+    }
+  }
+
   &__ticker {
     font-weight: 600;
     color: var(--primary-light);
@@ -96,6 +150,52 @@
     &:hover {
       background: rgba(239, 68, 68, 0.1);
     }
+  }
+}
+
+.assets-pagination {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: $spacing-sm;
+  margin-top: $spacing-md;
+
+  &__meta {
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+  }
+
+  &__controls {
+    display: flex;
+    align-items: center;
+    gap: $spacing-sm;
+  }
+
+  &__btn {
+    border: 1px solid var(--glass-border);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 0.8rem;
+    transition: all $transition-fast;
+
+    &:hover:not(:disabled) {
+      background: var(--glass-bg);
+    }
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+  }
+
+  &__page {
+    min-width: 110px;
+    text-align: center;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
   }
 }
 

@@ -30,6 +30,29 @@
     "status": "Status",
     "actions": "Actions",
     "empty": "No assets yet. Add your first asset to start tracking.",
+    "emptyFiltered": "No assets match the current filters.",
+    "filters": {
+      "search": "Search",
+      "searchPlaceholder": "Search by ticker, name, class, country, currency, or status",
+      "status": {
+        "label": "Status Filter",
+        "active": "Active",
+        "inactive": "Inactive",
+        "all": "All"
+      }
+    },
+    "pagination": {
+      "itemsPerPage": "Items per page",
+      "showing": "Showing {{start}}-{{end}} of {{total}}",
+      "page": "Page {{page}} of {{total}}",
+      "prev": "Previous",
+      "next": "Next"
+    },
+    "statuses": {
+      "active": "Active",
+      "inactive": "Inactive",
+      "unknown": "Unknown"
+    },
     "form": {
       "ticker": "Ticker Symbol",
       "name": "Asset Name",

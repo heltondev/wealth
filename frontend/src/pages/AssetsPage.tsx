@@ -1,9 +1,15 @@
 import { useTranslation } from 'react-i18next';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Layout from '../components/Layout';
 import { api, type Asset, type Portfolio } from '../services/api';
 import { useToast } from '../context/ToastContext';
 import './AssetsPage.scss';
+
+type StatusFilter = 'active' | 'inactive' | 'all';
+type SortKey = 'ticker' | 'name' | 'assetClass' | 'country' | 'currency' | 'status';
+type SortDirection = 'asc' | 'desc';
+
+const PAGE_SIZE_OPTIONS = [5, 10, 25, 50];
 
 const AssetsPage = () => {
   const { t } = useTranslation();
@@ -13,6 +19,12 @@ const AssetsPage = () => {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('active');
+  const [itemsPerPage, setItemsPerPage] = useState(10);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [sortKey, setSortKey] = useState<SortKey>('ticker');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
   const [form, setForm] = useState<{
     ticker: string;
     name: string;
@@ -45,6 +57,69 @@ const AssetsPage = () => {
       .catch(() => setAssets([]))
       .finally(() => setLoading(false));
   }, [selectedPortfolio]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedPortfolio, searchTerm, statusFilter, itemsPerPage]);
+
+  const processedAssets = useMemo(() => {
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+    const filtered = assets.filter((asset) => {
+      const normalizedStatus = asset.status?.toLowerCase() || '';
+      const matchesStatus = statusFilter === 'all' || normalizedStatus === statusFilter;
+      if (!matchesStatus) return false;
+      if (!normalizedSearch) return true;
+
+      const searchable = [
+        asset.ticker,
+        asset.name,
+        asset.assetClass,
+        asset.country,
+        asset.currency,
+        asset.status,
+      ]
+        .join(' ')
+        .toLowerCase();
+
+      return searchable.includes(normalizedSearch);
+    });
+
+    return filtered.sort((a, b) => {
+      const left = String(a[sortKey] || '').toLowerCase();
+      const right = String(b[sortKey] || '').toLowerCase();
+      const result = left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' });
+      return sortDirection === 'asc' ? result : -result;
+    });
+  }, [assets, searchTerm, sortDirection, sortKey, statusFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(processedAssets.length / itemsPerPage));
+
+  useEffect(() => {
+    if (currentPage > totalPages) setCurrentPage(totalPages);
+  }, [currentPage, totalPages]);
+
+  const paginatedAssets = useMemo(() => {
+    const start = (currentPage - 1) * itemsPerPage;
+    return processedAssets.slice(start, start + itemsPerPage);
+  }, [currentPage, itemsPerPage, processedAssets]);
+
+  const pageStart = processedAssets.length === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1;
+  const pageEnd = Math.min(currentPage * itemsPerPage, processedAssets.length);
+
+  const handleSort = (field: SortKey) => {
+    setCurrentPage(1);
+    if (sortKey === field) {
+      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+    setSortKey(field);
+    setSortDirection('asc');
+  };
+
+  const getSortIndicator = (field: SortKey) => {
+    if (sortKey !== field) return '<>';
+    return sortDirection === 'asc' ? '^' : 'v';
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -106,45 +181,156 @@ const AssetsPage = () => {
         )}
 
         {!loading && assets.length > 0 && (
-          <div className="assets-table-wrapper">
-            <table className="assets-table">
-              <thead>
-                <tr>
-                  <th>{t('assets.ticker')}</th>
-                  <th>{t('assets.name')}</th>
-                  <th>{t('assets.class')}</th>
-                  <th>{t('assets.country')}</th>
-                  <th>{t('assets.currency')}</th>
-                  <th>{t('assets.status')}</th>
-                  <th>{t('assets.actions')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {assets.map((asset) => (
-                  <tr key={asset.assetId}>
-                    <td className="assets-table__ticker">{asset.ticker}</td>
-                    <td>{asset.name}</td>
-                    <td>
-                      <span className={`badge badge--${asset.assetClass}`}>
-                        {t(`assets.classes.${asset.assetClass}`)}
-                      </span>
-                    </td>
-                    <td>{asset.country}</td>
-                    <td>{asset.currency}</td>
-                    <td>{asset.status}</td>
-                    <td>
-                      <button
-                        className="assets-table__delete"
-                        onClick={() => handleDelete(asset.assetId)}
-                      >
-                        {t('common.delete')}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <>
+            <div className="assets-page__table-controls">
+              <div className="assets-page__filter-group">
+                <label htmlFor="assets-search">{t('assets.filters.search')}</label>
+                <input
+                  id="assets-search"
+                  type="search"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder={t('assets.filters.searchPlaceholder')}
+                />
+              </div>
+              <div className="assets-page__filter-group">
+                <label htmlFor="assets-status-filter">{t('assets.filters.status.label')}</label>
+                <select
+                  id="assets-status-filter"
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+                >
+                  <option value="active">{t('assets.filters.status.active')}</option>
+                  <option value="inactive">{t('assets.filters.status.inactive')}</option>
+                  <option value="all">{t('assets.filters.status.all')}</option>
+                </select>
+              </div>
+              <div className="assets-page__filter-group">
+                <label htmlFor="assets-page-size">{t('assets.pagination.itemsPerPage')}</label>
+                <select
+                  id="assets-page-size"
+                  value={itemsPerPage}
+                  onChange={(e) => setItemsPerPage(Number(e.target.value))}
+                >
+                  {PAGE_SIZE_OPTIONS.map((size) => (
+                    <option key={size} value={size}>
+                      {size}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {processedAssets.length === 0 ? (
+              <div className="assets-page__empty">
+                <p>{t('assets.emptyFiltered')}</p>
+              </div>
+            ) : (
+              <>
+                <div className="assets-table-wrapper">
+                  <table className="assets-table">
+                    <thead>
+                      <tr>
+                        <th>
+                          <button type="button" className="assets-table__sort-btn" onClick={() => handleSort('ticker')}>
+                            {t('assets.ticker')}
+                            <span>{getSortIndicator('ticker')}</span>
+                          </button>
+                        </th>
+                        <th>
+                          <button type="button" className="assets-table__sort-btn" onClick={() => handleSort('name')}>
+                            {t('assets.name')}
+                            <span>{getSortIndicator('name')}</span>
+                          </button>
+                        </th>
+                        <th>
+                          <button type="button" className="assets-table__sort-btn" onClick={() => handleSort('assetClass')}>
+                            {t('assets.class')}
+                            <span>{getSortIndicator('assetClass')}</span>
+                          </button>
+                        </th>
+                        <th>
+                          <button type="button" className="assets-table__sort-btn" onClick={() => handleSort('country')}>
+                            {t('assets.country')}
+                            <span>{getSortIndicator('country')}</span>
+                          </button>
+                        </th>
+                        <th>
+                          <button type="button" className="assets-table__sort-btn" onClick={() => handleSort('currency')}>
+                            {t('assets.currency')}
+                            <span>{getSortIndicator('currency')}</span>
+                          </button>
+                        </th>
+                        <th>
+                          <button type="button" className="assets-table__sort-btn" onClick={() => handleSort('status')}>
+                            {t('assets.status')}
+                            <span>{getSortIndicator('status')}</span>
+                          </button>
+                        </th>
+                        <th>{t('assets.actions')}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {paginatedAssets.map((asset) => (
+                        <tr key={asset.assetId}>
+                          <td className="assets-table__ticker">{asset.ticker}</td>
+                          <td>{asset.name}</td>
+                          <td>
+                            <span className={`badge badge--${asset.assetClass}`}>
+                              {t(`assets.classes.${asset.assetClass}`)}
+                            </span>
+                          </td>
+                          <td>{asset.country}</td>
+                          <td>{asset.currency}</td>
+                          <td>
+                            {t(`assets.statuses.${asset.status?.toLowerCase() || 'unknown'}`, {
+                              defaultValue: asset.status || t('assets.statuses.unknown'),
+                            })}
+                          </td>
+                          <td>
+                            <button
+                              type="button"
+                              className="assets-table__delete"
+                              onClick={() => handleDelete(asset.assetId)}
+                            >
+                              {t('common.delete')}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="assets-pagination">
+                  <p className="assets-pagination__meta">
+                    {t('assets.pagination.showing', { start: pageStart, end: pageEnd, total: processedAssets.length })}
+                  </p>
+                  <div className="assets-pagination__controls">
+                    <button
+                      type="button"
+                      className="assets-pagination__btn"
+                      onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                      disabled={currentPage === 1}
+                    >
+                      {t('assets.pagination.prev')}
+                    </button>
+                    <span className="assets-pagination__page">
+                      {t('assets.pagination.page', { page: currentPage, total: totalPages })}
+                    </span>
+                    <button
+                      type="button"
+                      className="assets-pagination__btn"
+                      onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                      disabled={currentPage === totalPages}
+                    >
+                      {t('assets.pagination.next')}
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+          </>
         )}
 
         {showModal && (

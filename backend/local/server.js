@@ -1,13 +1,12 @@
+// Load env vars before anything else
+try { require('dotenv').config(); } catch {}
+
 const express = require('express');
 const cors = require('cors');
 const { handler } = require('../handlers/wealth-lambda-handler');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-
-// Load env vars
-try { require('dotenv').config(); } catch {}
-
 
 // Mock Cognito claims for local development
 const MOCK_CLAIMS = {

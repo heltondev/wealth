@@ -121,10 +121,16 @@ async function run() {
 	}
 	console.log(`Found ${files.length} files.\n`);
 
-	// Collect all parsed data across files
-	const allAssets = new Map(); // ticker → asset data
+	// Collect parsed data per file, tracking which position snapshot is the latest
 	const allTransactions = [];
 	const allAliases = new Map(); // normalizedName → alias data
+
+	// Track position snapshots per parser type to pick only the most recent
+	// Each entry: { file, assets: Map<ticker, asset> }
+	const positionSnapshots = [];
+	const posicaoSnapshots = [];
+
+	const POSITION_PARSERS = new Set(['b3-posicao', 'b3-relatorio']);
 
 	for (const filePath of files) {
 		const relPath = path.relative(DATA_DIR, filePath);
@@ -140,21 +146,43 @@ async function run() {
 
 		const parsed = parser.parse(workbook, { sourceFile: path.basename(filePath) });
 
-		// Merge assets (latest wins for value/quantity)
-		for (const asset of parsed.assets) {
-			allAssets.set(asset.ticker, asset);
+		// Track position snapshots separately — each file is a point-in-time snapshot
+		if (parser.id === 'b3-posicao') {
+			const snapshot = new Map();
+			for (const asset of parsed.assets) snapshot.set(asset.ticker, asset);
+			posicaoSnapshots.push({ file: filePath, assets: snapshot });
+		} else if (parser.id === 'b3-relatorio') {
+			const snapshot = new Map();
+			for (const asset of parsed.assets) snapshot.set(asset.ticker, asset);
+			positionSnapshots.push({ file: filePath, assets: snapshot });
 		}
 
-		// Collect transactions
+		// Collect transactions from all parsers
 		allTransactions.push(...parsed.transactions);
 
-		// Merge aliases
+		// Merge aliases from all parsers
 		for (const alias of parsed.aliases) {
 			allAliases.set(`${alias.normalizedName}|${alias.ticker}`, alias);
 		}
 	}
 
-	console.log(`\nParsed totals: ${allAssets.size} assets, ${allTransactions.length} transactions, ${allAliases.size} aliases`);
+	// Use the LATEST position snapshot as the source of truth for active assets.
+	// Priority: posicao-*.xlsx (most current) > last relatorio (most recent annual/monthly)
+	// Files are sorted alphabetically which means chronologically for these naming patterns.
+	let allAssets;
+	if (posicaoSnapshots.length > 0) {
+		const latest = posicaoSnapshots[posicaoSnapshots.length - 1];
+		console.log(`\nUsing position snapshot: ${path.relative(DATA_DIR, latest.file)}`);
+		allAssets = latest.assets;
+	} else if (positionSnapshots.length > 0) {
+		const latest = positionSnapshots[positionSnapshots.length - 1];
+		console.log(`\nUsing relatorio snapshot: ${path.relative(DATA_DIR, latest.file)}`);
+		allAssets = latest.assets;
+	} else {
+		allAssets = new Map();
+	}
+
+	console.log(`\nParsed totals: ${allAssets.size} active assets, ${allTransactions.length} transactions, ${allAliases.size} aliases`);
 
 	if (DRY_RUN) {
 		console.log('\n[DRY RUN] No data written to DynamoDB.');
@@ -169,11 +197,35 @@ async function run() {
 	const existingAliasKeys = await loadExistingAliases();
 
 	const now = new Date().toISOString();
-	let stats = { assets: 0, transactions: 0, aliases: 0, skipped: 0 };
+	let stats = { assets: 0, transactions: 0, aliases: 0, skipped: 0, deactivated: 0 };
 
-	// Write assets
+	// Deactivate existing assets not in the current position snapshot
+	const { UpdateCommand } = require('@aws-sdk/lib-dynamodb');
+	for (const [ticker, assetId] of existingAssets) {
+		if (!allAssets.has(ticker)) {
+			await dynamo.send(new UpdateCommand({
+				TableName: TABLE_NAME,
+				Key: { PK: `PORTFOLIO#${PORTFOLIO_ID}`, SK: `ASSET#${assetId}` },
+				UpdateExpression: 'SET #s = :status',
+				ExpressionAttributeNames: { '#s': 'status' },
+				ExpressionAttributeValues: { ':status': 'inactive' },
+			}));
+			stats.deactivated++;
+		}
+	}
+
+	// Write/update active assets
 	for (const [ticker, asset] of allAssets) {
 		if (existingAssets.has(ticker)) {
+			// Update existing asset to ensure it's active with correct class
+			const assetId = existingAssets.get(ticker);
+			await dynamo.send(new UpdateCommand({
+				TableName: TABLE_NAME,
+				Key: { PK: `PORTFOLIO#${PORTFOLIO_ID}`, SK: `ASSET#${assetId}` },
+				UpdateExpression: 'SET #s = :status, assetClass = :cls, #n = :name',
+				ExpressionAttributeNames: { '#s': 'status', '#n': 'name' },
+				ExpressionAttributeValues: { ':status': 'active', ':cls': asset.assetClass, ':name': asset.name },
+			}));
 			stats.skipped++;
 			continue;
 		}
@@ -208,10 +260,12 @@ async function run() {
 			continue;
 		}
 
-		// Resolve asset ID (create if needed)
+		// Resolve asset ID — auto-create as inactive if not in current positions
 		let assetId = existingAssets.get(ticker);
 		if (!assetId) {
 			assetId = `asset-${ticker.toLowerCase()}`;
+			const isActive = allAssets.has(ticker);
+			const BaseParser = require('../parsers/base-parser');
 			const assetItem = {
 				PK: `PORTFOLIO#${PORTFOLIO_ID}`,
 				SK: `ASSET#${assetId}`,
@@ -219,10 +273,10 @@ async function run() {
 				portfolioId: PORTFOLIO_ID,
 				ticker,
 				name: ticker,
-				assetClass: 'stock',
+				assetClass: BaseParser.inferAssetClass(ticker),
 				country: 'BR',
 				currency: 'BRL',
-				status: 'active',
+				status: isActive ? 'active' : 'inactive',
 				createdAt: now,
 			};
 			await dynamo.send(new PutCommand({ TableName: TABLE_NAME, Item: assetItem }));
@@ -277,13 +331,14 @@ async function run() {
 
 	console.log(`\nImport complete:`);
 	console.log(`  Assets created:       ${stats.assets}`);
+	console.log(`  Assets deactivated:   ${stats.deactivated}`);
 	console.log(`  Transactions created: ${stats.transactions}`);
 	console.log(`  Aliases created:      ${stats.aliases}`);
 	console.log(`  Duplicates skipped:   ${stats.skipped}`);
 }
 
 function printSummary(assets, transactions, aliases) {
-	console.log('\n--- Assets ---');
+	console.log('\n--- Active Assets (current holdings) ---');
 	for (const [ticker, asset] of assets) {
 		console.log(`  ${ticker} (${asset.assetClass}) - ${asset.name}`);
 	}

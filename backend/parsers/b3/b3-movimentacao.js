@@ -76,10 +76,11 @@ parser.parse = function (workbook, options = {}) {
 
 		// Track unique tickers
 		if (!assets.has(ticker)) {
+			const productName = BaseParser.extractProductName(product);
 			assets.set(ticker, {
 				ticker,
-				name: BaseParser.extractProductName(product) || ticker,
-				assetClass: BaseParser.inferAssetClass(ticker),
+				name: productName || ticker,
+				assetClass: BaseParser.inferAssetClass(ticker, product),
 				country: 'BR',
 				currency: 'BRL',
 			});

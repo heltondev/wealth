@@ -113,14 +113,32 @@ class BaseParser {
 	}
 
 	/**
-	 * Determine asset class from ticker pattern.
+	 * Determine asset class from ticker and optional product name.
+	 * Product name takes priority when it contains FII indicators.
 	 */
-	static inferAssetClass(ticker) {
+	static inferAssetClass(ticker, productName) {
 		if (!ticker) return 'stock';
-		if (/^\d{2}[A-Z]{1,4}\d{2}$/.test(ticker)) return 'stock'; // options
-		if (/^[A-Z]{4}11[A-Z]?$/.test(ticker)) return 'fii';
 		if (/^Tesouro/i.test(ticker)) return 'bond';
 		if (/^CDB/i.test(ticker)) return 'bond';
+		if (/^CRI\b/i.test(ticker)) return 'bond';
+
+		// Check product name for FII indicators (most reliable)
+		if (productName) {
+			const upper = productName.toUpperCase();
+			if (upper.includes('FDO INV IMOB') || upper.includes('FUNDO DE INVESTIMENTO IMOB')
+				|| upper.includes('FII') || upper.includes('FDO. INV. IMOB')
+				|| upper.includes('FDO INVEST. IMOB') || upper.includes('FIAGRO')
+				|| upper.includes('FI IMOB') || upper.includes('FDO. INVEST. IMOB')) {
+				return 'fii';
+			}
+		}
+
+		// FII subscription receipts: XXXX12, XXXX13, XXXX14, etc.
+		if (/^[A-Z]{4}1[1-9][A-Z]?$/.test(ticker)) return 'fii';
+
+		// Mini futures/options (WIN, WDO, DOL prefix)
+		if (/^(WIN|WDO|DOL|IND)[A-Z]\d{2}$/.test(ticker)) return 'derivative';
+
 		return 'stock';
 	}
 

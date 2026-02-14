@@ -30,6 +30,29 @@
     "status": "Status",
     "actions": "Ações",
     "empty": "Nenhum ativo ainda. Adicione seu primeiro ativo para começar.",
+    "emptyFiltered": "Nenhum ativo corresponde aos filtros atuais.",
+    "filters": {
+      "search": "Buscar",
+      "searchPlaceholder": "Busque por ticker, nome, classe, país, moeda ou status",
+      "status": {
+        "label": "Filtro de Status",
+        "active": "Ativo",
+        "inactive": "Inativo",
+        "all": "Todos"
+      }
+    },
+    "pagination": {
+      "itemsPerPage": "Itens por página",
+      "showing": "Mostrando {{start}}-{{end}} de {{total}}",
+      "page": "Página {{page}} de {{total}}",
+      "prev": "Anterior",
+      "next": "Próxima"
+    },
+    "statuses": {
+      "active": "Ativo",
+      "inactive": "Inativo",
+      "unknown": "Desconhecido"
+    },
     "form": {
       "ticker": "Símbolo do Ticker",
       "name": "Nome do Ativo",
