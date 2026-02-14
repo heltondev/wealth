@@ -35,6 +35,19 @@ const generateId = () =>
 	`${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
 /**
+ * Parse quantity as integer for transaction storage.
+ * Throws on fractional or invalid values to keep data consistent.
+ */
+function parseIntegerQuantity(value, context = '') {
+	if (value === undefined || value === null || value === '') return 0;
+	const numeric = Number(value);
+	if (!Number.isFinite(numeric) || !Number.isInteger(numeric)) {
+		throw new Error(`Invalid quantity "${value}"${context ? ` (${context})` : ''}: quantity must be an integer`);
+	}
+	return numeric;
+}
+
+/**
  * Find all .xlsx files recursively in a directory.
  */
 function findXlsxFiles(dir) {
@@ -89,7 +102,8 @@ async function loadExistingTransactionKeys() {
 			ExclusiveStartKey: lastKey,
 		}));
 		for (const item of (result.Items || [])) {
-			keys.add(`${item.ticker || ''}|${item.date}|${item.type}|${item.amount}|${item.quantity}`);
+			const quantity = Math.trunc(Number(item.quantity) || 0);
+			keys.add(`${item.ticker || ''}|${item.date}|${item.type}|${item.amount}|${quantity}`);
 		}
 		lastKey = result.LastEvaluatedKey;
 	} while (lastKey);
@@ -253,7 +267,8 @@ async function run() {
 	// Write transactions (with dedup)
 	for (const trans of allTransactions) {
 		const ticker = trans.ticker;
-		const dedupKey = `${ticker}|${trans.date}|${trans.type}|${trans.amount}|${trans.quantity}`;
+		const quantity = parseIntegerQuantity(trans.quantity, `${ticker} ${trans.date} ${trans.type}`);
+		const dedupKey = `${ticker}|${trans.date}|${trans.type}|${trans.amount}|${quantity}`;
 
 		if (existingTransKeys.has(dedupKey)) {
 			stats.skipped++;
@@ -294,7 +309,7 @@ async function run() {
 			ticker,
 			type: trans.type,
 			date: trans.date,
-			quantity: trans.quantity,
+			quantity,
 			price: trans.price,
 			currency: trans.currency || 'BRL',
 			amount: trans.amount,

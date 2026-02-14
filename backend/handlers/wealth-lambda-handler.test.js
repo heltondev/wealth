@@ -133,6 +133,20 @@ test('handler POST /portfolios/{id}/transactions requires assetId, type, date', 
 	assert.match(body.error, /assetId/i);
 });
 
+test('handler POST /portfolios/{id}/transactions requires integer quantity', async () => {
+	const response = await handler(
+		makeEvent('POST', '/portfolios/test-portfolio/transactions', {
+			assetId: 'asset-test',
+			type: 'buy',
+			date: '2025-01-01',
+			quantity: 10.5,
+		})
+	);
+	assert.equal(response.statusCode, 400);
+	const body = JSON.parse(response.body);
+	assert.match(body.error, /quantity must be an integer/i);
+});
+
 test('handler GET /settings/profile returns profile data', async () => {
 	// This will fail without DynamoDB but tests the routing logic
 	const response = await handler(makeEvent('GET', '/settings/profile'));

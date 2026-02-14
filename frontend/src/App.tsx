@@ -6,6 +6,7 @@ import type { AppRole } from './utils/authz';
 
 const DashboardPage = lazy(() => import('./pages/DashboardPage'));
 const AssetsPage = lazy(() => import('./pages/AssetsPage'));
+const TransactionsPage = lazy(() => import('./pages/TransactionsPage'));
 const DocumentsPage = lazy(() => import('./pages/DocumentsPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 
@@ -33,6 +34,16 @@ function App() {
             <Suspense fallback={null}>
               <ProtectedRoute allowedRoles={ALL_ROLES}>
                 <AssetsPage />
+              </ProtectedRoute>
+            </Suspense>
+          }
+        />
+        <Route
+          path="/transactions"
+          element={
+            <Suspense fallback={null}>
+              <ProtectedRoute allowedRoles={ALL_ROLES}>
+                <TransactionsPage />
               </ProtectedRoute>
             </Suspense>
           }

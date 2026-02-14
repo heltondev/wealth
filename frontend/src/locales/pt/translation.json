@@ -2,6 +2,7 @@
   "nav": {
     "dashboard": "Painel",
     "assets": "Ativos",
+    "transactions": "Transações",
     "documents": "Documentos",
     "settings": "Configurações",
     "logout": "Sair"
@@ -68,6 +69,54 @@
       "bond": "Renda Fixa",
       "crypto": "Cripto",
       "rsu": "RSU"
+    }
+  },
+  "transactions": {
+    "title": "Transações",
+    "date": "Data",
+    "ticker": "Ticker",
+    "name": "Nome",
+    "type": "Tipo",
+    "quantity": "Quantidade",
+    "price": "Preço",
+    "amount": "Total",
+    "currency": "Moeda",
+    "status": "Status",
+    "empty": "Nenhuma transação ainda para este portfólio.",
+    "emptyFiltered": "Nenhuma transação corresponde aos filtros atuais.",
+    "filters": {
+      "search": "Buscar",
+      "searchPlaceholder": "Busque por ticker, nome, tipo, total, moeda, status, data ou id do ativo",
+      "type": {
+        "label": "Filtro de Tipo",
+        "all": "Todos"
+      },
+      "status": {
+        "label": "Filtro de Status",
+        "all": "Todos"
+      }
+    },
+    "pagination": {
+      "itemsPerPage": "Itens por página",
+      "showing": "Mostrando {{start}}-{{end}} de {{total}}",
+      "page": "Página {{page}} de {{total}}",
+      "prev": "Anterior",
+      "next": "Próxima"
+    },
+    "types": {
+      "buy": "Compra",
+      "sell": "Venda",
+      "dividend": "Dividendo",
+      "jcp": "JCP",
+      "tax": "Imposto",
+      "transfer": "Transferência"
+    },
+    "statuses": {
+      "confirmed": "Confirmada",
+      "pending": "Pendente",
+      "failed": "Falhou",
+      "canceled": "Cancelada",
+      "unknown": "Desconhecido"
     }
   },
   "documents": {

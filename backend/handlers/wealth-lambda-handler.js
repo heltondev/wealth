@@ -36,6 +36,15 @@ const parseBody = (body) => {
 	}
 };
 
+const parseIntegerQuantity = (value) => {
+	if (value === undefined || value === null || value === '') return 0;
+	const numeric = Number(value);
+	if (!Number.isFinite(numeric) || !Number.isInteger(numeric)) {
+		throw errorResponse(400, 'quantity must be an integer');
+	}
+	return numeric;
+};
+
 const resolveCorsOrigin = (event) => {
 	const origin = event?.headers?.origin || event?.headers?.Origin || '';
 	if (CORS_ALLOWLIST.length === 0) return '*';
@@ -337,6 +346,7 @@ async function handleTransactions(method, portfolioId, body) {
 		} = parseBody(body);
 		if (!assetId || !type || !date)
 			throw errorResponse(400, 'assetId, type, and date are required');
+		const normalizedQuantity = parseIntegerQuantity(quantity);
 
 		const transId = generateId();
 		const now = new Date().toISOString();
@@ -348,7 +358,7 @@ async function handleTransactions(method, portfolioId, body) {
 			assetId,
 			type,
 			date,
-			quantity: quantity || 0,
+			quantity: normalizedQuantity,
 			price: price || 0,
 			currency: currency || 'BRL',
 			amount: amount || 0,

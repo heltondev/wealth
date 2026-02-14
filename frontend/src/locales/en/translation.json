@@ -2,6 +2,7 @@
   "nav": {
     "dashboard": "Dashboard",
     "assets": "Assets",
+    "transactions": "Transactions",
     "documents": "Documents",
     "settings": "Settings",
     "logout": "Logout"
@@ -68,6 +69,54 @@
       "bond": "Bond",
       "crypto": "Crypto",
       "rsu": "RSU"
+    }
+  },
+  "transactions": {
+    "title": "Transactions",
+    "date": "Date",
+    "ticker": "Ticker",
+    "name": "Name",
+    "type": "Type",
+    "quantity": "Quantity",
+    "price": "Price",
+    "amount": "Amount",
+    "currency": "Currency",
+    "status": "Status",
+    "empty": "No transactions yet for this portfolio.",
+    "emptyFiltered": "No transactions match the current filters.",
+    "filters": {
+      "search": "Search",
+      "searchPlaceholder": "Search by ticker, name, type, amount, currency, status, date, or asset id",
+      "type": {
+        "label": "Type Filter",
+        "all": "All"
+      },
+      "status": {
+        "label": "Status Filter",
+        "all": "All"
+      }
+    },
+    "pagination": {
+      "itemsPerPage": "Items per page",
+      "showing": "Showing {{start}}-{{end}} of {{total}}",
+      "page": "Page {{page}} of {{total}}",
+      "prev": "Previous",
+      "next": "Next"
+    },
+    "types": {
+      "buy": "Buy",
+      "sell": "Sell",
+      "dividend": "Dividend",
+      "jcp": "JCP",
+      "tax": "Tax",
+      "transfer": "Transfer"
+    },
+    "statuses": {
+      "confirmed": "Confirmed",
+      "pending": "Pending",
+      "failed": "Failed",
+      "canceled": "Canceled",
+      "unknown": "Unknown"
     }
   },
   "documents": {
