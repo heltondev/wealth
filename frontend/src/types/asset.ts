@@ -10,5 +10,6 @@ export interface Asset {
   country: Country;
   currency: string;
   status: string;
+  source?: string | null;
   createdAt: string;
 }

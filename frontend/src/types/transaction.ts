@@ -1,4 +1,4 @@
-export type TransactionType = 'buy' | 'sell' | 'dividend' | 'jcp' | 'tax' | 'transfer';
+export type TransactionType = 'buy' | 'sell' | 'dividend' | 'jcp' | 'tax' | 'subscription' | 'transfer';
 export type TransactionStatus = 'confirmed' | 'pending_mapping';
 
 export interface Transaction {

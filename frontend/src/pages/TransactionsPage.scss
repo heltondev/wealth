@@ -44,134 +44,17 @@
     font-weight: 600;
     color: var(--primary-light);
   }
-}
 
-.transactions-modal-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1200;
-  padding: $spacing-lg;
-  background: rgba(2, 6, 23, 0.7);
-  backdrop-filter: blur(8px);
-  @include flex-center;
-}
-
-.transactions-modal {
-  width: min(980px, 100%);
-  max-height: 90vh;
-  overflow: auto;
-  border-radius: 18px;
-  border: 1px solid rgba(129, 140, 248, 0.35);
-  background:
-    radial-gradient(circle at top right, rgba(129, 140, 248, 0.2), transparent 45%),
-    radial-gradient(circle at bottom left, rgba(6, 182, 212, 0.18), transparent 40%),
-    var(--bg-secondary);
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
-  padding: $spacing-xl;
-
-  &__header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: $spacing-md;
-    margin-bottom: $spacing-lg;
-
-    h2 {
-      margin: 0;
-      font-size: 1.35rem;
-    }
-
-    p {
-      margin: $spacing-xs 0 0;
-      color: var(--text-secondary);
-      font-size: 0.85rem;
-    }
+  &__cell--name {
+    max-width: 280px;
   }
 
-  &__close {
-    border: 1px solid var(--glass-border);
-    background: var(--bg-primary);
-    color: var(--text-primary);
-    border-radius: 8px;
-    padding: $spacing-sm $spacing-md;
-    font-size: 0.85rem;
-    transition: all $transition-fast;
-
-    &:hover {
-      background: rgba(99, 102, 241, 0.16);
-      border-color: rgba(129, 140, 248, 0.45);
-    }
-  }
-
-  &__grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: $spacing-md;
-  }
-
-  &__section {
-    @include glass-card;
-    padding: $spacing-md;
-
-    h3 {
-      margin: 0 0 $spacing-sm;
-      font-size: 0.9rem;
-      letter-spacing: 0.3px;
-      text-transform: uppercase;
-      color: var(--text-secondary);
-    }
-
-    dl {
-      margin: 0;
-      display: grid;
-      gap: $spacing-sm;
-    }
-
-    dl > div {
-      display: grid;
-      gap: 2px;
-    }
-
-    dt {
-      font-size: 0.75rem;
-      color: var(--text-secondary);
-      text-transform: uppercase;
-      letter-spacing: 0.3px;
-    }
-
-    dd {
-      margin: 0;
-      font-size: 0.9rem;
-      color: var(--text-primary);
-      word-break: break-word;
-    }
-
-    pre {
-      margin: 0;
-      max-height: 220px;
-      overflow: auto;
-      border-radius: 10px;
-      border: 1px solid var(--glass-border);
-      background: rgba(2, 6, 23, 0.45);
-      padding: $spacing-md;
-      font-size: 0.78rem;
-      line-height: 1.5;
-      color: #dbeafe;
-    }
-
-    &--full {
-      grid-column: 1 / -1;
-    }
-  }
-}
-
-@media (max-width: $breakpoint-tablet) {
-  .transactions-modal {
-    padding: $spacing-md;
-
-    &__grid {
-      grid-template-columns: 1fr;
-    }
+  &__name-ellipsis {
+    display: block;
+    max-width: 280px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 
@@ -205,6 +88,11 @@
   &--tax {
     background: rgba(245, 158, 11, 0.15);
     color: #f59e0b;
+  }
+
+  &--subscription {
+    background: rgba(168, 85, 247, 0.15);
+    color: #c084fc;
   }
 
   &--transfer {

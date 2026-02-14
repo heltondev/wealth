@@ -43,6 +43,7 @@ export interface Asset {
   country: 'BR' | 'US' | 'CA';
   currency: string;
   status: string;
+  source?: string | null;
   createdAt: string;
 }
 
@@ -50,7 +51,7 @@ export interface Transaction {
   transId: string;
   portfolioId: string;
   assetId: string;
-  type: 'buy' | 'sell' | 'dividend' | 'jcp' | 'tax' | 'transfer';
+  type: 'buy' | 'sell' | 'dividend' | 'jcp' | 'tax' | 'subscription' | 'transfer';
   date: string;
   quantity: number;
   price: number;

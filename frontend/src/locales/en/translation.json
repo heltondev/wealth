@@ -25,6 +25,7 @@
     "addAsset": "Add Asset",
     "ticker": "Ticker",
     "name": "Name",
+    "quantity": "Quantity",
     "class": "Class",
     "country": "Country",
     "currency": "Currency",
@@ -53,6 +54,32 @@
       "active": "Active",
       "inactive": "Inactive",
       "unknown": "Unknown"
+    },
+    "modal": {
+      "title": "Asset Details",
+      "subtitle": "Complete detail view for the selected asset",
+      "close": "Close",
+      "noValue": "N/A",
+      "openDetails": "Open details for asset {{ticker}}",
+      "sections": {
+        "overview": "Overview",
+        "market": "Market",
+        "metadata": "Metadata",
+        "raw": "Raw Payload"
+      },
+      "fields": {
+        "assetId": "Asset ID",
+        "portfolioId": "Portfolio ID",
+        "ticker": "Ticker",
+        "name": "Name",
+        "quantity": "Quantity",
+        "class": "Class",
+        "status": "Status",
+        "source": "Source",
+        "country": "Country",
+        "currency": "Currency",
+        "createdAt": "Created At"
+      }
     },
     "form": {
       "ticker": "Ticker Symbol",
@@ -109,6 +136,7 @@
       "dividend": "Dividend",
       "jcp": "JCP",
       "tax": "Tax",
+      "subscription": "Subscription",
       "transfer": "Transfer"
     },
     "statuses": {

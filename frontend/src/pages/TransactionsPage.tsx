@@ -1,7 +1,8 @@
 import { useTranslation } from 'react-i18next';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Layout from '../components/Layout';
 import DataTable, { type DataTableColumn, type DataTableFilter } from '../components/DataTable';
+import RecordDetailsModal, { type RecordDetailsSection } from '../components/RecordDetailsModal';
 import { api, type Asset, type Portfolio, type Transaction } from '../services/api';
 import { formatCurrency, formatDate, formatNumber } from '../utils/formatters';
 import './TransactionsPage.scss';
@@ -12,22 +13,6 @@ interface TransactionRow extends Transaction {
 }
 
 const PAGE_SIZE_OPTIONS = [5, 10, 25, 50];
-const BASE_DETAIL_KEYS = new Set([
-  'transId',
-  'portfolioId',
-  'assetId',
-  'ticker',
-  'name',
-  'type',
-  'status',
-  'date',
-  'quantity',
-  'price',
-  'amount',
-  'currency',
-  'sourceDocId',
-  'createdAt',
-]);
 
 const TransactionsPage = () => {
   const { t, i18n } = useTranslation();
@@ -116,7 +101,12 @@ const TransactionsPage = () => {
       label: t('transactions.name'),
       sortable: true,
       sortValue: (row) => row.name,
-      render: (row) => row.name,
+      cellClassName: 'transactions-page__cell--name',
+      render: (row) => (
+        <span className="transactions-page__name-ellipsis" title={row.name}>
+          {row.name}
+        </span>
+      ),
     },
     {
       key: 'type',
@@ -207,24 +197,102 @@ const TransactionsPage = () => {
     },
   ];
 
-  const formatDetailValue = (value: unknown) => {
+  const formatDetailValue = useCallback((value: unknown) => {
     if (value === undefined || value === null || value === '') return t('transactions.modal.noValue');
     return String(value);
-  };
+  }, [t]);
 
-  const extraDetailEntries = useMemo(() => {
+  const transactionDetailsSections = useMemo<RecordDetailsSection[]>(() => {
     if (!selectedTransaction) return [];
-    return Object.entries(selectedTransaction).filter(([key]) => !BASE_DETAIL_KEYS.has(key));
-  }, [selectedTransaction]);
-
-  useEffect(() => {
-    if (!selectedTransaction) return undefined;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setSelectedTransaction(null);
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedTransaction]);
+    return [
+      {
+        key: 'overview',
+        title: t('transactions.modal.sections.overview'),
+        fields: [
+          {
+            key: 'transId',
+            label: t('transactions.modal.fields.transId'),
+            value: formatDetailValue(selectedTransaction.transId),
+          },
+          {
+            key: 'portfolioId',
+            label: t('transactions.modal.fields.portfolioId'),
+            value: formatDetailValue(selectedTransaction.portfolioId),
+          },
+          {
+            key: 'assetId',
+            label: t('transactions.modal.fields.assetId'),
+            value: formatDetailValue(selectedTransaction.assetId),
+          },
+          { key: 'ticker', label: t('transactions.modal.fields.ticker'), value: formatDetailValue(selectedTransaction.ticker) },
+          { key: 'name', label: t('transactions.modal.fields.name'), value: formatDetailValue(selectedTransaction.name) },
+          {
+            key: 'type',
+            label: t('transactions.modal.fields.type'),
+            value: t(`transactions.types.${selectedTransaction.type?.toLowerCase() || 'unknown'}`, {
+              defaultValue: selectedTransaction.type,
+            }),
+          },
+          {
+            key: 'status',
+            label: t('transactions.modal.fields.status'),
+            value: t(`transactions.statuses.${selectedTransaction.status?.toLowerCase() || 'unknown'}`, {
+              defaultValue: selectedTransaction.status,
+            }),
+          },
+          {
+            key: 'sourceDocId',
+            label: t('transactions.modal.fields.sourceDocId'),
+            value: formatDetailValue(selectedTransaction.sourceDocId),
+          },
+          {
+            key: 'createdAt',
+            label: t('transactions.modal.fields.createdAt'),
+            value: formatDetailValue(selectedTransaction.createdAt),
+          },
+        ],
+      },
+      {
+        key: 'financial',
+        title: t('transactions.modal.sections.financial'),
+        fields: [
+          {
+            key: 'date',
+            label: t('transactions.modal.fields.date'),
+            value: `${formatDate(selectedTransaction.date, numberLocale)} (${formatDetailValue(selectedTransaction.date)})`,
+          },
+          {
+            key: 'quantity',
+            label: t('transactions.modal.fields.quantity'),
+            value: formatNumber(Math.trunc(Number(selectedTransaction.quantity || 0)), 0),
+          },
+          {
+            key: 'price',
+            label: t('transactions.modal.fields.price'),
+            value: formatCurrency(
+              Number(selectedTransaction.price || 0),
+              selectedTransaction.currency || 'BRL',
+              numberLocale
+            ),
+          },
+          {
+            key: 'amount',
+            label: t('transactions.modal.fields.amount'),
+            value: formatCurrency(
+              Number(selectedTransaction.amount || 0),
+              selectedTransaction.currency || 'BRL',
+              numberLocale
+            ),
+          },
+          {
+            key: 'currency',
+            label: t('transactions.modal.fields.currency'),
+            value: formatDetailValue(selectedTransaction.currency),
+          },
+        ],
+      },
+    ];
+  }, [formatDetailValue, numberLocale, selectedTransaction, t]);
 
   return (
     <Layout>
@@ -300,144 +368,20 @@ const TransactionsPage = () => {
           />
         )}
 
-        {selectedTransaction && (
-          <div className="transactions-modal-overlay" onClick={() => setSelectedTransaction(null)}>
-            <div
-              className="transactions-modal"
-              onClick={(event) => event.stopPropagation()}
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="transaction-modal-title"
-            >
-              <div className="transactions-modal__header">
-                <div>
-                  <h2 id="transaction-modal-title">
-                    {selectedTransaction.type?.toLowerCase() === 'transfer'
-                      ? t('transactions.modal.transferTitle')
-                      : t('transactions.modal.transactionTitle')}
-                  </h2>
-                  <p>{t('transactions.modal.subtitle')}</p>
-                </div>
-                <button
-                  type="button"
-                  className="transactions-modal__close"
-                  onClick={() => setSelectedTransaction(null)}
-                >
-                  {t('transactions.modal.close')}
-                </button>
-              </div>
-
-              <div className="transactions-modal__grid">
-                <section className="transactions-modal__section">
-                  <h3>{t('transactions.modal.sections.overview')}</h3>
-                  <dl>
-                    <div>
-                      <dt>{t('transactions.modal.fields.transId')}</dt>
-                      <dd>{formatDetailValue(selectedTransaction.transId)}</dd>
-                    </div>
-                    <div>
-                      <dt>{t('transactions.modal.fields.portfolioId')}</dt>
-                      <dd>{formatDetailValue(selectedTransaction.portfolioId)}</dd>
-                    </div>
-                    <div>
-                      <dt>{t('transactions.modal.fields.assetId')}</dt>
-                      <dd>{formatDetailValue(selectedTransaction.assetId)}</dd>
-                    </div>
-                    <div>
-                      <dt>{t('transactions.modal.fields.ticker')}</dt>
-                      <dd>{formatDetailValue(selectedTransaction.ticker)}</dd>
-                    </div>
-                    <div>
-                      <dt>{t('transactions.modal.fields.name')}</dt>
-                      <dd>{formatDetailValue(selectedTransaction.name)}</dd>
-                    </div>
-                    <div>
-                      <dt>{t('transactions.modal.fields.type')}</dt>
-                      <dd>
-                        {t(`transactions.types.${selectedTransaction.type?.toLowerCase() || 'unknown'}`, {
-                          defaultValue: selectedTransaction.type,
-                        })}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>{t('transactions.modal.fields.status')}</dt>
-                      <dd>
-                        {t(`transactions.statuses.${selectedTransaction.status?.toLowerCase() || 'unknown'}`, {
-                          defaultValue: selectedTransaction.status,
-                        })}
-                      </dd>
-                    </div>
-                  </dl>
-                </section>
-
-                <section className="transactions-modal__section">
-                  <h3>{t('transactions.modal.sections.financial')}</h3>
-                  <dl>
-                    <div>
-                      <dt>{t('transactions.modal.fields.date')}</dt>
-                      <dd>
-                        {`${formatDate(selectedTransaction.date, numberLocale)} (${formatDetailValue(selectedTransaction.date)})`}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>{t('transactions.modal.fields.quantity')}</dt>
-                      <dd>{formatNumber(Math.trunc(Number(selectedTransaction.quantity || 0)), 0)}</dd>
-                    </div>
-                    <div>
-                      <dt>{t('transactions.modal.fields.price')}</dt>
-                      <dd>
-                        {formatCurrency(
-                          Number(selectedTransaction.price || 0),
-                          selectedTransaction.currency || 'BRL',
-                          numberLocale
-                        )}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>{t('transactions.modal.fields.amount')}</dt>
-                      <dd>
-                        {formatCurrency(
-                          Number(selectedTransaction.amount || 0),
-                          selectedTransaction.currency || 'BRL',
-                          numberLocale
-                        )}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>{t('transactions.modal.fields.currency')}</dt>
-                      <dd>{formatDetailValue(selectedTransaction.currency)}</dd>
-                    </div>
-                  </dl>
-                </section>
-
-                <section className="transactions-modal__section transactions-modal__section--full">
-                  <h3>{t('transactions.modal.sections.metadata')}</h3>
-                  <dl>
-                    <div>
-                      <dt>{t('transactions.modal.fields.sourceDocId')}</dt>
-                      <dd>{formatDetailValue(selectedTransaction.sourceDocId)}</dd>
-                    </div>
-                    <div>
-                      <dt>{t('transactions.modal.fields.createdAt')}</dt>
-                      <dd>{formatDetailValue(selectedTransaction.createdAt)}</dd>
-                    </div>
-                    {extraDetailEntries.map(([key, value]) => (
-                      <div key={key}>
-                        <dt>{key}</dt>
-                        <dd>{formatDetailValue(value)}</dd>
-                      </div>
-                    ))}
-                  </dl>
-                </section>
-
-                <section className="transactions-modal__section transactions-modal__section--full">
-                  <h3>{t('transactions.modal.sections.raw')}</h3>
-                  <pre>{JSON.stringify(selectedTransaction, null, 2)}</pre>
-                </section>
-              </div>
-            </div>
-          </div>
-        )}
+        <RecordDetailsModal
+          open={Boolean(selectedTransaction)}
+          title={
+            selectedTransaction?.type?.toLowerCase() === 'transfer'
+              ? t('transactions.modal.transferTitle')
+              : t('transactions.modal.transactionTitle')
+          }
+          subtitle={t('transactions.modal.subtitle')}
+          closeLabel={t('transactions.modal.close')}
+          sections={transactionDetailsSections}
+          rawTitle={t('transactions.modal.sections.raw')}
+          rawData={selectedTransaction}
+          onClose={() => setSelectedTransaction(null)}
+        />
       </div>
     </Layout>
   );

@@ -59,6 +59,18 @@
     color: var(--primary-light);
   }
 
+  &__cell--name {
+    max-width: 260px;
+  }
+
+  &__name-ellipsis {
+    display: block;
+    max-width: 260px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   &__delete {
     background: none;
     border: 1px solid var(--error);

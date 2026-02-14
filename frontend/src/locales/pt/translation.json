@@ -25,6 +25,7 @@
     "addAsset": "Adicionar Ativo",
     "ticker": "Ticker",
     "name": "Nome",
+    "quantity": "Quantidade",
     "class": "Classe",
     "country": "País",
     "currency": "Moeda",
@@ -53,6 +54,32 @@
       "active": "Ativo",
       "inactive": "Inativo",
       "unknown": "Desconhecido"
+    },
+    "modal": {
+      "title": "Detalhes do Ativo",
+      "subtitle": "Visualizacao completa do ativo selecionado",
+      "close": "Fechar",
+      "noValue": "N/A",
+      "openDetails": "Abrir detalhes do ativo {{ticker}}",
+      "sections": {
+        "overview": "Resumo",
+        "market": "Mercado",
+        "metadata": "Metadados",
+        "raw": "Payload Bruto"
+      },
+      "fields": {
+        "assetId": "ID do Ativo",
+        "portfolioId": "ID do Portfolio",
+        "ticker": "Ticker",
+        "name": "Nome",
+        "quantity": "Quantidade",
+        "class": "Classe",
+        "status": "Status",
+        "source": "Fonte",
+        "country": "Pais",
+        "currency": "Moeda",
+        "createdAt": "Criado Em"
+      }
     },
     "form": {
       "ticker": "Símbolo do Ticker",
@@ -109,6 +136,7 @@
       "dividend": "Dividendo",
       "jcp": "JCP",
       "tax": "Imposto",
+      "subscription": "Subscricao",
       "transfer": "Transferência"
     },
     "statuses": {
