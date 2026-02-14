@@ -1,0 +1,53 @@
+// Colors - Glassmorphism tokens
+$primary: #6366f1;
+$primary-light: #818cf8;
+$primary-dark: #4f46e5;
+$accent: #06b6d4;
+$success: #22c55e;
+$warning: #f59e0b;
+$error: #ef4444;
+
+// Glass
+$glass-bg: rgba(255, 255, 255, 0.05);
+$glass-border: rgba(255, 255, 255, 0.1);
+$glass-bg-light: rgba(0, 0, 0, 0.03);
+$glass-border-light: rgba(0, 0, 0, 0.08);
+
+// Dark theme (default)
+$bg-dark: #0a0a12;
+$bg-dark-secondary: #12121e;
+$bg-dark-card: rgba(255, 255, 255, 0.04);
+$text-dark: #f1f5f9;
+$text-dark-secondary: #94a3b8;
+
+// Light theme
+$bg-light: #f8fafc;
+$bg-light-secondary: #ffffff;
+$bg-light-card: rgba(0, 0, 0, 0.02);
+$text-light: #0f172a;
+$text-light-secondary: #64748b;
+
+// Spacing
+$spacing-xs: 4px;
+$spacing-sm: 8px;
+$spacing-md: 16px;
+$spacing-lg: 24px;
+$spacing-xl: 32px;
+$spacing-xxl: 48px;
+
+// Breakpoints
+$breakpoint-mobile: 480px;
+$breakpoint-tablet: 768px;
+$breakpoint-desktop: 1024px;
+
+// Layout
+$sidebar-width: 260px;
+$sidebar-collapsed-width: 72px;
+$page-max-width: 1200px;
+$card-border-radius: 16px;
+$card-border-radius-sm: 12px;
+
+// Transitions
+$transition-fast: 150ms ease;
+$transition-normal: 250ms ease;
+$transition-slow: 350ms ease;

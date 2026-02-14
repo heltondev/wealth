@@ -1,0 +1,83 @@
+{
+  "nav": {
+    "dashboard": "Painel",
+    "assets": "Ativos",
+    "documents": "Documentos",
+    "settings": "Configurações",
+    "logout": "Sair"
+  },
+  "login": {
+    "title": "WealthHub",
+    "subtitle": "Rastreador de portfólio multi-moeda",
+    "mockLogin": "Entrar (Dev Local)",
+    "googleLogin": "Entrar com Google"
+  },
+  "dashboard": {
+    "title": "Painel",
+    "totalValue": "Valor Total",
+    "totalGain": "Ganho/Perda Total",
+    "allocation": "Alocação",
+    "noData": "Nenhum dado de portfólio ainda. Crie um portfólio para começar."
+  },
+  "assets": {
+    "title": "Ativos",
+    "addAsset": "Adicionar Ativo",
+    "ticker": "Ticker",
+    "name": "Nome",
+    "class": "Classe",
+    "country": "País",
+    "currency": "Moeda",
+    "status": "Status",
+    "actions": "Ações",
+    "empty": "Nenhum ativo ainda. Adicione seu primeiro ativo para começar.",
+    "form": {
+      "ticker": "Símbolo do Ticker",
+      "name": "Nome do Ativo",
+      "class": "Classe do Ativo",
+      "country": "País",
+      "currency": "Moeda",
+      "submit": "Adicionar Ativo",
+      "cancel": "Cancelar"
+    },
+    "classes": {
+      "stock": "Ação",
+      "fii": "FII",
+      "bond": "Renda Fixa",
+      "crypto": "Cripto",
+      "rsu": "RSU"
+    }
+  },
+  "documents": {
+    "title": "Documentos",
+    "upload": "Enviar Documento",
+    "empty": "Nenhum documento enviado ainda.",
+    "status": {
+      "uploaded": "Enviado",
+      "processing": "Processando",
+      "parsed": "Processado",
+      "error": "Erro"
+    }
+  },
+  "settings": {
+    "title": "Configurações",
+    "profile": "Perfil",
+    "aliases": "Apelidos",
+    "preferences": "Preferências",
+    "save": "Salvar",
+    "displayName": "Nome de Exibição",
+    "email": "Email",
+    "preferredCurrency": "Moeda Preferida",
+    "language": "Idioma"
+  },
+  "common": {
+    "loading": "Carregando...",
+    "error": "Algo deu errado",
+    "save": "Salvar",
+    "cancel": "Cancelar",
+    "delete": "Excluir",
+    "edit": "Editar",
+    "create": "Criar",
+    "confirm": "Confirmar",
+    "search": "Buscar"
+  }
+}

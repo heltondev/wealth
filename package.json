@@ -1,0 +1,45 @@
+{
+  "name": "wealthhub-root",
+  "version": "1.0.0",
+  "author": "Oliver",
+  "description": "WealthHub - Personal multi-currency investment portfolio tracker",
+  "keywords": [
+    "aws",
+    "terraform",
+    "serverless",
+    "react",
+    "investment-tracker",
+    "portfolio",
+    "wealthhub"
+  ],
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "node backend/local/server.js",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "setup:db": "node backend/scripts/seed-data.js",
+    "import:b3": "node backend/scripts/import-b3.js",
+    "import:b3:dry": "node backend/scripts/import-b3.js --dry-run",
+    "test": "npm run test:backend",
+    "test:backend": "node --test backend/**/*.test.js",
+    "lint": "npm --prefix frontend run lint",
+    "ci:check": "npm --prefix frontend run lint && npm --prefix frontend run build && npm run test:backend"
+  },
+  "dependencies": {
+    "@aws-sdk/client-cognito-identity-provider": "^3.990.0",
+    "@aws-sdk/client-dynamodb": "^3.990.0",
+    "@aws-sdk/client-s3": "^3.990.0",
+    "@aws-sdk/lib-dynamodb": "^3.990.0",
+    "@aws-sdk/s3-request-presigner": "^3.990.0"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "xlsx": "^0.18.5"
+  }
+}

@@ -1,0 +1,139 @@
+@use '../styles/variables' as *;
+@use '../styles/mixins' as *;
+
+.settings-page {
+  @include page-container;
+
+  &__title {
+    font-size: 1.8rem;
+    margin-bottom: $spacing-lg;
+  }
+
+  &__tabs {
+    display: flex;
+    gap: $spacing-xs;
+    margin-bottom: $spacing-lg;
+    border-bottom: 1px solid var(--glass-border);
+    padding-bottom: $spacing-xs;
+  }
+
+  &__tab {
+    padding: $spacing-sm $spacing-lg;
+    border: none;
+    background: none;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    font-weight: 500;
+    border-radius: 8px 8px 0 0;
+    transition: all $transition-fast;
+
+    &:hover {
+      color: var(--text-primary);
+      background: var(--glass-bg);
+    }
+
+    &--active {
+      color: var(--primary-light);
+      border-bottom: 2px solid var(--primary);
+    }
+  }
+
+  &__loading {
+    color: var(--text-secondary);
+    padding: $spacing-lg;
+  }
+}
+
+.settings-section {
+  @include glass-card;
+  padding: $spacing-lg;
+
+  &__field {
+    margin-bottom: $spacing-md;
+
+    label {
+      display: block;
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      margin-bottom: $spacing-xs;
+    }
+
+    input, select {
+      width: 100%;
+      max-width: 400px;
+      padding: $spacing-sm $spacing-md;
+      border-radius: 8px;
+      border: 1px solid var(--glass-border);
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      font-size: 0.9rem;
+
+      &:disabled {
+        opacity: 0.6;
+      }
+    }
+  }
+
+  &__save {
+    padding: $spacing-sm $spacing-xl;
+    border-radius: 8px;
+    border: none;
+    background: var(--primary);
+    color: #fff;
+    font-weight: 500;
+    margin-top: $spacing-md;
+    transition: background $transition-fast;
+
+    &:hover {
+      background: var(--primary-dark);
+    }
+  }
+}
+
+.alias-form {
+  display: flex;
+  gap: $spacing-sm;
+  flex-wrap: wrap;
+  margin-bottom: $spacing-lg;
+
+  input, select {
+    padding: $spacing-sm $spacing-md;
+    border-radius: 8px;
+    border: 1px solid var(--glass-border);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 0.9rem;
+  }
+
+  button {
+    padding: $spacing-sm $spacing-lg;
+    border-radius: 8px;
+    border: none;
+    background: var(--primary);
+    color: #fff;
+    font-weight: 500;
+  }
+}
+
+.aliases-table {
+  width: 100%;
+  border-collapse: collapse;
+
+  th, td {
+    padding: $spacing-sm $spacing-md;
+    text-align: left;
+    border-bottom: 1px solid var(--glass-border);
+  }
+
+  th {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-secondary);
+  }
+
+  &__ticker {
+    font-weight: 600;
+    color: var(--primary-light);
+  }
+}

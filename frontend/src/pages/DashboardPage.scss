@@ -1,0 +1,98 @@
+@use '../styles/variables' as *;
+@use '../styles/mixins' as *;
+
+.dashboard {
+  @include page-container;
+
+  &__title {
+    font-size: 1.8rem;
+    margin-bottom: $spacing-lg;
+  }
+
+  &__loading,
+  &__empty {
+    @include glass-card;
+    padding: $spacing-xxl;
+    text-align: center;
+    color: var(--text-secondary);
+  }
+
+  &__kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: $spacing-md;
+    margin-bottom: $spacing-lg;
+  }
+
+  &__chart-placeholder {
+    @include glass-card;
+    padding: $spacing-lg;
+    margin-bottom: $spacing-lg;
+    min-height: 300px;
+    @include flex-center;
+    flex-direction: column;
+    gap: $spacing-sm;
+
+    h3 {
+      font-size: 1.1rem;
+    }
+  }
+
+  &__chart-note {
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+  }
+
+  &__portfolios {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: $spacing-md;
+  }
+}
+
+.kpi-card {
+  @include glass-card;
+  padding: $spacing-lg;
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
+
+  &__label {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  &__value {
+    font-size: 1.8rem;
+    font-weight: 700;
+  }
+}
+
+.portfolio-card {
+  @include glass-card;
+  padding: $spacing-lg;
+
+  &__name {
+    font-size: 1.1rem;
+    margin-bottom: $spacing-xs;
+  }
+
+  &__desc {
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    margin-bottom: $spacing-sm;
+  }
+
+  &__currency {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    color: var(--accent);
+  }
+}

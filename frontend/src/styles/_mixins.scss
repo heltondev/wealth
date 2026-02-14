@@ -1,0 +1,37 @@
+@use 'variables' as *;
+
+@mixin respond-to($breakpoint) {
+  @if $breakpoint == 'tablet' {
+    @media (min-width: $breakpoint-tablet) { @content; }
+  } @else if $breakpoint == 'desktop' {
+    @media (min-width: $breakpoint-desktop) { @content; }
+  }
+}
+
+@mixin flex-center {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+@mixin glass-card {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: $card-border-radius;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+@mixin page-container {
+  max-width: $page-max-width;
+  margin: 0 auto;
+  padding: $spacing-md;
+
+  @include respond-to('tablet') {
+    padding: $spacing-lg;
+  }
+
+  @include respond-to('desktop') {
+    padding: $spacing-xl;
+  }
+}

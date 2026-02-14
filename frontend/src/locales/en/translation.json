@@ -1,0 +1,83 @@
+{
+  "nav": {
+    "dashboard": "Dashboard",
+    "assets": "Assets",
+    "documents": "Documents",
+    "settings": "Settings",
+    "logout": "Logout"
+  },
+  "login": {
+    "title": "WealthHub",
+    "subtitle": "Multi-currency portfolio tracker",
+    "mockLogin": "Sign in (Local Dev)",
+    "googleLogin": "Sign in with Google"
+  },
+  "dashboard": {
+    "title": "Dashboard",
+    "totalValue": "Total Value",
+    "totalGain": "Total Gain/Loss",
+    "allocation": "Allocation",
+    "noData": "No portfolio data yet. Create a portfolio to get started."
+  },
+  "assets": {
+    "title": "Assets",
+    "addAsset": "Add Asset",
+    "ticker": "Ticker",
+    "name": "Name",
+    "class": "Class",
+    "country": "Country",
+    "currency": "Currency",
+    "status": "Status",
+    "actions": "Actions",
+    "empty": "No assets yet. Add your first asset to start tracking.",
+    "form": {
+      "ticker": "Ticker Symbol",
+      "name": "Asset Name",
+      "class": "Asset Class",
+      "country": "Country",
+      "currency": "Currency",
+      "submit": "Add Asset",
+      "cancel": "Cancel"
+    },
+    "classes": {
+      "stock": "Stock",
+      "fii": "FII",
+      "bond": "Bond",
+      "crypto": "Crypto",
+      "rsu": "RSU"
+    }
+  },
+  "documents": {
+    "title": "Documents",
+    "upload": "Upload Document",
+    "empty": "No documents uploaded yet.",
+    "status": {
+      "uploaded": "Uploaded",
+      "processing": "Processing",
+      "parsed": "Parsed",
+      "error": "Error"
+    }
+  },
+  "settings": {
+    "title": "Settings",
+    "profile": "Profile",
+    "aliases": "Aliases",
+    "preferences": "Preferences",
+    "save": "Save",
+    "displayName": "Display Name",
+    "email": "Email",
+    "preferredCurrency": "Preferred Currency",
+    "language": "Language"
+  },
+  "common": {
+    "loading": "Loading...",
+    "error": "Something went wrong",
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "create": "Create",
+    "confirm": "Confirm",
+    "search": "Search"
+  }
+}

@@ -1,0 +1,57 @@
+@use '../styles/variables' as *;
+@use '../styles/mixins' as *;
+
+.documents-page {
+  @include page-container;
+
+  &__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: $spacing-lg;
+  }
+
+  &__title {
+    font-size: 1.8rem;
+  }
+
+  &__upload-btn {
+    padding: $spacing-sm $spacing-lg;
+    border-radius: 8px;
+    border: none;
+    background: var(--primary);
+    color: #fff;
+    font-weight: 500;
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+  }
+
+  &__dropzone {
+    @include glass-card;
+    padding: $spacing-xxl;
+    border: 2px dashed var(--glass-border);
+    border-radius: $card-border-radius;
+    min-height: 300px;
+    @include flex-center;
+  }
+
+  &__dropzone-content {
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: $spacing-md;
+  }
+
+  &__dropzone-icon {
+    font-size: 3rem;
+  }
+
+  &__dropzone-hint {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+  }
+}

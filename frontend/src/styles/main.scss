@@ -1,0 +1,90 @@
+@use 'variables' as *;
+
+:root {
+  // Dark theme (default)
+  --bg-primary: #{$bg-dark};
+  --bg-secondary: #{$bg-dark-secondary};
+  --bg-card: #{$bg-dark-card};
+  --text-primary: #{$text-dark};
+  --text-secondary: #{$text-dark-secondary};
+  --glass-bg: #{$glass-bg};
+  --glass-border: #{$glass-border};
+  --primary: #{$primary};
+  --primary-light: #{$primary-light};
+  --primary-dark: #{$primary-dark};
+  --accent: #{$accent};
+  --success: #{$success};
+  --warning: #{$warning};
+  --error: #{$error};
+  --sidebar-width: #{$sidebar-width};
+  --transition-fast: #{$transition-fast};
+  --transition-normal: #{$transition-normal};
+}
+
+[data-theme='light'] {
+  --bg-primary: #{$bg-light};
+  --bg-secondary: #{$bg-light-secondary};
+  --bg-card: #{$bg-light-card};
+  --text-primary: #{$text-light};
+  --text-secondary: #{$text-light-secondary};
+  --glass-bg: #{$glass-bg-light};
+  --glass-border: #{$glass-border-light};
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  line-height: 1.6;
+  min-height: 100vh;
+}
+
+a {
+  color: var(--primary-light);
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+button {
+  cursor: pointer;
+  font-family: inherit;
+}
+
+input, select, textarea {
+  font-family: inherit;
+  font-size: inherit;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  line-height: 1.3;
+  font-weight: 600;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}

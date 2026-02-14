@@ -1,0 +1,48 @@
+# OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Node
+node_modules/
+npm-debug.log
+yarn-error.log
+.env
+.env.local
+.env.*.local
+
+# Build
+dist/
+build/
+coverage/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+*.tfvars.json
+.terraform.lock.hcl
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Lambda
+*.zip
+
+# Logs
+logs/
+*.log
+
+# Misc
+*.bak
+*.tmp
+*.cache
+*.pid
+*.seed
+*.pid.lock
+.data/
