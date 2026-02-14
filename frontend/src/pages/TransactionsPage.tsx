@@ -23,6 +23,22 @@ interface TransactionRow extends Transaction {
 }
 
 const PAGE_SIZE_OPTIONS = [5, 10, 25, 50];
+const BASE_DETAIL_KEYS = new Set([
+  'transId',
+  'portfolioId',
+  'assetId',
+  'ticker',
+  'name',
+  'type',
+  'status',
+  'date',
+  'quantity',
+  'price',
+  'amount',
+  'currency',
+  'sourceDocId',
+  'createdAt',
+]);
 
 const TransactionsPage = () => {
   const { t, i18n } = useTranslation();
@@ -38,6 +54,7 @@ const TransactionsPage = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [sortKey, setSortKey] = useState<SortKey>('date');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+  const [selectedTransaction, setSelectedTransaction] = useState<TransactionRow | null>(null);
 
   useEffect(() => {
     api.getPortfolios()
@@ -178,6 +195,25 @@ const TransactionsPage = () => {
     if (sortKey !== field) return '<>';
     return sortDirection === 'asc' ? '^' : 'v';
   };
+
+  const formatDetailValue = (value: unknown) => {
+    if (value === undefined || value === null || value === '') return t('transactions.modal.noValue');
+    return String(value);
+  };
+
+  const extraDetailEntries = useMemo(() => {
+    if (!selectedTransaction) return [];
+    return Object.entries(selectedTransaction).filter(([key]) => !BASE_DETAIL_KEYS.has(key));
+  }, [selectedTransaction]);
+
+  useEffect(() => {
+    if (!selectedTransaction) return undefined;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSelectedTransaction(null);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedTransaction]);
 
   return (
     <Layout>
@@ -337,14 +373,28 @@ const TransactionsPage = () => {
                     <tbody>
                       {paginatedRows.map((row) => {
                         const normalizedStatus = row.status?.toLowerCase() || 'unknown';
+                        const normalizedType = row.type?.toLowerCase() || 'unknown';
                         return (
-                          <tr key={row.transId}>
+                          <tr
+                            key={row.transId}
+                            className="transactions-table__row transactions-table__row--clickable"
+                            onClick={() => setSelectedTransaction(row)}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault();
+                                setSelectedTransaction(row);
+                              }
+                            }}
+                            role="button"
+                            tabIndex={0}
+                            aria-label={t('transactions.modal.openDetails', { id: row.transId })}
+                          >
                             <td>{formatDate(row.date, numberLocale)}</td>
                             <td className="transactions-table__ticker">{row.ticker}</td>
                             <td>{row.name}</td>
                             <td>
-                              <span className={`badge badge--${row.type}`}>
-                                {t(`transactions.types.${row.type.toLowerCase()}`, { defaultValue: row.type })}
+                              <span className={`badge badge--${normalizedType}`}>
+                                {t(`transactions.types.${normalizedType}`, { defaultValue: row.type })}
                               </span>
                             </td>
                             <td>{formatNumber(Math.trunc(Number(row.quantity || 0)), 0)}</td>
@@ -396,6 +446,145 @@ const TransactionsPage = () => {
               </>
             )}
           </>
+        )}
+
+        {selectedTransaction && (
+          <div className="transactions-modal-overlay" onClick={() => setSelectedTransaction(null)}>
+            <div
+              className="transactions-modal"
+              onClick={(event) => event.stopPropagation()}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="transaction-modal-title"
+            >
+              <div className="transactions-modal__header">
+                <div>
+                  <h2 id="transaction-modal-title">
+                    {selectedTransaction.type?.toLowerCase() === 'transfer'
+                      ? t('transactions.modal.transferTitle')
+                      : t('transactions.modal.transactionTitle')}
+                  </h2>
+                  <p>{t('transactions.modal.subtitle')}</p>
+                </div>
+                <button
+                  type="button"
+                  className="transactions-modal__close"
+                  onClick={() => setSelectedTransaction(null)}
+                >
+                  {t('transactions.modal.close')}
+                </button>
+              </div>
+
+              <div className="transactions-modal__grid">
+                <section className="transactions-modal__section">
+                  <h3>{t('transactions.modal.sections.overview')}</h3>
+                  <dl>
+                    <div>
+                      <dt>{t('transactions.modal.fields.transId')}</dt>
+                      <dd>{formatDetailValue(selectedTransaction.transId)}</dd>
+                    </div>
+                    <div>
+                      <dt>{t('transactions.modal.fields.portfolioId')}</dt>
+                      <dd>{formatDetailValue(selectedTransaction.portfolioId)}</dd>
+                    </div>
+                    <div>
+                      <dt>{t('transactions.modal.fields.assetId')}</dt>
+                      <dd>{formatDetailValue(selectedTransaction.assetId)}</dd>
+                    </div>
+                    <div>
+                      <dt>{t('transactions.modal.fields.ticker')}</dt>
+                      <dd>{formatDetailValue(selectedTransaction.ticker)}</dd>
+                    </div>
+                    <div>
+                      <dt>{t('transactions.modal.fields.name')}</dt>
+                      <dd>{formatDetailValue(selectedTransaction.name)}</dd>
+                    </div>
+                    <div>
+                      <dt>{t('transactions.modal.fields.type')}</dt>
+                      <dd>
+                        {t(`transactions.types.${selectedTransaction.type?.toLowerCase() || 'unknown'}`, {
+                          defaultValue: selectedTransaction.type,
+                        })}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>{t('transactions.modal.fields.status')}</dt>
+                      <dd>
+                        {t(`transactions.statuses.${selectedTransaction.status?.toLowerCase() || 'unknown'}`, {
+                          defaultValue: selectedTransaction.status,
+                        })}
+                      </dd>
+                    </div>
+                  </dl>
+                </section>
+
+                <section className="transactions-modal__section">
+                  <h3>{t('transactions.modal.sections.financial')}</h3>
+                  <dl>
+                    <div>
+                      <dt>{t('transactions.modal.fields.date')}</dt>
+                      <dd>
+                        {`${formatDate(selectedTransaction.date, numberLocale)} (${formatDetailValue(selectedTransaction.date)})`}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>{t('transactions.modal.fields.quantity')}</dt>
+                      <dd>{formatNumber(Math.trunc(Number(selectedTransaction.quantity || 0)), 0)}</dd>
+                    </div>
+                    <div>
+                      <dt>{t('transactions.modal.fields.price')}</dt>
+                      <dd>
+                        {formatCurrency(
+                          Number(selectedTransaction.price || 0),
+                          selectedTransaction.currency || 'BRL',
+                          numberLocale
+                        )}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>{t('transactions.modal.fields.amount')}</dt>
+                      <dd>
+                        {formatCurrency(
+                          Number(selectedTransaction.amount || 0),
+                          selectedTransaction.currency || 'BRL',
+                          numberLocale
+                        )}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>{t('transactions.modal.fields.currency')}</dt>
+                      <dd>{formatDetailValue(selectedTransaction.currency)}</dd>
+                    </div>
+                  </dl>
+                </section>
+
+                <section className="transactions-modal__section transactions-modal__section--full">
+                  <h3>{t('transactions.modal.sections.metadata')}</h3>
+                  <dl>
+                    <div>
+                      <dt>{t('transactions.modal.fields.sourceDocId')}</dt>
+                      <dd>{formatDetailValue(selectedTransaction.sourceDocId)}</dd>
+                    </div>
+                    <div>
+                      <dt>{t('transactions.modal.fields.createdAt')}</dt>
+                      <dd>{formatDetailValue(selectedTransaction.createdAt)}</dd>
+                    </div>
+                    {extraDetailEntries.map(([key, value]) => (
+                      <div key={key}>
+                        <dt>{key}</dt>
+                        <dd>{formatDetailValue(value)}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </section>
+
+                <section className="transactions-modal__section transactions-modal__section--full">
+                  <h3>{t('transactions.modal.sections.raw')}</h3>
+                  <pre>{JSON.stringify(selectedTransaction, null, 2)}</pre>
+                </section>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </Layout>

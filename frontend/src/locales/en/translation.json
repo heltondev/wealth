@@ -117,6 +117,36 @@
       "failed": "Failed",
       "canceled": "Canceled",
       "unknown": "Unknown"
+    },
+    "modal": {
+      "transferTitle": "Transfer Details",
+      "transactionTitle": "Transaction Details",
+      "subtitle": "Complete detail view for the selected transaction",
+      "close": "Close",
+      "noValue": "N/A",
+      "openDetails": "Open details for transaction {{id}}",
+      "sections": {
+        "overview": "Overview",
+        "financial": "Financial",
+        "metadata": "Metadata",
+        "raw": "Raw Payload"
+      },
+      "fields": {
+        "transId": "Transaction ID",
+        "portfolioId": "Portfolio ID",
+        "assetId": "Asset ID",
+        "ticker": "Ticker",
+        "name": "Name",
+        "type": "Type",
+        "status": "Status",
+        "date": "Date",
+        "quantity": "Quantity",
+        "price": "Price",
+        "amount": "Amount",
+        "currency": "Currency",
+        "sourceDocId": "Source Document ID",
+        "createdAt": "Created At"
+      }
     }
   },
   "documents": {
