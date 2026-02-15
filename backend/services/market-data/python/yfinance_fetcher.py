@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import math
 import sys
 from typing import Any
 
@@ -24,8 +25,19 @@ def _to_json_compatible(value: Any) -> Any:
     if value is None:
         return None
 
-    if isinstance(value, (str, int, float, bool)):
+    if isinstance(value, bool):
         return value
+
+    if isinstance(value, int):
+        return value
+
+    if isinstance(value, float):
+        # JSON.parse in Node does not accept NaN/Infinity literals.
+        return value if math.isfinite(value) else None
+
+    # numpy float/int subclasses should also be normalized before dumps.
+    if isinstance(value, complex):
+        return None
 
     if isinstance(value, (dt.datetime, dt.date)):
         return value.isoformat()
@@ -33,7 +45,7 @@ def _to_json_compatible(value: Any) -> Any:
     # pandas / numpy scalars usually expose item()
     if hasattr(value, "item"):
         try:
-            return value.item()
+            return _to_json_compatible(value.item())
         except Exception:
             pass
 
@@ -100,7 +112,8 @@ def _load_input() -> dict[str, Any]:
 
 
 def _emit(payload: dict[str, Any]) -> None:
-    sys.stdout.write(json.dumps(payload, ensure_ascii=False))
+    # Enforce strict JSON to avoid NaN/Infinity leaking to Node JSON.parse.
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False, allow_nan=False))
     sys.stdout.flush()
 
 

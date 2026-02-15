@@ -9,6 +9,7 @@ const AssetsPage = lazy(() => import('./pages/AssetsPage'));
 const TransactionsPage = lazy(() => import('./pages/TransactionsPage'));
 const DocumentsPage = lazy(() => import('./pages/DocumentsPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
+const PlatformPage = lazy(() => import('./pages/PlatformPage'));
 
 const ALL_ROLES: AppRole[] = ['VIEWER', 'EDITOR', 'ADMIN'];
 const ADMIN_ONLY: AppRole[] = ['ADMIN'];
@@ -64,6 +65,16 @@ function App() {
             <Suspense fallback={null}>
               <ProtectedRoute allowedRoles={ADMIN_ONLY}>
                 <SettingsPage />
+              </ProtectedRoute>
+            </Suspense>
+          }
+        />
+        <Route
+          path="/platform"
+          element={
+            <Suspense fallback={null}>
+              <ProtectedRoute allowedRoles={ALL_ROLES}>
+                <PlatformPage />
               </ProtectedRoute>
             </Suspense>
           }

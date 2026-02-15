@@ -3,6 +3,7 @@
     "dashboard": "Painel",
     "assets": "Ativos",
     "transactions": "Transações",
+    "platform": "Plataforma",
     "documents": "Documentos",
     "settings": "Configurações",
     "logout": "Sair"
@@ -74,12 +75,21 @@
         "name": "Nome",
         "quantity": "Quantidade",
         "investedAmount": "Total Investido",
+        "currentPrice": "Cotação Atual",
+        "currentValue": "Saldo Atual",
+        "investedMinusCurrent": "Saldo - Investido (P/L)",
+        "positionStatus": "Resultado",
         "class": "Classe",
         "status": "Status",
         "source": "Fonte",
         "country": "Pais",
         "currency": "Moeda",
         "createdAt": "Criado Em"
+      },
+      "position": {
+        "positive": "Positivo",
+        "negative": "Negativo",
+        "neutral": "Neutro"
       }
     },
     "form": {

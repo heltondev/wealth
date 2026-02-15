@@ -44,6 +44,10 @@ export interface Asset {
   currency: string;
   status: string;
   quantity?: number;
+  currentPrice?: number | null;
+  currentValue?: number | null;
+  lastPriceSource?: string | null;
+  lastPriceAt?: string | null;
   source?: string | null;
   createdAt: string;
 }
@@ -191,6 +195,26 @@ export const api = {
     request<Transaction>(`/portfolios/${portfolioId}/transactions`, { method: 'POST', body: JSON.stringify(data) }),
   deleteTransaction: (portfolioId: string, transId: string) =>
     request<{ message: string; id: string }>(`/portfolios/${portfolioId}/transactions/${transId}`, { method: 'DELETE' }),
+
+  // Core refresh services
+  refreshMarketData: (portfolioId: string, assetId?: string) =>
+    request(`/portfolios/${portfolioId}/market-data/refresh`, {
+      method: 'POST',
+      body: JSON.stringify({ assetId: assetId || null }),
+    }),
+  refreshPriceHistory: (portfolioId: string, assetId?: string) =>
+    request(`/portfolios/${portfolioId}/price-history`, {
+      method: 'POST',
+      body: JSON.stringify({ assetId: assetId || null }),
+    }),
+  getPriceAtDate: (portfolioId: string, ticker: string, date: string) =>
+    request(`/portfolios/${portfolioId}/price-history?action=priceAtDate&ticker=${encodeURIComponent(ticker)}&date=${encodeURIComponent(date)}`),
+  getAverageCost: (portfolioId: string, ticker: string, method = 'fifo') =>
+    request(`/portfolios/${portfolioId}/price-history?action=averageCost&ticker=${encodeURIComponent(ticker)}&method=${encodeURIComponent(method)}`),
+  getPortfolioMetrics: (portfolioId: string, method = 'fifo') =>
+    request(`/portfolios/${portfolioId}/price-history?action=metrics&method=${encodeURIComponent(method)}`),
+  getPriceChart: (portfolioId: string, ticker: string, chartType = 'price_history', period = '1A', method = 'fifo') =>
+    request(`/portfolios/${portfolioId}/price-history?action=chart&ticker=${encodeURIComponent(ticker)}&chartType=${encodeURIComponent(chartType)}&period=${encodeURIComponent(period)}&method=${encodeURIComponent(method)}`),
 
   // Settings
   getProfile: () => request<UserSettings>('/settings/profile'),

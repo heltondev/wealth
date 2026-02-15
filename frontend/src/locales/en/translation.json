@@ -3,6 +3,7 @@
     "dashboard": "Dashboard",
     "assets": "Assets",
     "transactions": "Transactions",
+    "platform": "Platform",
     "documents": "Documents",
     "settings": "Settings",
     "logout": "Logout"
@@ -74,12 +75,21 @@
         "name": "Name",
         "quantity": "Quantity",
         "investedAmount": "Invested Total",
+        "currentPrice": "Current Quote",
+        "currentValue": "Current Balance",
+        "investedMinusCurrent": "Balance - Invested (P/L)",
+        "positionStatus": "Result",
         "class": "Class",
         "status": "Status",
         "source": "Source",
         "country": "Country",
         "currency": "Currency",
         "createdAt": "Created At"
+      },
+      "position": {
+        "positive": "Positive",
+        "negative": "Negative",
+        "neutral": "Neutral"
       }
     },
     "form": {

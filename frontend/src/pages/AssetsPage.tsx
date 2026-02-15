@@ -83,6 +83,7 @@ const AssetsPage = () => {
   const [statusFilter, setStatusFilter] = useState('active');
   const [itemsPerPage, setItemsPerPage] = useState(DEFAULT_ITEMS_PER_PAGE);
   const [selectedAsset, setSelectedAsset] = useState<AssetRow | null>(null);
+  const [currentQuotesByAssetId, setCurrentQuotesByAssetId] = useState<Record<string, number | null>>({});
   const [dropdownConfig, setDropdownConfig] = useState<DropdownConfigMap>(() =>
     normalizeDropdownConfig(DEFAULT_DROPDOWN_CONFIG)
   );
@@ -127,6 +128,10 @@ const AssetsPage = () => {
         setTransactions([]);
       })
       .finally(() => setLoading(false));
+  }, [selectedPortfolio]);
+
+  useEffect(() => {
+    setCurrentQuotesByAssetId({});
   }, [selectedPortfolio]);
 
   const assetClassOptions = useMemo(() => {
@@ -251,6 +256,12 @@ const AssetsPage = () => {
       maximumFractionDigits: hasFraction ? DECIMAL_PRECISION : 0,
     });
   }, [formatDetailValue, numberLocale]);
+
+  const formatSignedCurrency = useCallback((value: number, currency: string) => {
+    const absolute = formatCurrency(Math.abs(value), currency, numberLocale);
+    if (Math.abs(value) <= Number.EPSILON) return absolute;
+    return `${value > 0 ? '+' : '-'}${absolute}`;
+  }, [numberLocale]);
 
   const assetQuantitiesById = useMemo(() => {
     const quantities: Record<string, number> = {};
@@ -432,6 +443,43 @@ const AssetsPage = () => {
 
   const assetDetailsSections = useMemo<RecordDetailsSection[]>(() => {
     if (!selectedAsset) return [];
+
+    const directCurrentPrice = Number(selectedAsset.currentPrice);
+    const cachedCurrentPrice = currentQuotesByAssetId[selectedAsset.assetId];
+    const derivedCurrentPrice = (() => {
+      const currentValue = Number(selectedAsset.currentValue);
+      const quantity = Number(selectedAsset.quantity);
+      if (!Number.isFinite(currentValue) || !Number.isFinite(quantity)) return null;
+      if (Math.abs(quantity) <= Number.EPSILON) return null;
+      return currentValue / quantity;
+    })();
+    const resolvedCurrentPrice =
+      Number.isFinite(directCurrentPrice)
+        ? directCurrentPrice
+        : (typeof cachedCurrentPrice === 'number' && Number.isFinite(cachedCurrentPrice))
+          ? cachedCurrentPrice
+          : derivedCurrentPrice;
+    const resolvedCurrentValue = (() => {
+      const quantity = Number(selectedAsset.quantity);
+      if (resolvedCurrentPrice !== null && Number.isFinite(quantity)) {
+        return quantity * resolvedCurrentPrice;
+      }
+
+      const directCurrentValue = Number(selectedAsset.currentValue);
+      return Number.isFinite(directCurrentValue) ? directCurrentValue : null;
+    })();
+    const balanceMinusInvested = (() => {
+      if (resolvedCurrentValue === null) return null;
+      const investedAmount = Number(selectedAsset.investedAmount);
+      if (!Number.isFinite(investedAmount)) return null;
+      return resolvedCurrentValue - investedAmount;
+    })();
+    const positionStatus = (() => {
+      if (balanceMinusInvested === null) return null;
+      if (Math.abs(balanceMinusInvested) <= Number.EPSILON) return 'neutral';
+      return balanceMinusInvested > 0 ? 'positive' : 'negative';
+    })();
+
     return [
       {
         key: 'overview',
@@ -448,6 +496,20 @@ const AssetsPage = () => {
             key: 'investedAmount',
             label: t('assets.modal.fields.investedAmount'),
             value: formatCurrency(selectedAsset.investedAmount, selectedAsset.currency || 'BRL', numberLocale),
+          },
+          {
+            key: 'currentPrice',
+            label: t('assets.modal.fields.currentPrice'),
+            value: resolvedCurrentPrice !== null
+              ? formatCurrency(resolvedCurrentPrice, selectedAsset.currency || 'BRL', numberLocale)
+              : formatDetailValue(selectedAsset.currentPrice),
+          },
+          {
+            key: 'currentValue',
+            label: t('assets.modal.fields.currentValue'),
+            value: resolvedCurrentValue !== null
+              ? formatCurrency(resolvedCurrentValue, selectedAsset.currency || 'BRL', numberLocale)
+              : formatDetailValue(selectedAsset.currentValue),
           },
           {
             key: 'source',
@@ -482,10 +544,61 @@ const AssetsPage = () => {
             label: t('assets.modal.fields.currency'),
             value: formatDetailValue(selectedAsset.currency),
           },
+          {
+            key: 'investedMinusCurrent',
+            label: t('assets.modal.fields.investedMinusCurrent'),
+            value:
+              balanceMinusInvested !== null
+                ? formatSignedCurrency(balanceMinusInvested, selectedAsset.currency || 'BRL')
+                : formatDetailValue(balanceMinusInvested),
+          },
+          {
+            key: 'positionStatus',
+            label: t('assets.modal.fields.positionStatus'),
+            value:
+              positionStatus
+                ? (
+                  <span className={`assets-page__position assets-page__position--${positionStatus}`}>
+                    {t(`assets.modal.position.${positionStatus}`)}
+                  </span>
+                )
+                : formatDetailValue(positionStatus),
+          },
         ],
       },
     ];
-  }, [formatAssetQuantity, formatCountryDetail, formatDetailValue, numberLocale, selectedAsset, t]);
+  }, [currentQuotesByAssetId, formatAssetQuantity, formatCountryDetail, formatDetailValue, formatSignedCurrency, numberLocale, selectedAsset, t]);
+
+  useEffect(() => {
+    if (!selectedAsset || !selectedPortfolio) return;
+
+    const directCurrentPrice = Number(selectedAsset.currentPrice);
+    if (Number.isFinite(directCurrentPrice)) return;
+
+    if (Object.prototype.hasOwnProperty.call(currentQuotesByAssetId, selectedAsset.assetId)) return;
+
+    let cancelled = false;
+    api.getPriceAtDate(selectedPortfolio, selectedAsset.ticker, new Date().toISOString().slice(0, 10))
+      .then((payload) => {
+        if (cancelled) return;
+        const close = Number((payload as { close?: unknown }).close);
+        setCurrentQuotesByAssetId((previous) => ({
+          ...previous,
+          [selectedAsset.assetId]: Number.isFinite(close) ? close : null,
+        }));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setCurrentQuotesByAssetId((previous) => ({
+          ...previous,
+          [selectedAsset.assetId]: null,
+        }));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentQuotesByAssetId, selectedAsset, selectedPortfolio]);
 
   return (
     <Layout>

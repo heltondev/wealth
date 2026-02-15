@@ -1,0 +1,110 @@
+@use '../styles/variables' as *;
+@use '../styles/mixins' as *;
+
+.platform-page {
+  @include page-container;
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-lg;
+
+  &__header {
+    @include glass-card;
+    padding: $spacing-lg;
+
+    h1 {
+      font-size: 1.6rem;
+      margin-bottom: $spacing-xs;
+    }
+
+    p {
+      color: var(--text-secondary);
+      font-size: 0.95rem;
+    }
+  }
+
+  &__empty {
+    @include glass-card;
+    padding: $spacing-xl;
+    text-align: center;
+    color: var(--text-secondary);
+  }
+
+  &__card {
+    @include glass-card;
+    padding: $spacing-lg;
+    display: flex;
+    flex-direction: column;
+    gap: $spacing-md;
+
+    h2 {
+      font-size: 1.1rem;
+    }
+  }
+
+  &__grid {
+    display: grid;
+    gap: $spacing-md;
+
+    &--3 {
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    }
+
+    &--4 {
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    }
+  }
+
+  &__field {
+    display: flex;
+    flex-direction: column;
+    gap: $spacing-xs;
+
+    span {
+      @include form-label;
+    }
+
+    input,
+    select,
+    textarea {
+      @include form-control-base;
+    }
+
+    &--full {
+      grid-column: 1 / -1;
+    }
+  }
+
+  &__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: $spacing-sm;
+
+    button {
+      @include button-base;
+      @include button-secondary;
+    }
+  }
+
+  &__result {
+    @include glass-card;
+    padding: $spacing-sm $spacing-md;
+
+    summary {
+      cursor: pointer;
+      font-weight: 600;
+      color: var(--text-secondary);
+      user-select: none;
+      margin-bottom: $spacing-sm;
+    }
+
+    pre {
+      margin: 0;
+      white-space: pre-wrap;
+      font-size: 0.78rem;
+      line-height: 1.5;
+      color: var(--text-primary);
+      max-height: 420px;
+      overflow: auto;
+    }
+  }
+}
