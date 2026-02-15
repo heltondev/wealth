@@ -61,6 +61,19 @@ test('buildSplitEventsFromPriceRows extracts non-trivial split events', () => {
 	assert.deepEqual(events, [{ date: '2025-01-15', factor: 8 }]);
 });
 
+test('buildSplitEventsFromPriceRows deduplicates near-duplicate split events with same factor', () => {
+	const rows = [
+		{ date: '2025-05-05', stock_splits: 10 },
+		{ date: '2025-05-12', stock_splits: 10 },
+		{ date: '2025-08-01', stock_splits: 10 },
+	];
+	const events = buildSplitEventsFromPriceRows(rows);
+	assert.deepEqual(events, [
+		{ date: '2025-05-05', factor: 10 },
+		{ date: '2025-08-01', factor: 10 },
+	]);
+});
+
 test('findPriceAtOrBeforeDate returns nearest previous row', () => {
 	const rows = [
 		{ date: '2025-01-01', close: 10 },
@@ -410,4 +423,103 @@ test('getAverageCost skips split adjustment when transaction quantities already 
 	assert.equal(result.quantity_current, 2073);
 	assert.ok(Math.abs(result.average_cost - 11.1947631452) < 1e-9);
 	assert.equal(result.split_adjustment, 'without_splits');
+});
+
+test('getAverageCost handles duplicated split rows from provider and still applies split adjustment', async () => {
+	const dynamo = {
+		send: async (command) => {
+			if (!(command instanceof QueryCommand)) return {};
+			const sk = command.input.ExpressionAttributeValues[':sk'];
+
+			if (sk === 'ASSET#') {
+				return {
+					Items: [
+						{
+							assetId: 'asset-alzr11',
+							portfolioId: 'portfolio-1',
+							ticker: 'ALZR11',
+							currency: 'BRL',
+							assetClass: 'fii',
+							country: 'BR',
+							quantity: 2073,
+						},
+					],
+				};
+			}
+
+			if (sk === 'TRANS#') {
+				return {
+					Items: [
+						{
+							assetId: 'asset-alzr11',
+							type: 'buy',
+							date: '2025-01-01',
+							quantity: 200,
+							price: 112.1639,
+							fees: 0,
+						},
+						{
+							assetId: 'asset-alzr11',
+							type: 'buy',
+							date: '2025-05-20',
+							quantity: 73,
+							price: 10.7121,
+							fees: 0,
+						},
+					],
+				};
+			}
+
+			if (String(sk).startsWith('ASSET_PRICE#asset-alzr11#')) {
+				return {
+					Items: [
+						{
+							date: '2025-05-05',
+							close: 10.02,
+							adjustedClose: 9.31,
+							stockSplits: 10,
+						},
+						{
+							date: '2025-05-12',
+							close: 10.2,
+							adjustedClose: 9.48,
+							stockSplits: 10,
+						},
+						{
+							date: '2025-05-20',
+							close: 10.71,
+							adjustedClose: 10.71,
+							stockSplits: 0,
+						},
+						{
+							date: '2025-06-01',
+							close: 10.82,
+							adjustedClose: 10.82,
+							stockSplits: 0,
+						},
+					],
+				};
+			}
+
+			return { Items: [] };
+		},
+	};
+
+	const service = new PortfolioPriceHistoryService({
+		dynamo,
+		logger: makeSilentLogger(),
+		yahooHistoryProvider: { fetchHistory: async () => ({ rows: [] }) },
+		tesouroHistoryProvider: { fetchHistory: async () => ({ rows: [] }) },
+		fallbackManager: { fetch: async () => ({ data_source: 'unavailable', quote: { currentPrice: null } }) },
+		scheduler: (task) => task(),
+	});
+
+	const result = await service.getAverageCost('ALZR11', 'user-1', {
+		portfolioId: 'portfolio-1',
+		method: COST_METHODS.FIFO,
+	});
+
+	assert.equal(result.quantity_current, 2073);
+	assert.ok(Math.abs(result.average_cost - 11.1986315967) < 1e-6);
+	assert.equal(result.split_adjustment, 'with_splits');
 });

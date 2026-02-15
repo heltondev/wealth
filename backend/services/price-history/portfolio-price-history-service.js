@@ -40,6 +40,11 @@ const PERIOD_TO_DAYS = {
 	MAX: null,
 };
 
+const SPLIT_FACTOR_EPSILON = 1e-9;
+const SPLIT_DEDUP_WINDOW_DAYS = Number(
+	process.env.PRICE_HISTORY_SPLIT_DEDUP_WINDOW_DAYS || 14
+);
+
 const normalizeDate = (value) => {
 	if (!value) return null;
 	const input = String(value).trim();
@@ -136,20 +141,45 @@ const aggregateDividends = (transactions) =>
 		.reduce((accumulator, tx) => accumulator + (toNumberOrNull(tx.amount) || 0), 0);
 
 const normalizeSplitEvents = (splitEvents = []) =>
-	(splitEvents || [])
-		.map((event) => {
-			const date = normalizeDate(event?.date);
-			const factor =
-				toNumberOrNull(event?.factor) ??
-				toNumberOrNull(event?.stock_splits) ??
-				toNumberOrNull(event?.stockSplits);
-			if (!date || !factor || factor <= 0) return null;
-			// 1.0 means no split adjustment.
-			if (Math.abs(factor - 1) <= Number.EPSILON) return null;
-			return { date, factor };
-		})
-		.filter(Boolean)
-		.sort((left, right) => compareDate(left.date, right.date));
+	{
+		const normalized = (splitEvents || [])
+			.map((event) => {
+				const date = normalizeDate(event?.date);
+				const factor =
+					toNumberOrNull(event?.factor) ??
+					toNumberOrNull(event?.stock_splits) ??
+					toNumberOrNull(event?.stockSplits);
+				if (!date || !factor || factor <= 0) return null;
+				// 1.0 means no split adjustment.
+				if (Math.abs(factor - 1) <= Number.EPSILON) return null;
+				return { date, factor };
+			})
+			.filter(Boolean)
+			.sort((left, right) => compareDate(left.date, right.date));
+
+		if (!Number.isFinite(SPLIT_DEDUP_WINDOW_DAYS) || SPLIT_DEDUP_WINDOW_DAYS <= 0) {
+			return normalized;
+		}
+
+		const dedupeWindowMs = SPLIT_DEDUP_WINDOW_DAYS * 86400000;
+		const deduped = [];
+		for (const event of normalized) {
+			const eventEpoch = dateToEpoch(event.date);
+			const isDuplicate = deduped.some((existing) => {
+				if (Math.abs(existing.factor - event.factor) > SPLIT_FACTOR_EPSILON) {
+					return false;
+				}
+				const existingEpoch = dateToEpoch(existing.date);
+				if (!Number.isFinite(existingEpoch) || !Number.isFinite(eventEpoch)) {
+					return false;
+				}
+				return Math.abs(existingEpoch - eventEpoch) <= dedupeWindowMs;
+			});
+			if (!isDuplicate) deduped.push(event);
+		}
+
+		return deduped;
+	};
 
 const buildSplitEventsFromPriceRows = (rows = []) =>
 	normalizeSplitEvents(
