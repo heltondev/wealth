@@ -1,18 +1,17 @@
 const { DynamoDBClient, CreateTableCommand, DescribeTableCommand } = require('@aws-sdk/client-dynamodb');
 const { DynamoDBDocumentClient, PutCommand } = require('@aws-sdk/lib-dynamodb');
+const {
+	buildAwsClientConfig,
+	resolveTableName,
+	resolveAwsRegion,
+	resolveRuntimeEnvironment,
+} = require('../config/aws');
 
-const ENDPOINT = process.env.DYNAMODB_ENDPOINT || 'http://localhost:8000';
-const TABLE_NAME = process.env.TABLE_NAME || 'wealth-main';
-const REGION = process.env.AWS_REGION || 'us-east-1';
+const TABLE_NAME = resolveTableName();
+const REGION = resolveAwsRegion();
+const RUNTIME_ENV = resolveRuntimeEnvironment();
 
-const client = new DynamoDBClient({
-	region: REGION,
-	endpoint: ENDPOINT,
-	credentials: {
-		accessKeyId: process.env.AWS_ACCESS_KEY_ID || 'local',
-		secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || 'local',
-	},
-});
+const client = new DynamoDBClient(buildAwsClientConfig({ service: 'dynamodb' }));
 const dynamo = DynamoDBDocumentClient.from(client);
 
 async function createTable() {
@@ -257,6 +256,6 @@ async function run() {
 }
 
 run().catch((err) => {
-	console.error('Seed failed:', err);
+	console.error(`Seed failed (env=${RUNTIME_ENV}, region=${REGION}):`, err);
 	process.exit(1);
 });

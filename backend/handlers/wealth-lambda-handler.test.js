@@ -17,6 +17,7 @@ const {
 		parseGroups,
 		marketDataService,
 		priceHistoryService,
+		platformService,
 	},
 } = require('./wealth-lambda-handler');
 
@@ -403,5 +404,129 @@ test('handler GET /portfolios/{id}/price-history?action=priceAtDate delegates da
 		assert.equal(body.requested_date, '2025-01-01');
 	} finally {
 		priceHistoryService.getPriceAtDate = original;
+	}
+});
+
+test('handler GET /portfolios/{id}/dashboard delegates to platform service', async () => {
+	const original = platformService.getDashboard;
+	platformService.getDashboard = async (_userId, options) => ({
+		portfolioId: options.portfolioId,
+		total_value_brl: 1000,
+	});
+
+	try {
+		const response = await handler(
+			makeEvent('GET', '/portfolios/test-portfolio/dashboard')
+		);
+		assert.equal(response.statusCode, 200);
+		const body = JSON.parse(response.body);
+		assert.equal(body.portfolioId, 'test-portfolio');
+		assert.equal(body.total_value_brl, 1000);
+	} finally {
+		platformService.getDashboard = original;
+	}
+});
+
+test('handler GET /portfolios/{id}/tax delegates to platform service', async () => {
+	const original = platformService.getTaxReport;
+	platformService.getTaxReport = async (_userId, year, options) => ({
+		portfolioId: options.portfolioId,
+		year,
+		total_tax_due: 123,
+	});
+
+	try {
+		const response = await handler(
+			makeEvent('GET', '/portfolios/test-portfolio/tax', null, null, { year: '2025' })
+		);
+		assert.equal(response.statusCode, 200);
+		const body = JSON.parse(response.body);
+		assert.equal(body.portfolioId, 'test-portfolio');
+		assert.equal(body.year, 2025);
+	} finally {
+		platformService.getTaxReport = original;
+	}
+});
+
+test('handler POST /jobs/economic-data/refresh delegates to platform service', async () => {
+	const original = platformService.fetchEconomicIndicators;
+	platformService.fetchEconomicIndicators = async () => ({
+		job: 'economic-indicators',
+		ok: true,
+	});
+
+	try {
+		const response = await handler(
+			makeEvent('POST', '/jobs/economic-data/refresh', {})
+		);
+		assert.equal(response.statusCode, 200);
+		const body = JSON.parse(response.body);
+		assert.equal(body.job, 'economic-indicators');
+	} finally {
+		platformService.fetchEconomicIndicators = original;
+	}
+});
+
+test('handler GET /assets/{ticker} delegates fair price to platform service', async () => {
+	const original = platformService.getFairPrice;
+	platformService.getFairPrice = async (ticker) => ({
+		ticker,
+		fair_price: 42,
+	});
+
+	try {
+		const response = await handler(
+			makeEvent('GET', '/assets/AAPL')
+		);
+		assert.equal(response.statusCode, 200);
+		const body = JSON.parse(response.body);
+		assert.equal(body.ticker, 'AAPL');
+		assert.equal(body.fair_price, 42);
+	} finally {
+		platformService.getFairPrice = original;
+	}
+});
+
+test('handler GET /users/me/alerts delegates to platform service', async () => {
+	const original = platformService.getAlerts;
+	platformService.getAlerts = async () => ({
+		rules: [],
+		events: [],
+	});
+
+	try {
+		const response = await handler(
+			makeEvent('GET', '/users/me/alerts')
+		);
+		assert.equal(response.statusCode, 200);
+		const body = JSON.parse(response.body);
+		assert.deepEqual(body.rules, []);
+		assert.deepEqual(body.events, []);
+	} finally {
+		platformService.getAlerts = original;
+	}
+});
+
+test('handler POST /simulate delegates to platform service', async () => {
+	const original = platformService.simulate;
+	platformService.simulate = async (monthlyAmount, rate, years) => ({
+		inputs: { monthlyAmount, rate, years },
+	});
+
+	try {
+		const response = await handler(
+			makeEvent('POST', '/simulate', {
+				monthlyAmount: 1000,
+				rate: 12,
+				years: 10,
+			})
+		);
+		assert.equal(response.statusCode, 200);
+		const body = JSON.parse(response.body);
+		assert.equal(body.inputs.monthlyAmount, 1000);
+		assert.equal(body.inputs.rate, 12);
+		assert.equal(body.inputs.years, 10);
+	} finally {
+		platformService.simulate = original;
 	}
 });

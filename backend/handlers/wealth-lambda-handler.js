@@ -10,26 +10,35 @@ const {
 } = require('@aws-sdk/lib-dynamodb');
 const { AssetMarketDataService } = require('../services/market-data');
 const { PortfolioPriceHistoryService } = require('../services/price-history');
+const { PlatformService } = require('../services/platform');
+const {
+	buildAwsClientConfig,
+	resolveTableName,
+} = require('../config/aws');
 
-const ddbClient = new DynamoDBClient({
-	region: process.env.AWS_REGION || 'us-east-1',
-	...(process.env.DYNAMODB_ENDPOINT && {
-		endpoint: process.env.DYNAMODB_ENDPOINT,
-	}),
-});
+const TABLE_NAME = resolveTableName();
+const ddbClient = new DynamoDBClient(
+	buildAwsClientConfig({ service: 'dynamodb' })
+);
 const dynamo = DynamoDBDocumentClient.from(ddbClient);
 const marketDataService = new AssetMarketDataService({
 	dynamo,
-	tableName: process.env.TABLE_NAME || 'wealth-main',
+	tableName: TABLE_NAME,
 	logger: console,
 });
 const priceHistoryService = new PortfolioPriceHistoryService({
 	dynamo,
-	tableName: process.env.TABLE_NAME || 'wealth-main',
+	tableName: TABLE_NAME,
 	logger: console,
 });
+const platformService = new PlatformService({
+	dynamo,
+	tableName: TABLE_NAME,
+	logger: console,
+	marketDataService,
+	priceHistoryService,
+});
 
-const TABLE_NAME = process.env.TABLE_NAME || 'wealth-main';
 const CORS_ALLOWLIST = (process.env.CORS_ALLOWLIST || '')
 	.split(',')
 	.map((v) => v.trim())
@@ -895,6 +904,252 @@ async function handlePriceHistory(method, portfolioId, userId, body, query = {})
 	});
 }
 
+async function handleDashboard(method, portfolioId, userId, query = {}) {
+	if (method !== 'GET') throw errorResponse(405, 'Method not allowed');
+	return platformService.getDashboard(userId, {
+		portfolioId,
+		method: query.method || 'fifo',
+	});
+}
+
+async function handleDividends(method, portfolioId, userId, query = {}) {
+	if (method !== 'GET') throw errorResponse(405, 'Method not allowed');
+	return platformService.getDividendAnalytics(userId, {
+		portfolioId,
+		method: query.method || 'fifo',
+		fromDate: query.fromDate || query.from_date || null,
+	});
+}
+
+async function handleTax(method, portfolioId, userId, query = {}) {
+	if (method !== 'GET') throw errorResponse(405, 'Method not allowed');
+	const year = Number(query.year || new Date().getUTCFullYear());
+	return platformService.getTaxReport(userId, year, { portfolioId });
+}
+
+async function handleRebalance(method, portfolioId, userId, body, query = {}, subId = null) {
+	if (subId === 'suggestion') {
+		if (method !== 'GET') throw errorResponse(405, 'Method not allowed');
+		const amount = Number(query.amount || 0);
+		return platformService.getRebalancingSuggestion(userId, amount, { portfolioId });
+	}
+
+	if (subId === 'targets') {
+		if (method !== 'POST') throw errorResponse(405, 'Method not allowed');
+		return platformService.setRebalanceTargets(userId, parseBody(body), { portfolioId });
+	}
+
+	throw errorResponse(404, 'Rebalance route not found');
+}
+
+async function handleRisk(method, portfolioId, userId, query = {}) {
+	if (method !== 'GET') throw errorResponse(405, 'Method not allowed');
+	return platformService.getPortfolioRisk(userId, {
+		portfolioId,
+		concentrationThreshold: query.concentrationThreshold || query.concentration_threshold,
+	});
+}
+
+async function handleBenchmarks(method, portfolioId, userId, query = {}) {
+	if (method !== 'GET') throw errorResponse(405, 'Method not allowed');
+	const benchmark = query.benchmark || 'IBOV';
+	const period = query.period || '1A';
+	return platformService.getBenchmarkComparison(userId, benchmark, period, { portfolioId });
+}
+
+async function handleContributions(method, portfolioId, userId, body) {
+	if (method === 'POST') {
+		return platformService.recordContribution(userId, parseBody(body), { portfolioId });
+	}
+	if (method === 'GET') {
+		return platformService.getContributionProgress(userId, { portfolioId });
+	}
+	throw errorResponse(405, 'Method not allowed');
+}
+
+async function handleAlerts(method, userId, body, id = null, query = {}) {
+	if (method === 'GET') {
+		return platformService.getAlerts(userId, { limit: query.limit });
+	}
+	if (method === 'POST') {
+		if (query.action === 'evaluate') {
+			const payload = parseBody(body);
+			return platformService.evaluateAlerts(userId, payload.portfolioId || null, {});
+		}
+		return platformService.createAlertRule(userId, parseBody(body));
+	}
+	if (method === 'PUT') {
+		if (!id) throw errorResponse(400, 'alert rule id is required');
+		return platformService.updateAlertRule(userId, id, parseBody(body));
+	}
+	if (method === 'DELETE') {
+		if (!id) throw errorResponse(400, 'alert rule id is required');
+		return platformService.deleteAlertRule(userId, id);
+	}
+	throw errorResponse(405, 'Method not allowed');
+}
+
+async function handleGoals(method, userId, body, goalId = null) {
+	if (method === 'GET') {
+		if (!goalId) return platformService.listGoals(userId);
+		return platformService.getGoalProgress(userId, goalId, {});
+	}
+	if (method === 'POST') {
+		return platformService.createGoal(userId, parseBody(body));
+	}
+	if (method === 'PUT') {
+		if (!goalId) throw errorResponse(400, 'goal id is required');
+		return platformService.updateGoal(userId, goalId, parseBody(body));
+	}
+	if (method === 'DELETE') {
+		if (!goalId) throw errorResponse(400, 'goal id is required');
+		return platformService.deleteGoal(userId, goalId);
+	}
+	throw errorResponse(405, 'Method not allowed');
+}
+
+async function handleAssetTools(method, id, body, userId, query = {}) {
+	if (id === 'screen') {
+		if (method !== 'POST') throw errorResponse(405, 'Method not allowed');
+		const payload = parseBody(body);
+		return platformService.screenAssets(payload, {
+			userId,
+			portfolioId: payload.portfolioId || query.portfolioId || null,
+		});
+	}
+	if (id === 'compare') {
+		if (method !== 'POST') throw errorResponse(405, 'Method not allowed');
+		const payload = parseBody(body);
+		return platformService.compareAssets(payload.tickers || [], {
+			userId,
+			portfolioId: payload.portfolioId || query.portfolioId || null,
+		});
+	}
+	if (!id) throw errorResponse(400, 'asset route id is required');
+	if (query.action === 'details') {
+		if (method !== 'GET') throw errorResponse(405, 'Method not allowed');
+		return platformService.getAssetDetails(id, {
+			userId,
+			portfolioId: query.portfolioId || null,
+		});
+	}
+	if (query.action === 'events') {
+		if (method !== 'GET') throw errorResponse(405, 'Method not allowed');
+		return platformService.fetchCorporateEvents(id, {
+			portfolioId: query.portfolioId || null,
+		});
+	}
+	if (query.action === 'news') {
+		if (method !== 'GET') throw errorResponse(405, 'Method not allowed');
+		return platformService.fetchNews(id, {
+			portfolioId: query.portfolioId || null,
+		});
+	}
+	if (query.action === 'financials') {
+		if (method !== 'GET') throw errorResponse(405, 'Method not allowed');
+		const details = await platformService.getAssetDetails(id, {
+			userId,
+			portfolioId: query.portfolioId || null,
+		});
+		return details.financial_statements;
+	}
+	if (method !== 'GET') throw errorResponse(405, 'Method not allowed');
+	return platformService.getFairPrice(id, {
+		userId,
+		portfolioId: query.portfolioId || null,
+	});
+}
+
+async function handleSimulate(method, body, userId) {
+	if (method !== 'POST') throw errorResponse(405, 'Method not allowed');
+	const payload = parseBody(body);
+	return platformService.simulate(
+		Number(payload.monthlyAmount || payload.monthly_amount || 0),
+		Number(payload.rate || 0),
+		Number(payload.years || 0),
+		{
+			userId,
+			ticker: payload.ticker || null,
+			initialAmount: payload.initialAmount || payload.initial_amount || null,
+			portfolioId: payload.portfolioId || null,
+		}
+	);
+}
+
+async function handleReports(method, id, userId, body, query = {}) {
+	if (id === 'generate') {
+		if (method !== 'POST') throw errorResponse(405, 'Method not allowed');
+		const payload = parseBody(body);
+		return platformService.generatePDF(
+			userId,
+			payload.reportType || payload.report_type || 'portfolio',
+			payload.period || null,
+			{ portfolioId: payload.portfolioId || null }
+		);
+	}
+	if (method === 'GET') {
+		return platformService.listReports(userId);
+	}
+	throw errorResponse(405, 'Method not allowed');
+}
+
+async function handleJobs(method, id, subResource, userId, body, query = {}) {
+	if (method !== 'POST') throw errorResponse(405, 'Method not allowed');
+	if (subResource !== 'refresh') throw errorResponse(404, 'Job route not found');
+
+	if (id === 'economic-data') return platformService.fetchEconomicIndicators();
+	if (id === 'corporate-events') {
+		const payload = parseBody(body);
+		return platformService.fetchCorporateEvents(payload.ticker || query.ticker || null, {
+			portfolioId: payload.portfolioId || query.portfolioId || null,
+		});
+	}
+	if (id === 'news') {
+		const payload = parseBody(body);
+		return platformService.fetchNews(payload.ticker || query.ticker || null, {
+			portfolioId: payload.portfolioId || query.portfolioId || null,
+		});
+	}
+	if (id === 'alerts') {
+		const payload = parseBody(body);
+		return platformService.evaluateAlerts(userId, payload.portfolioId || query.portfolioId || null, {});
+	}
+
+	throw errorResponse(404, 'Unknown job id');
+}
+
+async function handleFixedIncome(method, userId, body, query = {}) {
+	if (method === 'POST') {
+		return platformService.calculatePrivateFixedIncomePosition(parseBody(body));
+	}
+	if (method === 'GET') {
+		return platformService.getFixedIncomeComparison(userId, {
+			portfolioId: query.portfolioId || null,
+			fromDate: query.fromDate || query.from_date || null,
+			toDate: query.toDate || query.to_date || null,
+		});
+	}
+	throw errorResponse(405, 'Method not allowed');
+}
+
+async function handleCosts(method, userId, query = {}) {
+	if (method !== 'GET') throw errorResponse(405, 'Method not allowed');
+	return platformService.getCostAnalysis(userId, { portfolioId: query.portfolioId || null });
+}
+
+async function handleCommunity(method, id, userId, body, query = {}) {
+	if (id === 'ideas') {
+		if (method === 'GET') return platformService.listIdeas({ limit: query.limit });
+		if (method === 'POST') return platformService.publishIdea(userId, parseBody(body));
+		throw errorResponse(405, 'Method not allowed');
+	}
+	if (id === 'ranking') {
+		if (method !== 'GET') throw errorResponse(405, 'Method not allowed');
+		return platformService.getLeagueRanking({ userId });
+	}
+	throw errorResponse(404, 'Community route not found');
+}
+
 // --- Main Handler ---
 
 exports.handler = async (event) => {
@@ -934,6 +1189,7 @@ exports.handler = async (event) => {
 		const id = pathSegments[startIndex + 1];
 		const subResource = pathSegments[startIndex + 2];
 		const subId = pathSegments[startIndex + 3];
+		const subSubResource = pathSegments[startIndex + 4];
 
 		if (resourceBase === 'portfolios') {
 			ensureAppAccess(appRole, 'EDITOR');
@@ -957,22 +1213,43 @@ exports.handler = async (event) => {
 				} else {
 					throw errorResponse(405, 'Method not allowed');
 				}
-				} else if (subResource === 'market-data') {
-					if (subId === 'refresh') {
-						body = await handleMarketDataRefresh(httpMethod, id, requestBody);
-					} else {
-						throw errorResponse(404, 'Market data route not found');
-					}
-				} else if (subResource === 'price-history') {
-					body = await handlePriceHistory(
-						httpMethod,
-						id,
-						userId,
-						requestBody,
-						queryStringParameters || {}
-					);
-				} else if (subResource === 'transactions') {
-					if (!subId) {
+			} else if (subResource === 'market-data') {
+				if (subId === 'refresh') {
+					body = await handleMarketDataRefresh(httpMethod, id, requestBody);
+				} else {
+					throw errorResponse(404, 'Market data route not found');
+				}
+			} else if (subResource === 'price-history') {
+				body = await handlePriceHistory(
+					httpMethod,
+					id,
+					userId,
+					requestBody,
+					queryStringParameters || {}
+				);
+			} else if (subResource === 'dashboard') {
+				body = await handleDashboard(httpMethod, id, userId, queryStringParameters || {});
+			} else if (subResource === 'dividends') {
+				body = await handleDividends(httpMethod, id, userId, queryStringParameters || {});
+			} else if (subResource === 'tax') {
+				body = await handleTax(httpMethod, id, userId, queryStringParameters || {});
+			} else if (subResource === 'rebalance') {
+				body = await handleRebalance(
+					httpMethod,
+					id,
+					userId,
+					requestBody,
+					queryStringParameters || {},
+					subId
+				);
+			} else if (subResource === 'risk') {
+				body = await handleRisk(httpMethod, id, userId, queryStringParameters || {});
+			} else if (subResource === 'benchmarks') {
+				body = await handleBenchmarks(httpMethod, id, userId, queryStringParameters || {});
+			} else if (subResource === 'contributions') {
+				body = await handleContributions(httpMethod, id, userId, requestBody);
+			} else if (subResource === 'transactions') {
+				if (!subId) {
 					body = await handleTransactions(
 						httpMethod,
 						id,
@@ -1002,6 +1279,75 @@ exports.handler = async (event) => {
 			} else {
 				throw errorResponse(404, 'Health route not found');
 			}
+		} else if (resourceBase === 'assets') {
+			ensureAppAccess(appRole, 'EDITOR');
+			body = await handleAssetTools(
+				httpMethod,
+				id,
+				requestBody,
+				userId,
+				queryStringParameters || {}
+			);
+		} else if (resourceBase === 'users') {
+			ensureAppAccess(appRole, 'EDITOR');
+			if (id !== 'me') throw errorResponse(404, 'Users route not found');
+
+			if (subResource === 'alerts') {
+				body = await handleAlerts(
+					httpMethod,
+					userId,
+					requestBody,
+					subId || null,
+					queryStringParameters || {}
+				);
+			} else if (subResource === 'goals') {
+				const goalId = subSubResource === 'progress' ? subId : subId || null;
+				body = await handleGoals(httpMethod, userId, requestBody, goalId);
+			} else {
+				throw errorResponse(404, 'Users route not found');
+			}
+		} else if (resourceBase === 'simulate') {
+			ensureAppAccess(appRole, 'EDITOR');
+			body = await handleSimulate(httpMethod, requestBody, userId);
+		} else if (resourceBase === 'reports') {
+			ensureAppAccess(appRole, 'EDITOR');
+			body = await handleReports(
+				httpMethod,
+				id || null,
+				userId,
+				requestBody,
+				queryStringParameters || {}
+			);
+		} else if (resourceBase === 'jobs') {
+			ensureAppAccess(appRole, 'EDITOR');
+			body = await handleJobs(
+				httpMethod,
+				id || null,
+				subResource || null,
+				userId,
+				requestBody,
+				queryStringParameters || {}
+			);
+		} else if (resourceBase === 'fixed-income') {
+			ensureAppAccess(appRole, 'EDITOR');
+			body = await handleFixedIncome(
+				httpMethod,
+				userId,
+				requestBody,
+				queryStringParameters || {}
+			);
+		} else if (resourceBase === 'costs') {
+			ensureAppAccess(appRole, 'EDITOR');
+			body = await handleCosts(httpMethod, userId, queryStringParameters || {});
+		} else if (resourceBase === 'community') {
+			ensureAppAccess(appRole, 'EDITOR');
+			body = await handleCommunity(
+				httpMethod,
+				id || null,
+				userId,
+				requestBody,
+				queryStringParameters || {}
+			);
 		} else if (resourceBase === 'settings') {
 			ensureAppAccess(appRole, 'EDITOR');
 			const section = id;
@@ -1057,4 +1403,5 @@ exports._test = {
 	parseGroups,
 	marketDataService,
 	priceHistoryService,
+	platformService,
 };

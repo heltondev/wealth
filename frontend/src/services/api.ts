@@ -96,6 +96,70 @@ export interface DropdownSettings {
   updatedAt?: string | null;
 }
 
+export interface DashboardAllocationItem {
+  key: string;
+  value: number;
+  weight_pct: number;
+}
+
+export interface DashboardResponse {
+  portfolioId: string;
+  currency: string;
+  total_value_brl: number;
+  allocation_by_class: DashboardAllocationItem[];
+  allocation_by_currency: DashboardAllocationItem[];
+  allocation_by_sector: DashboardAllocationItem[];
+  evolution: Array<{ date: string; value: number }>;
+  return_absolute: number;
+  return_percent: number;
+  fetched_at: string;
+}
+
+export interface Goal {
+  goalId: string;
+  type: string;
+  targetAmount: number;
+  targetDate?: string | null;
+  currency?: string;
+  label?: string | null;
+  status?: string;
+}
+
+export interface AlertRule {
+  ruleId: string;
+  type: string;
+  enabled: boolean;
+  portfolioId?: string | null;
+  params: Record<string, unknown>;
+  description?: string | null;
+}
+
+export interface ReportRecord {
+  reportId: string;
+  reportType: string;
+  period?: string | null;
+  storage: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface ContributionPayload {
+  contributionId?: string;
+  date?: string;
+  amount: number;
+  currency?: string;
+  destination?: string;
+  notes?: string;
+}
+
+export interface SimulationPayload {
+  monthlyAmount: number;
+  rate: number;
+  years: number;
+  ticker?: string;
+  initialAmount?: number;
+  portfolioId?: string;
+}
+
 // --- API Methods ---
 
 export const api = {
@@ -140,4 +204,124 @@ export const api = {
   getAliases: () => request<Alias[]>('/settings/aliases'),
   createAlias: (data: Partial<Alias>) =>
     request<Alias>('/settings/aliases', { method: 'POST', body: JSON.stringify(data) }),
+
+  // Dashboard + analytics
+  getDashboard: (portfolioId: string) =>
+    request<DashboardResponse>(`/portfolios/${portfolioId}/dashboard`),
+  getDividends: (portfolioId: string, params?: { fromDate?: string; method?: string }) => {
+    const query = new URLSearchParams();
+    if (params?.fromDate) query.set('fromDate', params.fromDate);
+    if (params?.method) query.set('method', params.method);
+    const suffix = query.toString() ? `?${query.toString()}` : '';
+    return request(`/portfolios/${portfolioId}/dividends${suffix}`);
+  },
+  getTaxReport: (portfolioId: string, year: number) =>
+    request(`/portfolios/${portfolioId}/tax?year=${encodeURIComponent(String(year))}`),
+  getRebalanceSuggestion: (portfolioId: string, amount: number) =>
+    request(`/portfolios/${portfolioId}/rebalance/suggestion?amount=${encodeURIComponent(String(amount))}`),
+  setRebalanceTargets: (portfolioId: string, targets: Array<{ scope: string; value: string; percent: number }>) =>
+    request(`/portfolios/${portfolioId}/rebalance/targets`, { method: 'POST', body: JSON.stringify({ targets }) }),
+  getRisk: (portfolioId: string) =>
+    request(`/portfolios/${portfolioId}/risk`),
+  getBenchmarks: (portfolioId: string, benchmark = 'IBOV', period = '1A') =>
+    request(`/portfolios/${portfolioId}/benchmarks?benchmark=${encodeURIComponent(benchmark)}&period=${encodeURIComponent(period)}`),
+
+  // Contributions
+  createContribution: (portfolioId: string, data: ContributionPayload) =>
+    request(`/portfolios/${portfolioId}/contributions`, { method: 'POST', body: JSON.stringify(data) }),
+  getContributions: (portfolioId: string) =>
+    request(`/portfolios/${portfolioId}/contributions`),
+
+  // Assets advanced
+  getAssetFairPrice: (ticker: string, portfolioId?: string) => {
+    const query = portfolioId ? `?portfolioId=${encodeURIComponent(portfolioId)}` : '';
+    return request(`/assets/${encodeURIComponent(ticker)}${query}`);
+  },
+  getAssetDetails: (ticker: string, portfolioId?: string) => {
+    const query = new URLSearchParams({ action: 'details' });
+    if (portfolioId) query.set('portfolioId', portfolioId);
+    return request(`/assets/${encodeURIComponent(ticker)}?${query.toString()}`);
+  },
+  getAssetFinancials: (ticker: string, portfolioId?: string) => {
+    const query = new URLSearchParams({ action: 'financials' });
+    if (portfolioId) query.set('portfolioId', portfolioId);
+    return request(`/assets/${encodeURIComponent(ticker)}?${query.toString()}`);
+  },
+  getAssetEvents: (ticker: string, portfolioId?: string) => {
+    const query = new URLSearchParams({ action: 'events' });
+    if (portfolioId) query.set('portfolioId', portfolioId);
+    return request(`/assets/${encodeURIComponent(ticker)}?${query.toString()}`);
+  },
+  getAssetNews: (ticker: string, portfolioId?: string) => {
+    const query = new URLSearchParams({ action: 'news' });
+    if (portfolioId) query.set('portfolioId', portfolioId);
+    return request(`/assets/${encodeURIComponent(ticker)}?${query.toString()}`);
+  },
+  screenAssets: (filters: Record<string, unknown>) =>
+    request('/assets/screen', { method: 'POST', body: JSON.stringify(filters) }),
+  compareAssets: (tickers: string[], portfolioId?: string) =>
+    request('/assets/compare', { method: 'POST', body: JSON.stringify({ tickers, portfolioId }) }),
+
+  // Fixed income + costs
+  getFixedIncomeComparison: (portfolioId?: string) => {
+    const query = portfolioId ? `?portfolioId=${encodeURIComponent(portfolioId)}` : '';
+    return request(`/fixed-income${query}`);
+  },
+  calculatePrivateFixedIncome: (payload: Record<string, unknown>) =>
+    request('/fixed-income', { method: 'POST', body: JSON.stringify(payload) }),
+  getCostAnalysis: (portfolioId?: string) => {
+    const query = portfolioId ? `?portfolioId=${encodeURIComponent(portfolioId)}` : '';
+    return request(`/costs${query}`);
+  },
+
+  // Goals
+  getGoals: () => request<Goal[]>('/users/me/goals'),
+  createGoal: (goal: Partial<Goal>) =>
+    request<Goal>('/users/me/goals', { method: 'POST', body: JSON.stringify(goal) }),
+  updateGoal: (goalId: string, goal: Partial<Goal>) =>
+    request<Goal>(`/users/me/goals/${goalId}`, { method: 'PUT', body: JSON.stringify(goal) }),
+  deleteGoal: (goalId: string) =>
+    request<{ deleted: boolean; goalId: string }>(`/users/me/goals/${goalId}`, { method: 'DELETE' }),
+  getGoalProgress: (goalId: string) =>
+    request(`/users/me/goals/${goalId}/progress`),
+
+  // Alerts
+  getAlerts: () => request<{ rules: AlertRule[]; events: unknown[] }>('/users/me/alerts'),
+  createAlertRule: (rule: Partial<AlertRule>) =>
+    request<AlertRule>('/users/me/alerts', { method: 'POST', body: JSON.stringify(rule) }),
+  updateAlertRule: (ruleId: string, rule: Partial<AlertRule>) =>
+    request<AlertRule>(`/users/me/alerts/${ruleId}`, { method: 'PUT', body: JSON.stringify(rule) }),
+  deleteAlertRule: (ruleId: string) =>
+    request<{ deleted: boolean; ruleId: string }>(`/users/me/alerts/${ruleId}`, { method: 'DELETE' }),
+  evaluateAlerts: (portfolioId: string) =>
+    request('/users/me/alerts?action=evaluate', { method: 'POST', body: JSON.stringify({ portfolioId }) }),
+
+  // Jobs
+  refreshEconomicIndicators: () =>
+    request('/jobs/economic-data/refresh', { method: 'POST', body: JSON.stringify({}) }),
+  refreshCorporateEvents: (payload: { ticker?: string; portfolioId?: string }) =>
+    request('/jobs/corporate-events/refresh', { method: 'POST', body: JSON.stringify(payload) }),
+  refreshNews: (payload: { ticker?: string; portfolioId?: string }) =>
+    request('/jobs/news/refresh', { method: 'POST', body: JSON.stringify(payload) }),
+  runAlertEvaluation: (portfolioId: string) =>
+    request('/jobs/alerts/refresh', { method: 'POST', body: JSON.stringify({ portfolioId }) }),
+
+  // Reports
+  generateReport: (reportType: string, period?: string, portfolioId?: string) =>
+    request<ReportRecord>('/reports/generate', {
+      method: 'POST',
+      body: JSON.stringify({ reportType, period: period || null, portfolioId: portfolioId || null }),
+    }),
+  listReports: () => request<ReportRecord[]>('/reports'),
+
+  // Simulation
+  simulate: (payload: SimulationPayload) =>
+    request('/simulate', { method: 'POST', body: JSON.stringify(payload) }),
+
+  // Community
+  listIdeas: (limit?: number) =>
+    request(limit ? `/community/ideas?limit=${encodeURIComponent(String(limit))}` : '/community/ideas'),
+  publishIdea: (payload: { title: string; content: string; tags?: string[] }) =>
+    request('/community/ideas', { method: 'POST', body: JSON.stringify(payload) }),
+  getLeagueRanking: () => request('/community/ranking'),
 };

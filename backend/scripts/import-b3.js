@@ -11,24 +11,23 @@ const path = require('path');
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
 const { DynamoDBDocumentClient, PutCommand, QueryCommand, ScanCommand } = require('@aws-sdk/lib-dynamodb');
 const { detectProvider } = require('../parsers/index');
+const {
+	buildAwsClientConfig,
+	resolveTableName,
+	resolveAwsRegion,
+	resolveRuntimeEnvironment,
+} = require('../config/aws');
 
-const ENDPOINT = process.env.DYNAMODB_ENDPOINT || 'http://localhost:8000';
-const TABLE_NAME = process.env.TABLE_NAME || 'wealth-main';
-const REGION = process.env.AWS_REGION || 'us-east-1';
+const TABLE_NAME = resolveTableName();
+const REGION = resolveAwsRegion();
+const RUNTIME_ENV = resolveRuntimeEnvironment();
 const DATA_DIR = path.resolve(__dirname, '../../.data/B3');
 const DRY_RUN = process.argv.includes('--dry-run');
 
 const USER_ID = 'local-user-001';
 const PORTFOLIO_ID = 'demo-portfolio-001';
 
-const client = new DynamoDBClient({
-	region: REGION,
-	endpoint: ENDPOINT,
-	credentials: {
-		accessKeyId: process.env.AWS_ACCESS_KEY_ID || 'local',
-		secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || 'local',
-	},
-});
+const client = new DynamoDBClient(buildAwsClientConfig({ service: 'dynamodb' }));
 const dynamo = DynamoDBDocumentClient.from(client);
 
 const generateId = () =>
@@ -137,6 +136,7 @@ async function loadExistingAliases() {
 
 async function run() {
 	console.log(`Scanning ${DATA_DIR} for .xlsx files...`);
+	console.log(`Runtime: env=${RUNTIME_ENV}, region=${REGION}, table=${TABLE_NAME}`);
 	const files = findXlsxFiles(DATA_DIR);
 	if (!files.length) {
 		console.log('No .xlsx files found.');
