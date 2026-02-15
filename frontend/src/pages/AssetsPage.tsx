@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router';
 import Layout from '../components/Layout';
 import DataTable, { type DataTableColumn, type DataTableFilter } from '../components/DataTable';
 import RecordDetailsModal, { type RecordDetailsSection } from '../components/RecordDetailsModal';
@@ -89,6 +90,9 @@ const summarizeSourceValue = (value: unknown): string | null => {
 
 const AssetsPage = () => {
   const { t, i18n } = useTranslation();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const portfolioIdFromQuery = searchParams.get('portfolioId')?.trim() || '';
   const { showToast } = useToast();
   const [portfolios, setPortfolios] = useState<Portfolio[]>([]);
   const [selectedPortfolio, setSelectedPortfolio] = useState<string>('');
@@ -124,7 +128,10 @@ const AssetsPage = () => {
     Promise.all([api.getPortfolios(), api.getDropdownSettings()])
       .then(([portfolioItems, dropdownSettings]) => {
         setPortfolios(portfolioItems);
-        if (portfolioItems.length > 0) setSelectedPortfolio(portfolioItems[0].portfolioId);
+        if (portfolioItems.length > 0) {
+          const requestedPortfolio = portfolioItems.find((item) => item.portfolioId === portfolioIdFromQuery);
+          setSelectedPortfolio(requestedPortfolio?.portfolioId || portfolioItems[0].portfolioId);
+        }
         setDropdownConfig(normalizeDropdownConfig(dropdownSettings.dropdowns));
       })
       .catch(() => {
@@ -132,7 +139,7 @@ const AssetsPage = () => {
         setDropdownConfig(normalizeDropdownConfig(DEFAULT_DROPDOWN_CONFIG));
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [portfolioIdFromQuery]);
 
   useEffect(() => {
     if (!selectedPortfolio) return;
@@ -588,11 +595,6 @@ const AssetsPage = () => {
             value: resolvedCurrentValue !== null
               ? formatCurrency(resolvedCurrentValue, selectedAsset.currency || 'BRL', numberLocale)
               : formatDetailValue(selectedAsset.currentValue),
-          },
-          {
-            key: 'source',
-            label: t('assets.modal.fields.source'),
-            value: formatDetailValue(selectedAsset.source),
           },
         ],
       },
@@ -1081,6 +1083,24 @@ const AssetsPage = () => {
           title={t('assets.modal.title')}
           subtitle={t('assets.modal.subtitle')}
           closeLabel={t('assets.modal.close')}
+          headerActions={selectedAsset ? (
+            <button
+              type="button"
+              className="record-modal__action"
+              onClick={() => {
+                const params = new URLSearchParams();
+                if (selectedPortfolio) params.set('portfolioId', selectedPortfolio);
+                const queryString = params.toString();
+                const path = queryString
+                  ? `/assets/${selectedAsset.assetId}?${queryString}`
+                  : `/assets/${selectedAsset.assetId}`;
+                setSelectedAsset(null);
+                navigate(path);
+              }}
+            >
+              {t('assets.modal.openPage', { defaultValue: 'Open asset page' })}
+            </button>
+          ) : null}
           sections={assetDetailsSections}
           extraContent={assetDetailsExtraContent}
           onClose={() => setSelectedAsset(null)}

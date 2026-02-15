@@ -6,6 +6,7 @@ const {
 	PortfolioPriceHistoryService,
 	COST_METHODS,
 	calculateHoldings,
+	buildSplitEventsFromPriceRows,
 	enrichTransactionsWithPrices,
 	findPriceAtOrBeforeDate,
 } = require('./portfolio-price-history-service');
@@ -31,6 +32,33 @@ test('calculateHoldings FIFO and weighted average produce expected quantity/cost
 	assert.equal(weighted.quantityCurrent, 15);
 	assert.ok(Math.abs(weighted.costCurrent - 226.5) < 1e-9);
 	assert.ok(Math.abs(weighted.averageCost - 15.1) < 1e-9);
+});
+
+test('calculateHoldings applies split factors and adjusts average cost', () => {
+	const transactions = [
+		{ type: 'buy', date: '2025-01-01', quantity: 10, price: 85.04, fees: 0 },
+	];
+	const splitEvents = [{ date: '2025-01-15', factor: 8 }];
+
+	const fifo = calculateHoldings(transactions, COST_METHODS.FIFO, { splitEvents });
+	assert.equal(fifo.quantityCurrent, 80);
+	assert.ok(Math.abs(fifo.costCurrent - 850.4) < 1e-9);
+	assert.ok(Math.abs(fifo.averageCost - 10.63) < 1e-9);
+
+	const weighted = calculateHoldings(transactions, COST_METHODS.WEIGHTED_AVERAGE, { splitEvents });
+	assert.equal(weighted.quantityCurrent, 80);
+	assert.ok(Math.abs(weighted.costCurrent - 850.4) < 1e-9);
+	assert.ok(Math.abs(weighted.averageCost - 10.63) < 1e-9);
+});
+
+test('buildSplitEventsFromPriceRows extracts non-trivial split events', () => {
+	const rows = [
+		{ date: '2025-01-01', stock_splits: 0 },
+		{ date: '2025-01-10', stock_splits: 1 },
+		{ date: '2025-01-15', stock_splits: 8 },
+	];
+	const events = buildSplitEventsFromPriceRows(rows);
+	assert.deepEqual(events, [{ date: '2025-01-15', factor: 8 }]);
 });
 
 test('findPriceAtOrBeforeDate returns nearest previous row', () => {
@@ -217,4 +245,89 @@ test('getAverageCost resolves ticker within portfolio and returns current valuat
 	assert.ok(Math.abs(result.average_cost - 10.1) < 1e-9);
 	assert.equal(result.current_price, 11);
 	assert.ok(Math.abs(result.market_value - 88) < 1e-9);
+});
+
+test('getAverageCost applies stock split events from price history rows', async () => {
+	const dynamo = {
+		send: async (command) => {
+			if (!(command instanceof QueryCommand)) return {};
+			const sk = command.input.ExpressionAttributeValues[':sk'];
+
+			if (sk === 'ASSET#') {
+				return {
+					Items: [
+						{
+							assetId: 'asset-alzr11',
+							portfolioId: 'portfolio-1',
+							ticker: 'ALZR11',
+							currency: 'BRL',
+							assetClass: 'fii',
+							country: 'BR',
+						},
+					],
+				};
+			}
+
+			if (sk === 'TRANS#') {
+				return {
+					Items: [
+						{
+							assetId: 'asset-alzr11',
+							type: 'buy',
+							date: '2025-01-01',
+							quantity: 10,
+							price: 85.04,
+							fees: 0,
+						},
+					],
+				};
+			}
+
+			if (String(sk).startsWith('ASSET_PRICE#asset-alzr11#')) {
+				return {
+					Items: [
+						{
+							date: '2025-01-10',
+							close: 85.5,
+							adjustedClose: 85.5,
+							stockSplits: 0,
+						},
+						{
+							date: '2025-01-15',
+							close: 10.7,
+							adjustedClose: 10.7,
+							stockSplits: 8,
+						},
+						{
+							date: '2025-01-20',
+							close: 10.82,
+							adjustedClose: 10.82,
+							stockSplits: 0,
+						},
+					],
+				};
+			}
+
+			return { Items: [] };
+		},
+	};
+
+	const service = new PortfolioPriceHistoryService({
+		dynamo,
+		logger: makeSilentLogger(),
+		yahooHistoryProvider: { fetchHistory: async () => ({ rows: [] }) },
+		tesouroHistoryProvider: { fetchHistory: async () => ({ rows: [] }) },
+		fallbackManager: { fetch: async () => ({ data_source: 'unavailable', quote: { currentPrice: null } }) },
+		scheduler: (task) => task(),
+	});
+
+	const result = await service.getAverageCost('ALZR11', 'user-1', {
+		portfolioId: 'portfolio-1',
+		method: COST_METHODS.FIFO,
+	});
+
+	assert.equal(result.quantity_current, 80);
+	assert.ok(Math.abs(result.average_cost - 10.63) < 1e-9);
+	assert.ok(Math.abs(result.current_price - 10.82) < 1e-9);
+	assert.ok(Math.abs(result.market_value - (80 * 10.82)) < 1e-9);
 });

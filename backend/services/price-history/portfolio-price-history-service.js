@@ -135,10 +135,37 @@ const aggregateDividends = (transactions) =>
 		.filter((tx) => ['dividend', 'jcp'].includes(tx.type))
 		.reduce((accumulator, tx) => accumulator + (toNumberOrNull(tx.amount) || 0), 0);
 
-const calculateHoldings = (transactions, method = COST_METHODS.FIFO) => {
+const normalizeSplitEvents = (splitEvents = []) =>
+	(splitEvents || [])
+		.map((event) => {
+			const date = normalizeDate(event?.date);
+			const factor =
+				toNumberOrNull(event?.factor) ??
+				toNumberOrNull(event?.stock_splits) ??
+				toNumberOrNull(event?.stockSplits);
+			if (!date || !factor || factor <= 0) return null;
+			// 1.0 means no split adjustment.
+			if (Math.abs(factor - 1) <= Number.EPSILON) return null;
+			return { date, factor };
+		})
+		.filter(Boolean)
+		.sort((left, right) => compareDate(left.date, right.date));
+
+const buildSplitEventsFromPriceRows = (rows = []) =>
+	normalizeSplitEvents(
+		rows
+			.filter((row) => toNumberOrNull(row?.stock_splits))
+			.map((row) => ({
+				date: row.date,
+				factor: row.stock_splits,
+			}))
+	);
+
+const calculateHoldings = (transactions, method = COST_METHODS.FIFO, options = {}) => {
 	const normalizedMethod = method === COST_METHODS.WEIGHTED_AVERAGE
 		? COST_METHODS.WEIGHTED_AVERAGE
 		: COST_METHODS.FIFO;
+	const splitEvents = normalizeSplitEvents(options.splitEvents);
 	const sorted = [...transactions]
 		.map(parseTransaction)
 		.filter((tx) => tx.date)
@@ -153,9 +180,38 @@ const calculateHoldings = (transactions, method = COST_METHODS.FIFO) => {
 	let totalBuysCost = 0;
 	const lots = [];
 	let firstBuyDate = null;
+	let splitIndex = 0;
+
+	const applySplit = (factor) => {
+		if (!Number.isFinite(factor) || factor <= 0) return;
+		if (Math.abs(factor - 1) <= Number.EPSILON) return;
+		if (quantityCurrent <= 0) return;
+
+		// Total invested cost remains unchanged in split/grouping events.
+		quantityCurrent *= factor;
+
+		if (normalizedMethod === COST_METHODS.FIFO) {
+			for (const lot of lots) {
+				lot.quantity *= factor;
+				lot.costPerUnit = factor !== 0 ? lot.costPerUnit / factor : lot.costPerUnit;
+			}
+		}
+	};
+
+	const applyPendingSplitsUpTo = (date) => {
+		while (
+			splitIndex < splitEvents.length &&
+			splitEvents[splitIndex].date <= date
+		) {
+			applySplit(splitEvents[splitIndex].factor);
+			splitIndex += 1;
+		}
+	};
 
 	for (const tx of sorted) {
-		if (tx.type === 'buy') {
+		applyPendingSplitsUpTo(tx.date);
+
+		if (tx.type === 'buy' || tx.type === 'subscription') {
 			const totalCost = tx.quantity * tx.unitPrice + tx.fees;
 			totalBuysCost += totalCost;
 			quantityCurrent += tx.quantity;
@@ -193,6 +249,9 @@ const calculateHoldings = (transactions, method = COST_METHODS.FIFO) => {
 			if (lot.quantity <= 0) lots.shift();
 		}
 	}
+
+	// Apply split events after the latest transaction, if any.
+	applyPendingSplitsUpTo('9999-12-31');
 
 	const averageCost = quantityCurrent > 0 ? costCurrent / quantityCurrent : 0;
 	return {
@@ -487,16 +546,30 @@ class PortfolioPriceHistoryService {
 			userId,
 			options.portfolioId
 		);
+		let priceRows = await this.#listAssetPriceRows(portfolioId, asset.assetId);
+		if (!priceRows.length) {
+			await this.fetchPriceHistory(asset.ticker, resolveAssetMarket(asset), {
+				portfolioId,
+				assetId: asset.assetId,
+				assetClass: asset.assetClass,
+				country: asset.country,
+				currency: asset.currency,
+				persist: true,
+				incremental: false,
+			});
+			priceRows = await this.#listAssetPriceRows(portfolioId, asset.assetId);
+		}
+
 		const transactions = await this.#listAssetTransactions(
 			portfolioId,
 			asset.assetId
 		);
 		const method = options.method || COST_METHODS.FIFO;
-		const holdings = calculateHoldings(transactions, method);
-		const latestPrice = await this.#getLatestPriceRow(
-			portfolioId,
-			asset.assetId
-		);
+		const splitEvents = buildSplitEventsFromPriceRows(priceRows);
+		const holdings = calculateHoldings(transactions, method, {
+			splitEvents,
+		});
+		const latestPrice = priceRows.length ? priceRows[priceRows.length - 1] : null;
 		const currentPrice = getCloseForRow(latestPrice);
 		const marketValue =
 			currentPrice !== null
@@ -529,7 +602,6 @@ class PortfolioPriceHistoryService {
 				if (tx.assetId && tx.assetId === asset.assetId) return true;
 				return normalizeTicker(tx.ticker) === normalizeTicker(asset.ticker);
 			});
-			const holdings = calculateHoldings(assetTransactions, method);
 
 			let priceRows = await this.#listAssetPriceRows(portfolioId, asset.assetId);
 			if (!priceRows.length) {
@@ -544,6 +616,10 @@ class PortfolioPriceHistoryService {
 				});
 				priceRows = await this.#listAssetPriceRows(portfolioId, asset.assetId);
 			}
+			const splitEvents = buildSplitEventsFromPriceRows(priceRows);
+			const holdings = calculateHoldings(assetTransactions, method, {
+				splitEvents,
+			});
 
 			const latestPriceRow = priceRows.length ? priceRows[priceRows.length - 1] : null;
 			const latestClose = getCloseForRow(latestPriceRow);
@@ -804,18 +880,24 @@ class PortfolioPriceHistoryService {
 	#buildAverageCostTimeline(priceRows, transactions, method) {
 		const sortedTransactions = transactions
 			.map(parseTransaction)
-			.filter((tx) => tx.date && ['buy', 'sell'].includes(tx.type))
+			.filter((tx) => tx.date && ['buy', 'sell', 'subscription'].includes(tx.type))
 			.sort((left, right) =>
 				left.date === right.date
 					? String(left.createdAt || '').localeCompare(String(right.createdAt || ''))
 					: compareDate(left.date, right.date)
 			);
+		const splitEvents = buildSplitEventsFromPriceRows(priceRows);
 
 		const timeline = [];
 		const partialTransactions = [];
 		for (const transaction of sortedTransactions) {
 			partialTransactions.push(transaction);
-			const holdings = calculateHoldings(partialTransactions, method);
+			const partialSplitEvents = splitEvents.filter(
+				(splitEvent) => splitEvent.date <= transaction.date
+			);
+			const holdings = calculateHoldings(partialTransactions, method, {
+				splitEvents: partialSplitEvents,
+			});
 			const row = findPriceAtOrBeforeDate(priceRows, transaction.date);
 			timeline.push({
 				date: transaction.date,
@@ -827,7 +909,9 @@ class PortfolioPriceHistoryService {
 
 		const lastRow = priceRows[priceRows.length - 1];
 		if (lastRow) {
-			const finalHoldings = calculateHoldings(sortedTransactions, method);
+			const finalHoldings = calculateHoldings(sortedTransactions, method, {
+				splitEvents,
+			});
 			timeline.push({
 				date: lastRow.date,
 				average_cost: finalHoldings.averageCost,
@@ -1175,6 +1259,7 @@ module.exports = {
 	PortfolioPriceHistoryService,
 	COST_METHODS,
 	calculateHoldings,
+	buildSplitEventsFromPriceRows,
 	calculatePeriodReturn,
 	enrichTransactionsWithPrices,
 	findPriceAtOrBeforeDate,

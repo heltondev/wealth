@@ -60,6 +60,7 @@
       "title": "Asset Details",
       "subtitle": "Complete detail view for the selected asset",
       "close": "Close",
+      "openPage": "Open asset page",
       "noValue": "N/A",
       "openDetails": "Open details for asset {{ticker}}",
       "sections": {
@@ -112,6 +113,12 @@
         "amount": "Amount",
         "source": "Source"
       }
+    },
+    "detail": {
+      "title": "Asset Details",
+      "subtitle": "Complete detail view for the selected asset",
+      "backToAssets": "Back to assets",
+      "notFound": "Asset not found for the selected portfolio."
     },
     "form": {
       "ticker": "Ticker Symbol",

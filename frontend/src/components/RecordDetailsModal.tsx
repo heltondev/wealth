@@ -21,6 +21,7 @@ interface RecordDetailsModalProps {
   closeLabel: string;
   sections: RecordDetailsSection[];
   extraContent?: React.ReactNode;
+  headerActions?: React.ReactNode;
   onClose: () => void;
 }
 
@@ -31,6 +32,7 @@ const RecordDetailsModal = ({
   closeLabel,
   sections,
   extraContent,
+  headerActions,
   onClose,
 }: RecordDetailsModalProps) => {
   useEffect(() => {
@@ -58,9 +60,12 @@ const RecordDetailsModal = ({
             <h2 id="record-modal-title">{title}</h2>
             <p>{subtitle}</p>
           </div>
-          <button type="button" className="record-modal__close" onClick={onClose}>
-            {closeLabel}
-          </button>
+          <div className="record-modal__header-actions">
+            {headerActions}
+            <button type="button" className="record-modal__close" onClick={onClose}>
+              {closeLabel}
+            </button>
+          </div>
         </div>
 
         <div className="record-modal__grid">

@@ -60,6 +60,7 @@
       "title": "Detalhes do Ativo",
       "subtitle": "Visualizacao completa do ativo selecionado",
       "close": "Fechar",
+      "openPage": "Abrir página do ativo",
       "noValue": "N/A",
       "openDetails": "Abrir detalhes do ativo {{ticker}}",
       "sections": {
@@ -112,6 +113,12 @@
         "amount": "Total",
         "source": "Fonte"
       }
+    },
+    "detail": {
+      "title": "Detalhes do Ativo",
+      "subtitle": "Visualizacao completa do ativo selecionado",
+      "backToAssets": "Voltar para ativos",
+      "notFound": "Ativo nao encontrado para o portfolio selecionado."
     },
     "form": {
       "ticker": "Símbolo do Ticker",
