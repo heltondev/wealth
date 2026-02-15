@@ -24,12 +24,9 @@
   }
 
   &__select {
-    padding: $spacing-sm $spacing-md;
-    border-radius: 8px;
-    border: 1px solid var(--glass-border);
-    background: var(--bg-secondary);
-    color: var(--text-primary);
-    font-size: 0.9rem;
+    @include form-select-base(var(--bg-secondary), 0.9rem);
+    width: auto;
+    min-width: 140px;
   }
 
   &__loading,

@@ -15,22 +15,15 @@
 
     td input,
     td select {
-      width: 100%;
+      @include form-control-base(var(--bg-primary), 0.85rem);
       padding: $spacing-xs $spacing-sm;
       border-radius: 8px;
-      border: 1px solid var(--glass-border);
-      background: var(--bg-primary);
-      color: var(--text-primary);
-      font-size: 0.85rem;
     }
 
     td button {
-      padding: $spacing-xs $spacing-sm;
+      @include button-base(0.8rem, $spacing-xs, $spacing-sm);
+      @include button-danger;
       border-radius: 8px;
-      border: 1px solid var(--glass-border);
-      background: transparent;
-      color: var(--text-primary);
-      font-size: 0.8rem;
     }
   }
 

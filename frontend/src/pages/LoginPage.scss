@@ -37,32 +37,16 @@
   }
 
   &__btn {
-    padding: $spacing-md $spacing-lg;
+    @include button-base(0.95rem, $spacing-md, $spacing-lg);
     border-radius: $card-border-radius-sm;
-    font-size: 0.95rem;
-    font-weight: 500;
-    border: none;
-    transition: all $transition-fast;
 
     &--primary {
-      background: var(--primary);
-      color: #fff;
-
-      &:hover {
-        background: var(--primary-dark);
-        transform: translateY(-1px);
-      }
+      @include button-primary;
     }
 
     &--google {
-      background: var(--glass-bg);
+      @include button-secondary;
       color: var(--text-secondary);
-      border: 1px solid var(--glass-border);
-
-      &:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-      }
     }
   }
 }

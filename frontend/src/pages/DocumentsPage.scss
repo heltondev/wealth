@@ -16,17 +16,8 @@
   }
 
   &__upload-btn {
-    padding: $spacing-sm $spacing-lg;
-    border-radius: 8px;
-    border: none;
-    background: var(--primary);
-    color: #fff;
-    font-weight: 500;
-
-    &:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
+    @include button-base(0.9rem, $spacing-sm, $spacing-lg);
+    @include button-primary;
   }
 
   &__dropzone {

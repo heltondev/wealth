@@ -53,40 +53,20 @@
 
     label {
       display: block;
-      font-size: 0.85rem;
-      color: var(--text-secondary);
+      @include form-label(0.85rem);
       margin-bottom: $spacing-xs;
     }
 
     input, select {
-      width: 100%;
       max-width: 400px;
-      padding: $spacing-sm $spacing-md;
-      border-radius: 8px;
-      border: 1px solid var(--glass-border);
-      background: var(--bg-primary);
-      color: var(--text-primary);
-      font-size: 0.9rem;
-
-      &:disabled {
-        opacity: 0.6;
-      }
+      @include form-control-base(var(--bg-primary), 0.9rem);
     }
   }
 
   &__save {
-    padding: $spacing-sm $spacing-xl;
-    border-radius: 8px;
-    border: none;
-    background: var(--primary);
-    color: #fff;
-    font-weight: 500;
+    @include button-base(0.9rem, $spacing-sm, $spacing-xl);
+    @include button-primary;
     margin-top: $spacing-md;
-    transition: background $transition-fast;
-
-    &:hover {
-      background: var(--primary-dark);
-    }
   }
 }
 
@@ -97,21 +77,14 @@
   margin-bottom: $spacing-lg;
 
   input, select {
-    padding: $spacing-sm $spacing-md;
-    border-radius: 8px;
-    border: 1px solid var(--glass-border);
-    background: var(--bg-primary);
-    color: var(--text-primary);
-    font-size: 0.9rem;
+    @include form-control-base(var(--bg-primary), 0.9rem);
+    flex: 1 1 220px;
+    max-width: 320px;
   }
 
   button {
-    padding: $spacing-sm $spacing-lg;
-    border-radius: 8px;
-    border: none;
-    background: var(--primary);
-    color: #fff;
-    font-weight: 500;
+    @include button-base(0.9rem, $spacing-sm, $spacing-lg);
+    @include button-primary;
   }
 }
 
@@ -123,76 +96,207 @@
 .dropdowns-config {
   display: flex;
   flex-direction: column;
-  gap: $spacing-md;
+  gap: $spacing-lg;
 
   &__description {
     margin: 0;
     color: var(--text-secondary);
     font-size: 0.9rem;
+    line-height: 1.5;
+    max-width: 780px;
   }
 
   &__new {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto;
     gap: $spacing-sm;
     align-items: center;
 
     input {
-      padding: $spacing-sm $spacing-md;
-      border-radius: 8px;
-      border: 1px solid var(--glass-border);
-      background: var(--bg-primary);
-      color: var(--text-primary);
-      font-size: 0.9rem;
+      @include form-control-base(var(--bg-primary), 0.9rem);
+    }
+  }
+
+  &__search {
+    display: grid;
+    gap: $spacing-xs;
+    max-width: 640px;
+
+    label {
+      @include form-label(0.8rem);
     }
 
-    button {
-      padding: $spacing-sm $spacing-md;
-      border-radius: 8px;
-      border: 1px solid var(--glass-border);
-      background: rgba(99, 102, 241, 0.16);
-      color: var(--text-primary);
-      font-size: 0.85rem;
-      font-weight: 500;
+    input {
+      @include form-control-base(var(--bg-primary), 0.9rem);
     }
+  }
+
+  &__empty-search {
+    @include glass-card;
+    margin: 0;
+    padding: $spacing-md;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+  }
+
+  &__btn {
+    @include button-base(0.85rem, $spacing-sm, $spacing-md);
+  }
+
+  &__btn--primary {
+    @include button-primary;
+  }
+
+  &__btn--secondary {
+    @include button-secondary;
+  }
+
+  &__btn--danger {
+    @include button-danger;
   }
 
   &__group {
-    border: 1px solid var(--glass-border);
+    @include glass-card;
     border-radius: 12px;
-    padding: $spacing-md;
+    padding: $spacing-md $spacing-md $spacing-sm;
     display: flex;
     flex-direction: column;
-    gap: $spacing-sm;
+    gap: $spacing-md;
+    background:
+      radial-gradient(circle at 10% 5%, rgba(56, 189, 248, 0.09), transparent 42%),
+      linear-gradient(145deg, rgba(15, 23, 42, 0.68), rgba(2, 6, 23, 0.52));
   }
 
   &__group-header {
-    display: grid;
-    grid-template-columns: 1fr 1fr auto;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
     gap: $spacing-sm;
+    flex-wrap: wrap;
+  }
 
-    input, button {
-      padding: $spacing-sm $spacing-md;
-      border-radius: 8px;
-      border: 1px solid var(--glass-border);
-      background: var(--bg-primary);
-      color: var(--text-primary);
-      font-size: 0.85rem;
+  &__group-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: $spacing-sm;
+    min-width: 0;
+  }
+
+  &__group-key {
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(129, 140, 248, 0.45);
+    background: rgba(15, 23, 42, 0.75);
+    color: #dbeafe;
+    font-size: 0.78rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+    word-break: break-all;
+  }
+
+  &__group-count {
+    min-width: 30px;
+    text-align: center;
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--glass-border);
+    background: rgba(15, 23, 42, 0.72);
+    color: var(--text-primary);
+    font-size: 0.78rem;
+    font-weight: 600;
+  }
+
+  &__group-label {
+    flex: 1 1 100%;
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+    letter-spacing: 0.2px;
+  }
+
+  &__group-editor {
+    display: flex;
+    flex-direction: column;
+    gap: $spacing-xs;
+
+    label {
+      @include form-label(0.78rem);
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
     }
 
-    input:disabled {
-      opacity: 0.7;
-      cursor: not-allowed;
+    input {
+      @include form-control-base(rgba(2, 6, 23, 0.68), 0.9rem);
     }
   }
 
-  > button {
-    width: fit-content;
-    padding: $spacing-xs $spacing-sm;
-    border-radius: 8px;
+  &__table-shell {
     border: 1px solid var(--glass-border);
-    background: transparent;
-    color: var(--text-primary);
-    font-size: 0.85rem;
+    border-radius: 12px;
+    overflow: hidden;
+    background: rgba(2, 6, 23, 0.45);
+  }
+
+  &__table {
+    .editable-table__table {
+      border: none;
+      border-radius: 0;
+      background: transparent;
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+      box-shadow: none;
+    }
+
+    .editable-table__table th,
+    .editable-table__table td {
+      padding: $spacing-sm $spacing-md;
+    }
+
+    .editable-table__table td button {
+      @include button-danger;
+    }
+  }
+
+  &__group-actions {
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  > .settings-section__save {
+    align-self: flex-start;
+    margin-top: $spacing-xs;
+  }
+
+  @media (max-width: $breakpoint-desktop) {
+    &__new {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    &__new .dropdowns-config__btn {
+      grid-column: span 2;
+      justify-self: flex-start;
+    }
+  }
+
+  @media (max-width: $breakpoint-tablet) {
+    &__new {
+      grid-template-columns: 1fr;
+    }
+
+    &__new .dropdowns-config__btn {
+      grid-column: auto;
+      justify-self: stretch;
+    }
+
+    &__group-header {
+      flex-direction: column;
+    }
+
+    &__group-actions {
+      justify-content: stretch;
+    }
+
+    &__group-actions .dropdowns-config__btn {
+      width: 100%;
+    }
   }
 }

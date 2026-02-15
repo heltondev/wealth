@@ -212,6 +212,8 @@
     "dropdownOptionLabel": "Rótulo",
     "dropdownActions": "Ações",
     "dropdownOptionsEmpty": "Nenhuma opção ainda.",
+    "dropdownSearchPlaceholder": "Buscar por chave, rótulo, valor ou rótulo da opção",
+    "dropdownSearchNoResults": "Nenhum dropdown encontrado para esta busca.",
     "aliasTable": {
       "name": "Nome",
       "ticker": "Ticker",

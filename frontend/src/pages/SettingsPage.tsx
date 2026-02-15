@@ -51,6 +51,7 @@ const SettingsPage = () => {
   const [aliasSearchTerm, setAliasSearchTerm] = useState('');
   const [aliasItemsPerPage, setAliasItemsPerPage] = useState(DEFAULT_ITEMS_PER_PAGE);
   const [newDropdown, setNewDropdown] = useState({ key: '', label: '' });
+  const [dropdownSearchTerm, setDropdownSearchTerm] = useState('');
 
   useEffect(() => {
     api.getDropdownSettings()
@@ -263,6 +264,24 @@ const SettingsPage = () => {
 
   const dropdownEntries = useMemo(() =>
     Object.entries(dropdowns).sort(([left], [right]) => left.localeCompare(right)), [dropdowns]);
+  const filteredDropdownEntries = useMemo(() => {
+    const normalizedSearch = dropdownSearchTerm.trim().toLowerCase();
+    if (!normalizedSearch) return dropdownEntries;
+
+    return dropdownEntries.filter(([key, config]) => {
+      const options = config.options || [];
+      const searchableContent = [
+        key,
+        config.label,
+        ...options.map((option) => option.value),
+        ...options.map((option) => option.label),
+      ]
+        .join(' ')
+        .toLowerCase();
+
+      return searchableContent.includes(normalizedSearch);
+    });
+  }, [dropdownEntries, dropdownSearchTerm]);
 
   const activeLanguage = i18n.language?.startsWith('pt') ? 'pt' : 'en';
   const isSystemDropdown = (key: string) => Boolean(DEFAULT_DROPDOWN_CONFIG[key]);
@@ -475,24 +494,38 @@ const SettingsPage = () => {
                 value={newDropdown.label}
                 onChange={(event) => setNewDropdown((previous) => ({ ...previous, label: event.target.value }))}
               />
-              <button type="submit" className="dropdowns-config__primary-btn">
+              <button type="submit" className="dropdowns-config__btn dropdowns-config__btn--primary">
                 {t('settings.addDropdown')}
               </button>
             </form>
 
-            {dropdownEntries.map(([key, config]) => (
+            <div className="dropdowns-config__search">
+              <label htmlFor="dropdown-config-search">{t('common.search')}</label>
+              <input
+                id="dropdown-config-search"
+                type="text"
+                value={dropdownSearchTerm}
+                onChange={(event) => setDropdownSearchTerm(event.target.value)}
+                placeholder={t('settings.dropdownSearchPlaceholder')}
+              />
+            </div>
+
+            {filteredDropdownEntries.length === 0 && (
+              <p className="dropdowns-config__empty-search">{t('settings.dropdownSearchNoResults')}</p>
+            )}
+
+            {filteredDropdownEntries.map(([key, config]) => (
               <section key={key} className="dropdowns-config__group">
                 <div className="dropdowns-config__group-header">
-                  <input type="text" value={key} disabled />
-                  <input
-                    type="text"
-                    value={config.label}
-                    onChange={(event) => handleDropdownLabelChange(key, event.target.value)}
-                  />
+                  <div className="dropdowns-config__group-meta">
+                    <code className="dropdowns-config__group-key">{key}</code>
+                    <span className="dropdowns-config__group-count">{config.options.length}</span>
+                    <span className="dropdowns-config__group-label">{config.label || key}</span>
+                  </div>
                   {!isSystemDropdown(key) && (
                     <button
                       type="button"
-                      className="dropdowns-config__danger-btn"
+                      className="dropdowns-config__btn dropdowns-config__btn--danger"
                       onClick={() => handleRemoveDropdown(key)}
                     >
                       {t('settings.removeDropdown')}
@@ -500,20 +533,35 @@ const SettingsPage = () => {
                   )}
                 </div>
 
-                <EditableTable
-                  rows={config.options}
-                  rowKey={(_, rowIndex) => `${key}-${rowIndex}`}
-                  columns={optionColumnsFor(key)}
-                  emptyLabel={t('settings.dropdownOptionsEmpty')}
-                />
+                <div className="dropdowns-config__group-editor">
+                  <label htmlFor={`dropdown-label-${key}`}>{t('settings.dropdownLabelPlaceholder')}</label>
+                  <input
+                    id={`dropdown-label-${key}`}
+                    type="text"
+                    value={config.label}
+                    onChange={(event) => handleDropdownLabelChange(key, event.target.value)}
+                  />
+                </div>
 
-                <button
-                  type="button"
-                  className="dropdowns-config__add-option-btn"
-                  onClick={() => handleAddOption(key)}
-                >
-                  {t('settings.addOption')}
-                </button>
+                <div className="dropdowns-config__table-shell">
+                  <EditableTable
+                    rows={config.options}
+                    rowKey={(_, rowIndex) => `${key}-${rowIndex}`}
+                    columns={optionColumnsFor(key)}
+                    emptyLabel={t('settings.dropdownOptionsEmpty')}
+                    className="dropdowns-config__table"
+                  />
+                </div>
+
+                <div className="dropdowns-config__group-actions">
+                  <button
+                    type="button"
+                    className="dropdowns-config__btn dropdowns-config__btn--secondary"
+                    onClick={() => handleAddOption(key)}
+                  >
+                    {t('settings.addOption')}
+                  </button>
+                </div>
               </section>
             ))}
 

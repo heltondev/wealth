@@ -31,18 +31,8 @@
   }
 
   &__close {
-    border: 1px solid var(--glass-border);
-    background: var(--bg-primary);
-    color: var(--text-primary);
-    border-radius: 8px;
-    padding: $spacing-sm $spacing-md;
-    font-size: 0.85rem;
-    transition: all $transition-fast;
-
-    &:hover {
-      background: rgba(99, 102, 241, 0.16);
-      border-color: rgba(129, 140, 248, 0.45);
-    }
+    @include button-base(0.85rem, $spacing-sm, $spacing-md);
+    @include button-secondary;
   }
 
   &__body {
@@ -55,20 +45,13 @@
     gap: $spacing-xs;
 
     label {
-      font-size: 0.85rem;
-      color: var(--text-secondary);
+      @include form-label(0.82rem);
     }
 
     input,
     select,
     textarea {
-      width: 100%;
-      padding: $spacing-sm $spacing-md;
-      border-radius: 8px;
-      border: 1px solid var(--glass-border);
-      background: var(--bg-primary);
-      color: var(--text-primary);
-      font-size: 0.9rem;
+      @include form-control-base(var(--bg-primary), 0.9rem);
     }
   }
 
@@ -80,25 +63,14 @@
   }
 
   &__btn {
-    padding: $spacing-sm $spacing-lg;
-    border-radius: 8px;
-    font-weight: 500;
-    border: none;
-    font-size: 0.9rem;
+    @include button-base(0.9rem, $spacing-sm, $spacing-lg);
 
     &--cancel {
-      background: var(--glass-bg);
-      color: var(--text-secondary);
-      border: 1px solid var(--glass-border);
+      @include button-secondary;
     }
 
     &--submit {
-      background: var(--primary);
-      color: #fff;
-
-      &:hover {
-        background: var(--primary-dark);
-      }
+      @include button-primary;
     }
   }
 }

@@ -24,26 +24,14 @@
   }
 
   &__select {
-    padding: $spacing-sm $spacing-md;
-    border-radius: 8px;
-    border: 1px solid var(--glass-border);
-    background: var(--bg-secondary);
-    color: var(--text-primary);
-    font-size: 0.9rem;
+    @include form-select-base(var(--bg-secondary), 0.9rem);
+    width: auto;
+    min-width: 140px;
   }
 
   &__add-btn {
-    padding: $spacing-sm $spacing-lg;
-    border-radius: 8px;
-    border: none;
-    background: var(--primary);
-    color: #fff;
-    font-weight: 500;
-    transition: background $transition-fast;
-
-    &:hover {
-      background: var(--primary-dark);
-    }
+    @include button-base(0.9rem, $spacing-sm, $spacing-lg);
+    @include button-primary;
   }
 
   &__loading,
@@ -72,17 +60,9 @@
   }
 
   &__delete {
-    background: none;
-    border: 1px solid var(--error);
-    color: var(--error);
-    padding: 4px 12px;
+    @include button-base(0.8rem, 4px, 12px);
+    @include button-danger;
     border-radius: 6px;
-    font-size: 0.8rem;
-    transition: all $transition-fast;
-
-    &:hover {
-      background: rgba(239, 68, 68, 0.1);
-    }
   }
 }
 

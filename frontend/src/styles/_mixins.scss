@@ -78,3 +78,123 @@
     font-weight: 600;
   }
 }
+
+@mixin form-label($font-size: 0.8rem) {
+  font-size: $font-size;
+  color: var(--text-secondary);
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+
+@mixin form-control-base($bg: var(--bg-primary), $font-size: 0.9rem) {
+  width: 100%;
+  padding: $spacing-sm $spacing-md;
+  border-radius: 10px;
+  border: 1px solid var(--glass-border);
+  background: $bg;
+  color: var(--text-primary);
+  font-size: $font-size;
+  transition:
+    border-color $transition-fast,
+    box-shadow $transition-fast,
+    background $transition-fast,
+    color $transition-fast;
+
+  &::placeholder {
+    color: rgba(148, 163, 184, 0.85);
+  }
+
+  &:hover:not(:disabled) {
+    border-color: rgba(129, 140, 248, 0.4);
+  }
+
+  &:focus,
+  &:focus-visible {
+    outline: none;
+    border-color: rgba(129, 140, 248, 0.72);
+    box-shadow: 0 0 0 3px rgba(129, 140, 248, 0.16);
+  }
+
+  &:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+    background: var(--glass-bg);
+  }
+}
+
+@mixin form-select-base($bg: var(--bg-primary), $font-size: 0.9rem) {
+  @include form-control-base($bg, $font-size);
+}
+
+@mixin button-base(
+  $font-size: 0.9rem,
+  $padding-y: $spacing-sm,
+  $padding-x: $spacing-md
+) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: $spacing-xs;
+  padding: $padding-y $padding-x;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  font-size: $font-size;
+  font-weight: 600;
+  line-height: 1.2;
+  transition:
+    background $transition-fast,
+    border-color $transition-fast,
+    color $transition-fast,
+    transform $transition-fast,
+    box-shadow $transition-fast;
+
+  &:hover:not(:disabled) {
+    transform: translateY(-1px);
+  }
+
+  &:active:not(:disabled) {
+    transform: translateY(0);
+  }
+
+  &:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+  }
+}
+
+@mixin button-primary {
+  background: linear-gradient(135deg, rgba(79, 70, 229, 0.96), rgba(99, 102, 241, 0.88));
+  border-color: rgba(129, 140, 248, 0.45);
+  color: #fff;
+  box-shadow: 0 8px 20px rgba(79, 70, 229, 0.22);
+
+  &:hover:not(:disabled) {
+    background: linear-gradient(135deg, rgba(67, 56, 202, 0.98), rgba(79, 70, 229, 0.9));
+    border-color: rgba(129, 140, 248, 0.62);
+    box-shadow: 0 10px 24px rgba(67, 56, 202, 0.28);
+  }
+}
+
+@mixin button-secondary {
+  background: var(--glass-bg);
+  border-color: var(--glass-border);
+  color: var(--text-primary);
+
+  &:hover:not(:disabled) {
+    background: rgba(99, 102, 241, 0.14);
+    border-color: rgba(129, 140, 248, 0.45);
+  }
+}
+
+@mixin button-danger {
+  background: rgba(239, 68, 68, 0.14);
+  border-color: rgba(239, 68, 68, 0.35);
+  color: #fca5a5;
+
+  &:hover:not(:disabled) {
+    background: rgba(239, 68, 68, 0.22);
+    border-color: rgba(248, 113, 113, 0.5);
+  }
+}

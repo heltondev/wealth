@@ -19,20 +19,12 @@
     flex: 1;
 
     label {
-      font-size: 0.8rem;
-      color: var(--text-secondary);
-      font-weight: 600;
-      letter-spacing: 0.2px;
+      @include form-label(0.8rem);
     }
 
     input,
     select {
-      padding: $spacing-sm $spacing-md;
-      border-radius: 8px;
-      border: 1px solid var(--glass-border);
-      background: var(--bg-secondary);
-      color: var(--text-primary);
-      font-size: 0.9rem;
+      @include form-control-base(var(--bg-secondary), 0.9rem);
     }
   }
 
@@ -109,22 +101,8 @@
   }
 
   &__pagination-btn {
-    border: 1px solid var(--glass-border);
-    background: var(--bg-secondary);
-    color: var(--text-primary);
-    border-radius: 6px;
-    padding: 6px 12px;
-    font-size: 0.8rem;
-    transition: all $transition-fast;
-
-    &:hover:not(:disabled) {
-      background: var(--glass-bg);
-    }
-
-    &:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
+    @include button-base(0.8rem, 6px, 12px);
+    @include button-secondary;
   }
 
   &__page-label {

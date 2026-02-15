@@ -212,6 +212,8 @@
     "dropdownOptionLabel": "Label",
     "dropdownActions": "Actions",
     "dropdownOptionsEmpty": "No options yet.",
+    "dropdownSearchPlaceholder": "Search by key, label, option value, or option label",
+    "dropdownSearchNoResults": "No dropdowns found for this search.",
     "aliasTable": {
       "name": "Name",
       "ticker": "Ticker",
