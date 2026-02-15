@@ -1,5 +1,5 @@
 const { QueryCommand, UpdateCommand, PutCommand } = require('@aws-sdk/lib-dynamodb');
-const { YahooPythonProvider } = require('./providers/yahoo-python-provider');
+const { YahooApiProvider } = require('./providers/yahoo-api-provider');
 const { TesouroProvider } = require('./providers/tesouro-provider');
 const { FallbackManager } = require('./fallback/fallback-manager');
 const { createThrottledScheduler } = require('./throttle');
@@ -38,7 +38,7 @@ class AssetMarketDataService {
 		this.tableName = options.tableName || process.env.TABLE_NAME || 'wealth-main';
 		this.logger = options.logger || console;
 		this.yahooProvider =
-			options.yahooProvider || new YahooPythonProvider(options);
+			options.yahooProvider || new YahooApiProvider(options);
 		this.tesouroProvider =
 			options.tesouroProvider || new TesouroProvider(options);
 		this.fallbackManager =

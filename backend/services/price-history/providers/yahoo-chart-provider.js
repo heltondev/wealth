@@ -16,7 +16,11 @@ const toDate = (epochSeconds) => {
 class YahooChartProvider {
 	constructor(options = {}) {
 		this.timeoutMs = Number(
-			options.timeoutMs || process.env.MARKET_DATA_YFINANCE_TIMEOUT_MS || 30000
+			options.yahooTimeoutMs ||
+			options.timeoutMs ||
+			process.env.MARKET_DATA_YAHOO_TIMEOUT_MS ||
+			process.env.MARKET_DATA_YFINANCE_TIMEOUT_MS ||
+			30000
 		);
 	}
 

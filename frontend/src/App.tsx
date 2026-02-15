@@ -15,6 +15,12 @@ const ALL_ROLES: AppRole[] = ['VIEWER', 'EDITOR', 'ADMIN'];
 const ADMIN_ONLY: AppRole[] = ['ADMIN'];
 
 function App() {
+  const routeFallback = (
+    <div style={{ padding: '24px', color: 'var(--text-secondary)' }}>
+      Loading...
+    </div>
+  );
+
   return (
     <BrowserRouter>
       <Routes>
@@ -22,7 +28,7 @@ function App() {
         <Route
           path="/dashboard"
           element={
-            <Suspense fallback={null}>
+            <Suspense fallback={routeFallback}>
               <ProtectedRoute allowedRoles={ALL_ROLES}>
                 <DashboardPage />
               </ProtectedRoute>
@@ -32,7 +38,7 @@ function App() {
         <Route
           path="/assets"
           element={
-            <Suspense fallback={null}>
+            <Suspense fallback={routeFallback}>
               <ProtectedRoute allowedRoles={ALL_ROLES}>
                 <AssetsPage />
               </ProtectedRoute>
@@ -42,7 +48,7 @@ function App() {
         <Route
           path="/assets/:assetId"
           element={
-            <Suspense fallback={null}>
+            <Suspense fallback={routeFallback}>
               <ProtectedRoute allowedRoles={ALL_ROLES}>
                 <AssetDetailsPage />
               </ProtectedRoute>
@@ -52,7 +58,7 @@ function App() {
         <Route
           path="/transactions"
           element={
-            <Suspense fallback={null}>
+            <Suspense fallback={routeFallback}>
               <ProtectedRoute allowedRoles={ALL_ROLES}>
                 <TransactionsPage />
               </ProtectedRoute>
@@ -62,7 +68,7 @@ function App() {
         <Route
           path="/documents"
           element={
-            <Suspense fallback={null}>
+            <Suspense fallback={routeFallback}>
               <ProtectedRoute allowedRoles={ALL_ROLES}>
                 <DocumentsPage />
               </ProtectedRoute>
@@ -72,7 +78,7 @@ function App() {
         <Route
           path="/settings"
           element={
-            <Suspense fallback={null}>
+            <Suspense fallback={routeFallback}>
               <ProtectedRoute allowedRoles={ADMIN_ONLY}>
                 <SettingsPage />
               </ProtectedRoute>

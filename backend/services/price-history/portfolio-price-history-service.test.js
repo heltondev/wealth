@@ -122,7 +122,7 @@ test('fetchPriceHistory runs incremental and persists rows idempotently', async 
 			fetchHistory: async (_symbol, options) => {
 				providerStartDate = options.startDate;
 				return {
-					data_source: 'yfinance',
+					data_source: 'yahoo_chart_api',
 					is_scraped: false,
 					currency: 'USD',
 					rows: [

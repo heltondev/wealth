@@ -1906,7 +1906,7 @@ class PlatformService {
 				eventType: type,
 				date: rawDate,
 				details: rawValue,
-				data_source: source || 'yfinance',
+				data_source: source || 'yahoo_quote_api',
 			});
 		};
 

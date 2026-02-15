@@ -8,8 +8,8 @@ Complements the market-data module with:
 - Chart-ready data builders (price history, average cost, cumulative return, dividends)
 
 Provider chain for BR/US/CA history:
-1) Python `yfinance` helper
-2) Yahoo chart public endpoint fallback (`query1.finance.yahoo.com`)
+1) Yahoo chart public endpoint primary (`query1.finance.yahoo.com`)
+2) Yahoo chart fallback provider (`query1.finance.yahoo.com`)
 3) Market-data fallback manager (last-price synthetic row when needed)
 
 ## Main interface

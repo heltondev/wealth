@@ -1,5 +1,22 @@
-// Load env vars before anything else
-try { require('dotenv').config(); } catch {}
+// Load env vars before anything else.
+// Resolve paths from repository root so startup works regardless of current working directory.
+try {
+	const path = require('path');
+	const dotenv = require('dotenv');
+	const repoRoot = path.resolve(__dirname, '../..');
+	dotenv.config({ path: path.join(repoRoot, '.env') });
+	dotenv.config({ path: path.join(repoRoot, '.env.local'), override: true });
+} catch {}
+
+// Force local-safe defaults for development server if values are missing.
+process.env.APP_ENV = process.env.APP_ENV || 'local';
+process.env.DYNAMODB_ENDPOINT =
+	process.env.DYNAMODB_ENDPOINT || 'http://localhost:8000';
+process.env.TABLE_NAME = process.env.TABLE_NAME || 'wealth-main';
+process.env.AWS_REGION = process.env.AWS_REGION || 'us-east-1';
+process.env.AWS_ACCESS_KEY_ID = process.env.AWS_ACCESS_KEY_ID || 'local';
+process.env.AWS_SECRET_ACCESS_KEY =
+	process.env.AWS_SECRET_ACCESS_KEY || 'local';
 
 const express = require('express');
 const cors = require('cors');
@@ -47,7 +64,13 @@ app.all('/api/*path', async (req, res) => {
 		res.send(result.body);
 	} catch (err) {
 		console.error('Handler error:', err);
-		res.status(500).json({ error: 'Internal server error' });
+		res.status(500).json({
+			error: 'Internal server error',
+			message:
+				process.env.NODE_ENV === 'production'
+					? undefined
+					: (err && err.message) || String(err),
+		});
 	}
 });
 

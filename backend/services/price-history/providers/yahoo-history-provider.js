@@ -1,162 +1,155 @@
-const path = require('path');
-const { spawn } = require('child_process');
 const {
 	ProviderUnavailableError,
 	DataIncompleteError,
 } = require('../../market-data/errors');
-const { toNumberOrNull } = require('../../market-data/utils');
+const {
+	fetchWithTimeout,
+	toNumberOrNull,
+	withRetry,
+} = require('../../market-data/utils');
+
+const DEFAULT_TIMEOUT_MS = 30000;
+
+const toDate = (epochSeconds) => {
+	const parsed = Number(epochSeconds);
+	if (!Number.isFinite(parsed)) return null;
+	return new Date(parsed * 1000).toISOString().slice(0, 10);
+};
+
+const toHistoryRow = (
+	timestamp,
+	index,
+	quote,
+	adjCloseArray,
+	dividendsByTimestamp,
+	splitsByTimestamp
+) => {
+	const date = toDate(timestamp);
+	if (!date) return null;
+
+	const closeValue = toNumberOrNull(quote.close?.[index]);
+	if (closeValue === null) return null;
+
+	const splitEvent = splitsByTimestamp[String(timestamp)] || null;
+	const splitFactor =
+		splitEvent?.numerator && splitEvent?.denominator
+			? toNumberOrNull(splitEvent.numerator / splitEvent.denominator)
+			: null;
+
+	return {
+		date,
+		open: toNumberOrNull(quote.open?.[index]),
+		high: toNumberOrNull(quote.high?.[index]),
+		low: toNumberOrNull(quote.low?.[index]),
+		close: closeValue,
+		adjusted_close: toNumberOrNull(adjCloseArray?.[index]) ?? closeValue,
+		volume: toNumberOrNull(quote.volume?.[index]),
+		dividends: toNumberOrNull(dividendsByTimestamp[String(timestamp)]?.amount) || 0,
+		stock_splits: toNumberOrNull(splitFactor) || 0,
+	};
+};
 
 class YahooHistoryProvider {
 	constructor(options = {}) {
-		this.pythonBin =
-			options.pythonBin || process.env.MARKET_DATA_PYTHON_BIN || 'python3';
-		this.scriptPath =
-			options.scriptPath ||
-			path.join(
-				__dirname,
-				'..',
-				'python',
-				'yfinance_history_fetcher.py'
-			);
 		this.timeoutMs = Number(
-			options.timeoutMs || process.env.MARKET_DATA_YFINANCE_TIMEOUT_MS || 30000
+			options.yahooTimeoutMs ||
+			options.timeoutMs ||
+			process.env.MARKET_DATA_YAHOO_TIMEOUT_MS ||
+			process.env.MARKET_DATA_YFINANCE_TIMEOUT_MS ||
+			DEFAULT_TIMEOUT_MS
 		);
 	}
 
 	async fetchHistory(symbol, options = {}) {
-		const payload = await this.#runPythonScript({
-			ticker: symbol,
-			start_date: options.startDate || null,
-			period: options.period || (options.startDate ? null : 'max'),
-			interval: '1d',
-		});
+		const normalizedSymbol = String(symbol || '').trim().toUpperCase();
+		if (!normalizedSymbol) {
+			throw new ProviderUnavailableError('symbol is required', {
+				provider: 'yahoo_chart_api',
+			});
+		}
 
-		if (!payload || payload.ok !== true || !payload.payload) {
+		const url = this.#buildUrl(normalizedSymbol, options);
+		const response = await withRetry(
+			() => fetchWithTimeout(url, { timeoutMs: this.timeoutMs }),
+			{
+				retries: 2,
+				baseDelayMs: 500,
+				factor: 2,
+			}
+		);
+
+		if (!response.ok) {
 			throw new ProviderUnavailableError(
-				payload?.error || 'yfinance history provider returned invalid payload',
+				`Yahoo chart endpoint responded with ${response.status}`,
 				{
-					symbol,
-					payload,
+					symbol: normalizedSymbol,
+					status: response.status,
 				}
 			);
 		}
 
-		const result = payload.payload;
-		const rows = Array.isArray(result.rows) ? result.rows : [];
+		const payload = await response.json();
+		const result = payload?.chart?.result?.[0];
+		if (!result) {
+			throw new DataIncompleteError('Yahoo chart payload missing result', {
+				symbol: normalizedSymbol,
+				payload,
+			});
+		}
+
+		const timestamps = Array.isArray(result.timestamp) ? result.timestamp : [];
+		const quote = result?.indicators?.quote?.[0] || {};
+		const adjCloseArray = result?.indicators?.adjclose?.[0]?.adjclose || [];
+		const dividendsByTimestamp = result?.events?.dividends || {};
+		const splitsByTimestamp = result?.events?.splits || {};
+		const rows = timestamps
+			.map((timestamp, index) =>
+				toHistoryRow(
+					timestamp,
+					index,
+					quote,
+					adjCloseArray,
+					dividendsByTimestamp,
+					splitsByTimestamp
+				)
+			)
+			.filter(Boolean);
 
 		if (!rows.length && !options.allowEmpty) {
-			throw new DataIncompleteError('yfinance history returned empty rows', {
-				symbol,
+			throw new DataIncompleteError('Yahoo chart returned empty rows', {
+				symbol: normalizedSymbol,
 				result,
 			});
 		}
 
 		return {
-			data_source: 'yfinance',
+			data_source: 'yahoo_chart_api',
 			is_scraped: false,
-			currency: result.currency || null,
-			rows: rows.map((row) => ({
-				date: row.date,
-				open: toNumberOrNull(row.open),
-				high: toNumberOrNull(row.high),
-				low: toNumberOrNull(row.low),
-				close: toNumberOrNull(row.close),
-				adjusted_close: toNumberOrNull(row.adjusted_close),
-				volume: toNumberOrNull(row.volume),
-				dividends: toNumberOrNull(row.dividends) || 0,
-				stock_splits: toNumberOrNull(row.stock_splits) || 0,
-			})),
+			currency: result?.meta?.currency || null,
+			rows,
 			raw: result,
 		};
 	}
 
-	#runPythonScript(inputPayload) {
-		return new Promise((resolve, reject) => {
-			const child = spawn(this.pythonBin, [this.scriptPath], {
-				stdio: ['pipe', 'pipe', 'pipe'],
-				env: { ...process.env },
-			});
+	#buildUrl(symbol, options = {}) {
+		const startDate = options.startDate ? String(options.startDate).trim() : '';
+		const period = options.period ? String(options.period).trim() : '';
 
-			let stdout = '';
-			let stderr = '';
-			let resolved = false;
+		if (startDate) {
+			const startEpochSeconds = Date.parse(`${startDate}T00:00:00Z`);
+			if (!Number.isFinite(startEpochSeconds)) {
+				throw new ProviderUnavailableError('Invalid startDate for yahoo history', {
+					symbol,
+					startDate,
+				});
+			}
+			const period1 = Math.floor(startEpochSeconds / 1000);
+			const period2 = Math.floor(Date.now() / 1000);
+			return `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${period1}&period2=${period2}&interval=1d&events=div,split`;
+		}
 
-			const timeout = setTimeout(() => {
-				if (resolved) return;
-				resolved = true;
-				child.kill('SIGKILL');
-				reject(
-					new ProviderUnavailableError(
-						'yfinance history helper timed out',
-						{
-							timeoutMs: this.timeoutMs,
-							stderr,
-						}
-					)
-				);
-			}, this.timeoutMs);
-
-			child.stdout.on('data', (chunk) => {
-				stdout += chunk.toString('utf8');
-			});
-
-			child.stderr.on('data', (chunk) => {
-				stderr += chunk.toString('utf8');
-			});
-
-			child.on('error', (error) => {
-				if (resolved) return;
-				resolved = true;
-				clearTimeout(timeout);
-				reject(
-					new ProviderUnavailableError(
-						'failed to execute yfinance history helper',
-						{
-							error: error.message,
-							stderr,
-						}
-					)
-				);
-			});
-
-			child.on('close', (code) => {
-				if (resolved) return;
-				resolved = true;
-				clearTimeout(timeout);
-
-				if (code !== 0) {
-					reject(
-						new ProviderUnavailableError(
-							'yfinance history helper exited with error',
-							{
-								code,
-								stderr,
-								stdout,
-							}
-						)
-					);
-					return;
-				}
-
-				try {
-					resolve(JSON.parse(stdout));
-				} catch (error) {
-					reject(
-						new ProviderUnavailableError(
-							'invalid JSON from yfinance history helper',
-							{
-								error: error.message,
-								stdout,
-								stderr,
-							}
-						)
-					);
-				}
-			});
-
-			child.stdin.write(JSON.stringify(inputPayload));
-			child.stdin.end();
-		});
+		const resolvedRange = period || 'max';
+		return `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${encodeURIComponent(resolvedRange)}&interval=1d&events=div,split`;
 	}
 }
 

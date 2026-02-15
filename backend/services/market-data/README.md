@@ -2,26 +2,18 @@
 
 This module fetches full asset data for portfolio holdings using free sources:
 
-- `yfinance` (Python helper) for BR/US/CA listed assets
+- Yahoo Finance public APIs (`v7/finance/quote` + `v8/finance/chart`) for BR/US/CA listed assets
 - Tesouro Transparente CSV endpoints for Tesouro Direto bonds
 - Structured + scraping fallbacks when primary providers fail
 
 ## Runtime dependencies
 
-Node service calls a Python helper at:
-
-`backend/services/market-data/python/yfinance_fetcher.py`
-
-Install Python dependencies:
-
-```bash
-python3 -m pip install -r backend/services/market-data/python/requirements.txt
-```
+Node.js only (no Python runtime required).
 
 ## Optional environment variables
 
-- `MARKET_DATA_PYTHON_BIN` (default: `python3`)
-- `MARKET_DATA_YFINANCE_TIMEOUT_MS`
+- `MARKET_DATA_YAHOO_TIMEOUT_MS` (preferred timeout for Yahoo APIs)
+- `MARKET_DATA_YFINANCE_TIMEOUT_MS` (legacy alias, still honored)
 - `MARKET_DATA_TESOURO_TIMEOUT_MS`
 - `MARKET_DATA_GOOGLE_TIMEOUT_MS`
 - `MARKET_DATA_STATUSINVEST_TIMEOUT_MS`

@@ -47,7 +47,7 @@ test('fetchAssetData uses primary provider when price is present', async () => {
 		scheduler: (task) => task(),
 		yahooProvider: {
 			fetch: async () => ({
-				data_source: 'yfinance',
+				data_source: 'yahoo_quote_api',
 				is_scraped: false,
 				quote: { currentPrice: 123.45 },
 				fundamentals: { info: { marketCap: 10 } },
@@ -66,7 +66,7 @@ test('fetchAssetData uses primary provider when price is present', async () => {
 	});
 
 	const payload = await service.fetchAssetData('AAPL', 'US');
-	assert.equal(payload.data_source, 'yfinance');
+	assert.equal(payload.data_source, 'yahoo_quote_api');
 	assert.equal(payload.is_scraped, false);
 	assert.equal(payload.quote.currentPrice, 123.45);
 });
@@ -78,7 +78,7 @@ test('fetchAssetData falls back when primary provider fails', async () => {
 		scheduler: (task) => task(),
 		yahooProvider: {
 			fetch: async () => {
-				throw new Error('yfinance down');
+				throw new Error('yahoo quote api down');
 			},
 		},
 		tesouroProvider: { fetch: async () => null },
@@ -98,7 +98,7 @@ test('fetchAssetData falls back when primary provider fails', async () => {
 	assert.equal(payload.data_source, 'scrape_yahoo');
 	assert.equal(payload.is_scraped, true);
 	assert.equal(payload.quote.currentPrice, 88.3);
-	assert.equal(payload.raw.primary_error.message, 'yfinance down');
+	assert.equal(payload.raw.primary_error.message, 'yahoo quote api down');
 });
 
 test('refreshPortfolioAssets keeps processing when one asset fails', async () => {
@@ -145,7 +145,7 @@ test('refreshPortfolioAssets keeps processing when one asset fails', async () =>
 		return {
 			ticker,
 			market,
-			data_source: 'yfinance',
+			data_source: 'yahoo_quote_api',
 			is_scraped: false,
 			fetched_at: new Date().toISOString(),
 			quote: { currentPrice: 100, currency: 'USD' },
@@ -163,7 +163,7 @@ test('refreshPortfolioAssets keeps processing when one asset fails', async () =>
 	assert.equal(result.updated, 1);
 	assert.equal(result.failed, 1);
 	assert.deepEqual(persisted, [
-		{ assetId: 'asset-ok', data_source: 'yfinance' },
+		{ assetId: 'asset-ok', data_source: 'yahoo_quote_api' },
 		{ assetId: 'asset-fail', data_source: 'unavailable' },
 	]);
 });

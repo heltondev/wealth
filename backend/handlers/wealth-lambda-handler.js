@@ -1380,6 +1380,14 @@ exports.handler = async (event) => {
 		body = {
 			error: err.message || 'Internal server error',
 		};
+		const runtime = String(process.env.APP_ENV || '').toLowerCase();
+		if (statusCode >= 500 && runtime === 'local') {
+			body.details = {
+				name: err?.name || 'Error',
+				code: err?.code || null,
+				message: err?.message || null,
+			};
+		}
 	}
 
 	return {

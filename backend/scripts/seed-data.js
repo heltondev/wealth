@@ -10,6 +10,10 @@ const {
 const TABLE_NAME = resolveTableName();
 const REGION = resolveAwsRegion();
 const RUNTIME_ENV = resolveRuntimeEnvironment();
+const argv = new Set(process.argv.slice(2));
+const SHOULD_SEED_DEMO = argv.has('--seed-demo');
+const SHOULD_IMPORT_B3 = argv.has('--import-b3');
+const TABLE_ONLY = argv.has('--table-only');
 
 const client = new DynamoDBClient(buildAwsClientConfig({ service: 'dynamodb' }));
 const dynamo = DynamoDBDocumentClient.from(client);
@@ -241,13 +245,22 @@ async function seedData() {
 
 async function run() {
 	await createTable();
-	await seedData();
+	if (TABLE_ONLY || !SHOULD_SEED_DEMO) {
+		console.log('Table setup complete. Demo seed skipped.');
+	} else {
+		await seedData();
+	}
 
-	// Optionally import B3 data if --import-b3 flag is passed
-	if (process.argv.includes('--import-b3')) {
+	// Optionally import B3 data.
+	if (SHOULD_IMPORT_B3) {
 		console.log('\nRunning B3 import...');
-		const { execSync } = require('child_process');
-		execSync('node backend/scripts/import-b3.js', {
+		const { execFileSync } = require('child_process');
+		const passThroughArgs = process.argv.slice(2).filter((value) =>
+			value.startsWith('--portfolio-') ||
+			value.startsWith('--user-') ||
+			value.startsWith('--base-currency')
+		);
+		execFileSync('node', ['backend/scripts/import-b3.js', ...passThroughArgs], {
 			stdio: 'inherit',
 			cwd: require('path').resolve(__dirname, '../..'),
 			env: { ...process.env },

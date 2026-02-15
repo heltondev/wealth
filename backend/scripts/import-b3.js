@@ -9,7 +9,13 @@
 const fs = require('fs');
 const path = require('path');
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
-const { DynamoDBDocumentClient, PutCommand, QueryCommand, ScanCommand } = require('@aws-sdk/lib-dynamodb');
+const {
+	DynamoDBDocumentClient,
+	PutCommand,
+	GetCommand,
+	QueryCommand,
+	ScanCommand,
+} = require('@aws-sdk/lib-dynamodb');
 const { detectProvider } = require('../parsers/index');
 const {
 	buildAwsClientConfig,
@@ -24,8 +30,20 @@ const RUNTIME_ENV = resolveRuntimeEnvironment();
 const DATA_DIR = path.resolve(__dirname, '../../.data/B3');
 const DRY_RUN = process.argv.includes('--dry-run');
 
-const USER_ID = 'local-user-001';
-const PORTFOLIO_ID = 'demo-portfolio-001';
+function parseArg(name) {
+	const inline = process.argv.find((value) => value.startsWith(`--${name}=`));
+	if (inline) return inline.slice(name.length + 3).trim();
+	const index = process.argv.indexOf(`--${name}`);
+	if (index >= 0 && process.argv[index + 1] && !process.argv[index + 1].startsWith('--')) {
+		return process.argv[index + 1].trim();
+	}
+	return '';
+}
+
+const USER_ID = parseArg('user-id') || process.env.IMPORT_USER_ID || 'local-user-001';
+const PORTFOLIO_ID = parseArg('portfolio-id') || process.env.IMPORT_PORTFOLIO_ID || 'main-portfolio';
+const PORTFOLIO_NAME = parseArg('portfolio-name') || process.env.IMPORT_PORTFOLIO_NAME || 'Main Portfolio';
+const BASE_CURRENCY = (parseArg('base-currency') || process.env.IMPORT_BASE_CURRENCY || 'BRL').toUpperCase();
 
 const client = new DynamoDBClient(buildAwsClientConfig({ service: 'dynamodb' }));
 const dynamo = DynamoDBDocumentClient.from(client);
@@ -92,6 +110,37 @@ async function loadExistingAssets() {
 	return map;
 }
 
+async function ensurePortfolioExists() {
+	const key = {
+		PK: `USER#${USER_ID}`,
+		SK: `PORTFOLIO#${PORTFOLIO_ID}`,
+	};
+	const existing = await dynamo.send(
+		new GetCommand({
+			TableName: TABLE_NAME,
+			Key: key,
+		})
+	);
+	if (existing.Item) return false;
+
+	const now = new Date().toISOString();
+	await dynamo.send(
+		new PutCommand({
+			TableName: TABLE_NAME,
+			Item: {
+				...key,
+				portfolioId: PORTFOLIO_ID,
+				name: PORTFOLIO_NAME,
+				description: 'Imported from B3 files',
+				baseCurrency: BASE_CURRENCY,
+				createdAt: now,
+				updatedAt: now,
+			},
+		})
+	);
+	return true;
+}
+
 /**
  * Load existing transaction dedup keys to avoid duplicates.
  * Returns a Set of "ticker|date|type|amount|quantity" strings.
@@ -137,6 +186,7 @@ async function loadExistingAliases() {
 async function run() {
 	console.log(`Scanning ${DATA_DIR} for .xlsx files...`);
 	console.log(`Runtime: env=${RUNTIME_ENV}, region=${REGION}, table=${TABLE_NAME}`);
+	console.log(`Target: user=${USER_ID}, portfolio=${PORTFOLIO_ID}`);
 	const files = findXlsxFiles(DATA_DIR);
 	if (!files.length) {
 		console.log('No .xlsx files found.');
@@ -232,6 +282,11 @@ async function run() {
 		console.log('\n[DRY RUN] No data written to DynamoDB.');
 		printSummary(allAssets, allTransactions, allAliases);
 		return;
+	}
+
+	const createdPortfolio = await ensurePortfolioExists();
+	if (createdPortfolio) {
+		console.log(`Created portfolio "${PORTFOLIO_NAME}" (${PORTFOLIO_ID})`);
 	}
 
 	// Load existing data for deduplication
