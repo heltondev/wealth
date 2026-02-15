@@ -330,4 +330,84 @@ test('getAverageCost applies stock split events from price history rows', async 
 	assert.ok(Math.abs(result.average_cost - 10.63) < 1e-9);
 	assert.ok(Math.abs(result.current_price - 10.82) < 1e-9);
 	assert.ok(Math.abs(result.market_value - (80 * 10.82)) < 1e-9);
+	assert.equal(result.split_adjustment, 'with_splits');
+});
+
+test('getAverageCost skips split adjustment when transaction quantities already match asset quantity', async () => {
+	const dynamo = {
+		send: async (command) => {
+			if (!(command instanceof QueryCommand)) return {};
+			const sk = command.input.ExpressionAttributeValues[':sk'];
+
+			if (sk === 'ASSET#') {
+				return {
+					Items: [
+						{
+							assetId: 'asset-alzr11',
+							portfolioId: 'portfolio-1',
+							ticker: 'ALZR11',
+							currency: 'BRL',
+							assetClass: 'fii',
+							country: 'BR',
+							quantity: 2073,
+						},
+					],
+				};
+			}
+
+			if (sk === 'TRANS#') {
+				return {
+					Items: [
+						{
+							assetId: 'asset-alzr11',
+							type: 'buy',
+							date: '2025-01-01',
+							quantity: 2073,
+							price: 11.1947631452,
+							fees: 0,
+						},
+					],
+				};
+			}
+
+			if (String(sk).startsWith('ASSET_PRICE#asset-alzr11#')) {
+				return {
+					Items: [
+						{
+							date: '2025-01-15',
+							close: 10.7,
+							adjustedClose: 10.7,
+							stockSplits: 10,
+						},
+						{
+							date: '2025-01-20',
+							close: 10.82,
+							adjustedClose: 10.82,
+							stockSplits: 0,
+						},
+					],
+				};
+			}
+
+			return { Items: [] };
+		},
+	};
+
+	const service = new PortfolioPriceHistoryService({
+		dynamo,
+		logger: makeSilentLogger(),
+		yahooHistoryProvider: { fetchHistory: async () => ({ rows: [] }) },
+		tesouroHistoryProvider: { fetchHistory: async () => ({ rows: [] }) },
+		fallbackManager: { fetch: async () => ({ data_source: 'unavailable', quote: { currentPrice: null } }) },
+		scheduler: (task) => task(),
+	});
+
+	const result = await service.getAverageCost('ALZR11', 'user-1', {
+		portfolioId: 'portfolio-1',
+		method: COST_METHODS.FIFO,
+	});
+
+	assert.equal(result.quantity_current, 2073);
+	assert.ok(Math.abs(result.average_cost - 11.1947631452) < 1e-9);
+	assert.equal(result.split_adjustment, 'without_splits');
 });

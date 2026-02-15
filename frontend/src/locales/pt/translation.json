@@ -87,6 +87,8 @@
         "source": "Fonte",
         "country": "Pais",
         "currency": "Moeda",
+        "nameExpandHint": "Clique para ver nome completo",
+        "nameCollapseHint": "Mostrar menos",
         "createdAt": "Criado Em"
       },
       "position": {

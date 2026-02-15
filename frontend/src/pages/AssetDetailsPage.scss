@@ -39,7 +39,7 @@
   &__grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    align-items: start;
+    align-items: stretch;
     gap: $spacing-md;
     margin-bottom: $spacing-md;
   }
@@ -47,6 +47,9 @@
   &__card {
     @include glass-card;
     padding: $spacing-md;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
 
     h2 {
       margin: 0 0 $spacing-sm;
@@ -64,7 +67,9 @@
 
     dl > div {
       display: grid;
-      gap: 2px;
+      gap: 1px;
+      align-self: start;
+      align-content: start;
     }
 
     dt {

@@ -264,6 +264,63 @@ const calculateHoldings = (transactions, method = COST_METHODS.FIFO, options = {
 	};
 };
 
+const resolveHoldingsWithSplitHeuristic = (
+	transactions,
+	method,
+	splitEvents,
+	expectedQuantity
+) => {
+	const holdingsWithoutSplits = calculateHoldings(transactions, method);
+	const normalizedSplitEvents = normalizeSplitEvents(splitEvents);
+	if (!normalizedSplitEvents.length) {
+		return {
+			holdings: holdingsWithoutSplits,
+			split_adjustment: 'without_splits',
+		};
+	}
+
+	const holdingsWithSplits = calculateHoldings(transactions, method, {
+		splitEvents: normalizedSplitEvents,
+	});
+
+	const hasExpectedQuantity =
+		expectedQuantity !== null &&
+		expectedQuantity !== undefined &&
+		String(expectedQuantity).trim() !== '';
+	if (!hasExpectedQuantity) {
+		return {
+			holdings: holdingsWithSplits,
+			split_adjustment: 'with_splits',
+		};
+	}
+	const numericExpectedQuantity = Number(expectedQuantity);
+	if (!Number.isFinite(numericExpectedQuantity) || numericExpectedQuantity < 0) {
+		return {
+			holdings: holdingsWithSplits,
+			split_adjustment: 'with_splits',
+		};
+	}
+
+	const withSplitsDiff = Math.abs(
+		(holdingsWithSplits.quantityCurrent || 0) - numericExpectedQuantity
+	);
+	const withoutSplitsDiff = Math.abs(
+		(holdingsWithoutSplits.quantityCurrent || 0) - numericExpectedQuantity
+	);
+
+	if (withSplitsDiff < withoutSplitsDiff) {
+		return {
+			holdings: holdingsWithSplits,
+			split_adjustment: 'with_splits',
+		};
+	}
+
+	return {
+		holdings: holdingsWithoutSplits,
+		split_adjustment: 'without_splits',
+	};
+};
+
 const calculatePeriodReturn = (rows, periodDays, fallbackDate = null) => {
 	if (!rows.length) return null;
 	const latest = rows[rows.length - 1];
@@ -566,9 +623,13 @@ class PortfolioPriceHistoryService {
 		);
 		const method = options.method || COST_METHODS.FIFO;
 		const splitEvents = buildSplitEventsFromPriceRows(priceRows);
-		const holdings = calculateHoldings(transactions, method, {
+		const holdingsResolution = resolveHoldingsWithSplitHeuristic(
+			transactions,
+			method,
 			splitEvents,
-		});
+			asset.quantity
+		);
+		const holdings = holdingsResolution.holdings;
 		const latestPrice = priceRows.length ? priceRows[priceRows.length - 1] : null;
 		const currentPrice = getCloseForRow(latestPrice);
 		const marketValue =
@@ -587,6 +648,7 @@ class PortfolioPriceHistoryService {
 			current_price: currentPrice,
 			market_value: marketValue,
 			currency: asset.currency || null,
+			split_adjustment: holdingsResolution.split_adjustment,
 		};
 	}
 
@@ -615,11 +677,15 @@ class PortfolioPriceHistoryService {
 					incremental: false,
 				});
 				priceRows = await this.#listAssetPriceRows(portfolioId, asset.assetId);
-			}
-			const splitEvents = buildSplitEventsFromPriceRows(priceRows);
-			const holdings = calculateHoldings(assetTransactions, method, {
-				splitEvents,
-			});
+				}
+				const splitEvents = buildSplitEventsFromPriceRows(priceRows);
+				const holdingsResolution = resolveHoldingsWithSplitHeuristic(
+					assetTransactions,
+					method,
+					splitEvents,
+					asset.quantity
+				);
+				const holdings = holdingsResolution.holdings;
 
 			const latestPriceRow = priceRows.length ? priceRows[priceRows.length - 1] : null;
 			const latestClose = getCloseForRow(latestPriceRow);
@@ -674,12 +740,13 @@ class PortfolioPriceHistoryService {
 				market_value: marketValue,
 				absolute_return: absoluteReturn,
 				percent_return: percentReturn,
-				returns_by_period: returnsByPeriod,
-				total_dividends: totalDividends,
-				dividend_yield_realized: dividendYieldRealized,
-				benchmark_comparison: benchmarkComparison,
-			});
-		}
+					returns_by_period: returnsByPeriod,
+					total_dividends: totalDividends,
+					dividend_yield_realized: dividendYieldRealized,
+					benchmark_comparison: benchmarkComparison,
+					split_adjustment: holdingsResolution.split_adjustment,
+				});
+			}
 
 		const consolidated = metrics.reduce(
 			(accumulator, metric) => {
@@ -777,7 +844,8 @@ class PortfolioPriceHistoryService {
 			const timeline = this.#buildAverageCostTimeline(
 				filteredRows,
 				filteredTransactions,
-				options.method || COST_METHODS.FIFO
+				options.method || COST_METHODS.FIFO,
+				asset.quantity
 			);
 			return {
 				chart_type: 'average_cost',
@@ -877,7 +945,7 @@ class PortfolioPriceHistoryService {
 		);
 	}
 
-	#buildAverageCostTimeline(priceRows, transactions, method) {
+	#buildAverageCostTimeline(priceRows, transactions, method, expectedFinalQuantity = null) {
 		const sortedTransactions = transactions
 			.map(parseTransaction)
 			.filter((tx) => tx.date && ['buy', 'sell', 'subscription'].includes(tx.type))
@@ -887,12 +955,22 @@ class PortfolioPriceHistoryService {
 					: compareDate(left.date, right.date)
 			);
 		const splitEvents = buildSplitEventsFromPriceRows(priceRows);
+		const splitResolution = resolveHoldingsWithSplitHeuristic(
+			sortedTransactions,
+			method,
+			splitEvents,
+			expectedFinalQuantity
+		);
+		const effectiveSplitEvents =
+			splitResolution.split_adjustment === 'with_splits'
+				? splitEvents
+				: [];
 
 		const timeline = [];
 		const partialTransactions = [];
 		for (const transaction of sortedTransactions) {
 			partialTransactions.push(transaction);
-			const partialSplitEvents = splitEvents.filter(
+			const partialSplitEvents = effectiveSplitEvents.filter(
 				(splitEvent) => splitEvent.date <= transaction.date
 			);
 			const holdings = calculateHoldings(partialTransactions, method, {
@@ -910,7 +988,7 @@ class PortfolioPriceHistoryService {
 		const lastRow = priceRows[priceRows.length - 1];
 		if (lastRow) {
 			const finalHoldings = calculateHoldings(sortedTransactions, method, {
-				splitEvents,
+				splitEvents: effectiveSplitEvents,
 			});
 			timeline.push({
 				date: lastRow.date,

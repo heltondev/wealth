@@ -5,6 +5,7 @@ import Layout from '../components/Layout';
 import DataTable, { type DataTableColumn, type DataTableFilter } from '../components/DataTable';
 import RecordDetailsModal, { type RecordDetailsSection } from '../components/RecordDetailsModal';
 import FormModal from '../components/FormModal';
+import ExpandableText from '../components/ExpandableText';
 import {
   api,
   type Asset,
@@ -565,7 +566,20 @@ const AssetsPage = () => {
         columns: 2,
         fields: [
           { key: 'ticker', label: t('assets.modal.fields.ticker'), value: formatDetailValue(selectedAsset.ticker) },
-          { key: 'name', label: t('assets.modal.fields.name'), value: formatDetailValue(selectedAsset.name) },
+          {
+            key: 'name',
+            label: t('assets.modal.fields.name'),
+            value: selectedAsset.name
+              ? (
+                <ExpandableText
+                  text={selectedAsset.name}
+                  maxLines={2}
+                  expandLabel={t('assets.modal.fields.nameExpandHint')}
+                  collapseLabel={t('assets.modal.fields.nameCollapseHint')}
+                />
+              )
+              : formatDetailValue(selectedAsset.name),
+          },
           {
             key: 'quantity',
             label: t('assets.modal.fields.quantity'),

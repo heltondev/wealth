@@ -1,0 +1,39 @@
+.expandable-text {
+  border: 0;
+  background: none;
+  padding: 0;
+  margin: 0;
+  width: 100%;
+  text-align: left;
+  color: inherit;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.expandable-text--interactive {
+  cursor: pointer;
+}
+
+.expandable-text__content {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: normal;
+  line-height: 1.28;
+  max-width: 100%;
+}
+
+.expandable-text__content--expanded {
+  display: block;
+  overflow: visible;
+}
+
+.expandable-text__hint {
+  font-size: 0.72rem;
+  color: #93c5fd;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}

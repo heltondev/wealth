@@ -71,13 +71,16 @@
   &__grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    align-items: start;
+    align-items: stretch;
     gap: $spacing-md;
   }
 
   &__section {
     @include glass-card;
+    height: 100%;
     padding: $spacing-md;
+    display: flex;
+    flex-direction: column;
 
     h3 {
       margin: 0 0 $spacing-sm;
@@ -95,7 +98,9 @@
 
     dl > div {
       display: grid;
-      gap: 2px;
+      gap: 1px;
+      align-self: start;
+      align-content: start;
     }
 
     dt {

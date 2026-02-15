@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import Layout from '../components/Layout';
+import ExpandableText from '../components/ExpandableText';
 import { api, type Asset, type Transaction } from '../services/api';
 import { formatCurrency, formatDate } from '../utils/formatters';
 import './AssetsPage.scss';
@@ -491,7 +492,20 @@ const AssetDetailsPage = () => {
 
     return [
       { key: 'ticker', label: t('assets.modal.fields.ticker'), value: formatDetailValue(selectedAsset.ticker) },
-      { key: 'name', label: t('assets.modal.fields.name'), value: formatDetailValue(selectedAsset.name) },
+      {
+        key: 'name',
+        label: t('assets.modal.fields.name'),
+        value: selectedAsset.name
+          ? (
+            <ExpandableText
+              text={selectedAsset.name}
+              maxLines={2}
+              expandLabel={t('assets.modal.fields.nameExpandHint')}
+              collapseLabel={t('assets.modal.fields.nameCollapseHint')}
+            />
+          )
+          : formatDetailValue(selectedAsset.name),
+      },
       { key: 'quantity', label: t('assets.modal.fields.quantity'), value: formatAssetQuantity(selectedAsset.quantity) },
       {
         key: 'investedAmount',
