@@ -107,6 +107,7 @@ const AssetsPage = () => {
   const [selectedAsset, setSelectedAsset] = useState<AssetRow | null>(null);
   const [currentQuotesByAssetId, setCurrentQuotesByAssetId] = useState<Record<string, number | null>>({});
   const [averageCostByAssetId, setAverageCostByAssetId] = useState<Record<string, number | null>>({});
+  const [portfolioMarketValueByAssetId, setPortfolioMarketValueByAssetId] = useState<Record<string, number | null>>({});
   const [selectedHistoryPoint, setSelectedHistoryPoint] = useState<AssetTradeHistoryPoint | null>(null);
   const [dropdownConfig, setDropdownConfig] = useState<DropdownConfigMap>(() =>
     normalizeDropdownConfig(DEFAULT_DROPDOWN_CONFIG)
@@ -160,8 +161,64 @@ const AssetsPage = () => {
   useEffect(() => {
     setCurrentQuotesByAssetId({});
     setAverageCostByAssetId({});
+    setPortfolioMarketValueByAssetId({});
     setSelectedHistoryPoint(null);
   }, [selectedPortfolio]);
+
+  useEffect(() => {
+    if (!selectedPortfolio) return;
+    let cancelled = false;
+
+    api.getPortfolioMetrics(selectedPortfolio)
+      .then((payload) => {
+        if (cancelled) return;
+        const metrics = Array.isArray((payload as { assets?: unknown[] }).assets)
+          ? (payload as { assets: unknown[] }).assets
+          : [];
+
+        const nextMarketValues: Record<string, number | null> = {};
+        const nextAverageCosts: Record<string, number | null> = {};
+        const nextCurrentQuotes: Record<string, number | null> = {};
+        for (const item of metrics) {
+          const metric = item as Record<string, unknown>;
+          const assetId = String(metric.assetId || '');
+          if (!assetId) continue;
+
+          const marketValue = Number(metric.market_value);
+          const averageCost = Number(metric.average_cost);
+          const currentPrice = Number(metric.current_price);
+          const quantityCurrent = Number(metric.quantity_current);
+          const resolvedMarketValue =
+            Number.isFinite(marketValue)
+              ? marketValue
+              : (Number.isFinite(currentPrice) && Number.isFinite(quantityCurrent))
+                ? currentPrice * quantityCurrent
+                : null;
+
+          if (Number.isFinite(resolvedMarketValue)) {
+            nextMarketValues[assetId] = resolvedMarketValue;
+          }
+          if (Number.isFinite(averageCost)) {
+            nextAverageCosts[assetId] = averageCost;
+          }
+          if (Number.isFinite(currentPrice)) {
+            nextCurrentQuotes[assetId] = currentPrice;
+          }
+        }
+
+        setPortfolioMarketValueByAssetId((previous) => ({ ...previous, ...nextMarketValues }));
+        setAverageCostByAssetId((previous) => ({ ...previous, ...nextAverageCosts }));
+        setCurrentQuotesByAssetId((previous) => ({ ...previous, ...nextCurrentQuotes }));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        // Keep current values on fetch errors; avoid replacing with zeros.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedPortfolio, assets.length, transactions.length]);
 
   const assetClassOptions = useMemo(() => {
     const options = getDropdownOptions(dropdownConfig, 'assets.form.assetClass');
@@ -415,6 +472,127 @@ const AssetsPage = () => {
     }));
   }, [assetInvestedAmountById, assetQuantitiesById, assetSourcesById, assets]);
 
+  const formatPercent = useCallback((ratio: number) => (
+    `${(ratio * 100).toLocaleString(numberLocale, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}%`
+  ), [numberLocale]);
+
+  const resolveAssetCurrentValue = useCallback((asset: AssetRow): number | null => {
+    const metricCurrentValue = portfolioMarketValueByAssetId[asset.assetId];
+    if (typeof metricCurrentValue === 'number' && Number.isFinite(metricCurrentValue)) {
+      return metricCurrentValue;
+    }
+
+    const quantity = Number(asset.quantity);
+    const hasOpenPosition = Number.isFinite(quantity) && Math.abs(quantity) > Number.EPSILON;
+    const cachedCurrentPrice = currentQuotesByAssetId[asset.assetId];
+    const directCurrentPrice = Number(asset.currentPrice);
+    const resolvedCurrentPrice =
+      (typeof cachedCurrentPrice === 'number'
+        && Number.isFinite(cachedCurrentPrice)
+        && (!hasOpenPosition || Math.abs(cachedCurrentPrice) > Number.EPSILON))
+        ? cachedCurrentPrice
+        : (Number.isFinite(directCurrentPrice)
+          && (!hasOpenPosition || Math.abs(directCurrentPrice) > Number.EPSILON))
+          ? directCurrentPrice
+          : null;
+
+    if (resolvedCurrentPrice !== null && Number.isFinite(quantity)) {
+      return resolvedCurrentPrice * quantity;
+    }
+
+    const directCurrentValue = Number(asset.currentValue);
+    if (
+      Number.isFinite(directCurrentValue)
+      && (!hasOpenPosition || Math.abs(directCurrentValue) > Number.EPSILON)
+    ) {
+      return directCurrentValue;
+    }
+
+    return null;
+  }, [currentQuotesByAssetId, portfolioMarketValueByAssetId]);
+
+  const resolveAssetAverageCost = useCallback((asset: AssetRow): number | null => {
+    const cachedAverageCost = averageCostByAssetId[asset.assetId];
+    if (typeof cachedAverageCost === 'number' && Number.isFinite(cachedAverageCost)) {
+      return cachedAverageCost;
+    }
+
+    const quantity = Number(asset.quantity);
+    const investedAmount = Number(asset.investedAmount);
+    if (!Number.isFinite(quantity) || !Number.isFinite(investedAmount)) return null;
+    if (Math.abs(quantity) <= Number.EPSILON) return null;
+    return investedAmount / quantity;
+  }, [averageCostByAssetId]);
+
+  const currentValueByAssetId = useMemo(() => {
+    const values: Record<string, number | null> = {};
+    for (const row of assetRows) {
+      const currentValue = resolveAssetCurrentValue(row);
+      values[row.assetId] = Number.isFinite(currentValue) ? Number(currentValue) : null;
+    }
+    return values;
+  }, [assetRows, resolveAssetCurrentValue]);
+
+  const portfolioCurrentTotal = useMemo<number>(() => (
+    Object.values(currentValueByAssetId).reduce<number>((sum, value) => (
+      typeof value === 'number' && Number.isFinite(value) ? sum + value : sum
+    ), 0)
+  ), [currentValueByAssetId]);
+
+  useEffect(() => {
+    if (!selectedPortfolio || assetRows.length === 0) return;
+
+    const pendingRows = assetRows.filter(
+      (row) => !Object.prototype.hasOwnProperty.call(averageCostByAssetId, row.assetId)
+    );
+    if (pendingRows.length === 0) return;
+
+    let cancelled = false;
+    const run = async () => {
+      const nextValues: Record<string, number | null> = {};
+      const nextMarketValues: Record<string, number | null> = {};
+      const nextQuotes: Record<string, number | null> = {};
+
+      for (const row of pendingRows) {
+        try {
+          const payload = await api.getAverageCost(selectedPortfolio, row.ticker);
+          const averageCost = Number((payload as { average_cost?: unknown }).average_cost);
+          const marketValue = Number((payload as { market_value?: unknown }).market_value);
+          const currentPrice = Number((payload as { current_price?: unknown }).current_price);
+          const quantity = Number(row.quantity);
+          const resolvedMarketValue =
+            Number.isFinite(marketValue)
+              ? marketValue
+              : (Number.isFinite(currentPrice) && Number.isFinite(quantity))
+                ? currentPrice * quantity
+                : null;
+          nextValues[row.assetId] = Number.isFinite(averageCost) ? averageCost : null;
+          nextMarketValues[row.assetId] = Number.isFinite(resolvedMarketValue) ? resolvedMarketValue : null;
+          nextQuotes[row.assetId] = Number.isFinite(currentPrice) ? currentPrice : null;
+        } catch {
+          nextValues[row.assetId] = null;
+          nextMarketValues[row.assetId] = null;
+          nextQuotes[row.assetId] = null;
+        }
+
+        if (cancelled) return;
+      }
+
+      if (cancelled) return;
+      setAverageCostByAssetId((previous) => ({ ...previous, ...nextValues }));
+      setPortfolioMarketValueByAssetId((previous) => ({ ...previous, ...nextMarketValues }));
+      setCurrentQuotesByAssetId((previous) => ({ ...previous, ...nextQuotes }));
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [assetRows, averageCostByAssetId, selectedPortfolio]);
+
   const columns: DataTableColumn<AssetRow>[] = [
     {
       key: 'ticker',
@@ -441,7 +619,50 @@ const AssetsPage = () => {
       label: t('assets.quantity'),
       sortable: true,
       sortValue: (asset) => asset.quantity,
+      cellClassName: 'assets-page__cell--numeric',
       render: (asset) => formatAssetQuantity(asset.quantity),
+    },
+    {
+      key: 'averagePrice',
+      label: t('assets.averagePrice'),
+      sortable: true,
+      sortValue: (asset) => resolveAssetAverageCost(asset) ?? Number.NEGATIVE_INFINITY,
+      cellClassName: 'assets-page__cell--numeric',
+      render: (asset) => {
+        const averageCost = resolveAssetAverageCost(asset);
+        if (averageCost === null) return t('assets.modal.noValue');
+        return formatCurrency(averageCost, asset.currency || 'BRL', numberLocale);
+      },
+    },
+    {
+      key: 'balance',
+      label: t('assets.balance'),
+      sortable: true,
+      sortValue: (asset) => currentValueByAssetId[asset.assetId] ?? Number.NEGATIVE_INFINITY,
+      cellClassName: 'assets-page__cell--numeric',
+      render: (asset) => {
+        const currentValue = currentValueByAssetId[asset.assetId];
+        if (typeof currentValue !== 'number' || !Number.isFinite(currentValue)) return t('assets.modal.noValue');
+        return formatCurrency(currentValue, asset.currency || 'BRL', numberLocale);
+      },
+    },
+    {
+      key: 'portfolioWeight',
+      label: t('assets.portfolioWeight'),
+      sortable: true,
+      sortValue: (asset) => (
+        portfolioCurrentTotal > 0
+          ? ((currentValueByAssetId[asset.assetId] || 0) / portfolioCurrentTotal)
+          : 0
+      ),
+      cellClassName: 'assets-page__cell--numeric assets-page__cell--weight',
+      render: (asset) => {
+        const currentValue = currentValueByAssetId[asset.assetId];
+        if (typeof currentValue !== 'number' || !Number.isFinite(currentValue)) return t('assets.modal.noValue');
+        if (portfolioCurrentTotal <= 0) return t('assets.modal.noValue');
+        const ratio = currentValue / portfolioCurrentTotal;
+        return formatPercent(ratio);
+      },
     },
     {
       key: 'assetClass',
@@ -523,6 +744,11 @@ const AssetsPage = () => {
           ? cachedCurrentPrice
           : derivedCurrentPrice;
     const resolvedCurrentValue = (() => {
+      const metricCurrentValue = portfolioMarketValueByAssetId[selectedAsset.assetId];
+      if (typeof metricCurrentValue === 'number' && Number.isFinite(metricCurrentValue)) {
+        return metricCurrentValue;
+      }
+
       const quantity = Number(selectedAsset.quantity);
       if (resolvedCurrentPrice !== null && Number.isFinite(quantity)) {
         return quantity * resolvedCurrentPrice;
@@ -671,7 +897,26 @@ const AssetsPage = () => {
         ],
       },
     ];
-  }, [averageCostByAssetId, currentQuotesByAssetId, formatAssetQuantity, formatCountryDetail, formatDetailValue, formatSignedCurrency, numberLocale, selectedAsset, t]);
+  }, [averageCostByAssetId, currentQuotesByAssetId, formatAssetQuantity, formatCountryDetail, formatDetailValue, formatSignedCurrency, numberLocale, portfolioMarketValueByAssetId, selectedAsset, t]);
+
+  const selectedAssetWeightMetrics = useMemo(() => {
+    if (!selectedAsset) return null;
+
+    const selectedCurrentValue = currentValueByAssetId[selectedAsset.assetId] || 0;
+    const portfolioWeight = portfolioCurrentTotal > 0 ? selectedCurrentValue / portfolioCurrentTotal : 0;
+    const classTotal = assetRows
+      .filter((row) => row.assetClass === selectedAsset.assetClass)
+      .reduce((sum, row) => sum + (currentValueByAssetId[row.assetId] || 0), 0);
+    const classWeight = classTotal > 0 ? selectedCurrentValue / classTotal : 0;
+
+    return {
+      selectedCurrentValue,
+      portfolioTotal: portfolioCurrentTotal,
+      portfolioWeight,
+      classTotal,
+      classWeight,
+    };
+  }, [assetRows, currentValueByAssetId, portfolioCurrentTotal, selectedAsset]);
 
   useEffect(() => {
     setSelectedHistoryPoint(null);
@@ -779,6 +1024,10 @@ const AssetsPage = () => {
 
   const assetDetailsExtraContent = useMemo(() => {
     if (!selectedAsset) return null;
+    const weightMetrics = selectedAssetWeightMetrics;
+    const ringRadius = 44;
+    const ringCircumference = 2 * Math.PI * ringRadius;
+    const ringOffsetFor = (ratio: number) => ringCircumference * (1 - Math.max(0, Math.min(1, ratio)));
 
     const chartGradientId = `asset-history-gradient-${selectedAsset.assetId.replace(/[^a-zA-Z0-9_-]/g, '')}`;
     const tooltipStyle = (() => {
@@ -795,6 +1044,61 @@ const AssetsPage = () => {
 
     return (
       <div className="assets-page__history">
+        {weightMetrics ? (
+          <div className="assets-page__weights">
+            <h3>{t('assets.modal.weights.title')}</h3>
+            <div className="assets-page__weights-grid">
+              <article className="assets-page__weight-card">
+                <h4>{t('assets.modal.weights.portfolio')}</h4>
+                <div className="assets-page__weight-chart">
+                  <svg viewBox="0 0 120 120" aria-hidden="true">
+                    <circle className="assets-page__weight-ring-bg" cx="60" cy="60" r={ringRadius} />
+                    <circle
+                      className="assets-page__weight-ring assets-page__weight-ring--portfolio"
+                      cx="60"
+                      cy="60"
+                      r={ringRadius}
+                      strokeDasharray={`${ringCircumference} ${ringCircumference}`}
+                      strokeDashoffset={ringOffsetFor(weightMetrics.portfolioWeight)}
+                    />
+                  </svg>
+                  <div className="assets-page__weight-chart-center">
+                    <strong>{formatPercent(weightMetrics.portfolioWeight)}</strong>
+                  </div>
+                </div>
+                <div className="assets-page__weight-meta">
+                  <span>{t('assets.modal.weights.assetValue')}: <strong>{formatCurrency(weightMetrics.selectedCurrentValue, selectedAsset.currency || 'BRL', numberLocale)}</strong></span>
+                  <span>{t('assets.modal.weights.portfolioTotal')}: <strong>{formatCurrency(weightMetrics.portfolioTotal, selectedAsset.currency || 'BRL', numberLocale)}</strong></span>
+                </div>
+              </article>
+
+              <article className="assets-page__weight-card">
+                <h4>{t('assets.modal.weights.class', { className: t(`assets.classes.${selectedAsset.assetClass}`, { defaultValue: selectedAsset.assetClass }) })}</h4>
+                <div className="assets-page__weight-chart">
+                  <svg viewBox="0 0 120 120" aria-hidden="true">
+                    <circle className="assets-page__weight-ring-bg" cx="60" cy="60" r={ringRadius} />
+                    <circle
+                      className="assets-page__weight-ring assets-page__weight-ring--class"
+                      cx="60"
+                      cy="60"
+                      r={ringRadius}
+                      strokeDasharray={`${ringCircumference} ${ringCircumference}`}
+                      strokeDashoffset={ringOffsetFor(weightMetrics.classWeight)}
+                    />
+                  </svg>
+                  <div className="assets-page__weight-chart-center">
+                    <strong>{formatPercent(weightMetrics.classWeight)}</strong>
+                  </div>
+                </div>
+                <div className="assets-page__weight-meta">
+                  <span>{t('assets.modal.weights.assetValue')}: <strong>{formatCurrency(weightMetrics.selectedCurrentValue, selectedAsset.currency || 'BRL', numberLocale)}</strong></span>
+                  <span>{t('assets.modal.weights.classTotal')}: <strong>{formatCurrency(weightMetrics.classTotal, selectedAsset.currency || 'BRL', numberLocale)}</strong></span>
+                </div>
+              </article>
+            </div>
+          </div>
+        ) : null}
+
         <h3>{t('assets.modal.history.title')}</h3>
 
         {assetTradeHistoryRows.length === 0 ? (
@@ -958,7 +1262,7 @@ const AssetsPage = () => {
         )}
       </div>
     );
-  }, [assetTradeHistoryChart, assetTradeHistoryRows, assetTradeHistoryStats, formatAssetQuantity, numberLocale, selectedAsset, selectedHistoryPoint, t]);
+  }, [assetRows, assetTradeHistoryChart, assetTradeHistoryRows, assetTradeHistoryStats, currentValueByAssetId, formatAssetQuantity, formatPercent, numberLocale, selectedAsset, selectedAssetWeightMetrics, selectedHistoryPoint, t]);
 
   useEffect(() => {
     if (!selectedAsset || !selectedPortfolio) return;
@@ -1066,6 +1370,9 @@ const AssetsPage = () => {
                 asset.ticker,
                 asset.name,
                 asset.quantity,
+                resolveAssetAverageCost(asset),
+                currentValueByAssetId[asset.assetId] || 0,
+                portfolioCurrentTotal > 0 ? `${((currentValueByAssetId[asset.assetId] || 0) / portfolioCurrentTotal) * 100}%` : '0%',
                 asset.assetClass,
                 asset.country,
                 asset.currency,
@@ -1096,7 +1403,7 @@ const AssetsPage = () => {
 
         <RecordDetailsModal
           open={Boolean(selectedAsset)}
-          title={t('assets.modal.title')}
+          title={selectedAsset ? `${selectedAsset.ticker} • ${selectedAsset.name}` : t('assets.modal.title')}
           subtitle={t('assets.modal.subtitle')}
           closeLabel={t('assets.modal.close')}
           headerActions={selectedAsset ? (

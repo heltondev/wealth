@@ -27,6 +27,9 @@
     "ticker": "Ticker",
     "name": "Nome",
     "quantity": "Quantidade",
+    "averagePrice": "Preço Médio",
+    "balance": "Saldo",
+    "portfolioWeight": "Peso na Carteira",
     "class": "Classe",
     "country": "País",
     "currency": "Moeda",
@@ -114,6 +117,24 @@
         "price": "Preço",
         "amount": "Total",
         "source": "Fonte"
+      },
+      "priceHistory": {
+        "title": "Histórico de Preço do Ativo",
+        "loading": "Carregando histórico de preço...",
+        "empty": "Sem dados de preço para este ativo no período.",
+        "chart": "Variação do preço de fechamento",
+        "close": "Fechamento",
+        "change": "Variação",
+        "changePct": "Variação %",
+        "lastClose": "Último fechamento"
+      },
+      "weights": {
+        "title": "Peso do Ativo",
+        "portfolio": "Na Carteira",
+        "class": "Na Classe ({{className}})",
+        "assetValue": "Valor do Ativo",
+        "portfolioTotal": "Total da Carteira",
+        "classTotal": "Total da Classe"
       }
     },
     "detail": {

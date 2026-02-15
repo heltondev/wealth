@@ -31,6 +31,21 @@ type AssetTradeHistoryPoint = AssetTradeHistoryRow & {
   index: number;
 };
 
+type AssetPriceSeriesPoint = {
+  date: string;
+  display_date: string | undefined;
+  close: number | null;
+};
+
+type AssetPriceSeriesMarker = {
+  date: string;
+  display_date: string | undefined;
+  type: 'buy' | 'sell';
+  quantity: number;
+  unit_price: number;
+  close_at_date: number | null;
+};
+
 const COUNTRY_FLAG_MAP: Record<string, string> = {
   BR: '🇧🇷',
   US: '🇺🇸',
@@ -78,7 +93,12 @@ const AssetDetailsPage = () => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [currentQuote, setCurrentQuote] = useState<number | null>(null);
   const [averageCost, setAverageCost] = useState<number | null>(null);
+  const [portfolioMarketValueByAssetId, setPortfolioMarketValueByAssetId] = useState<Record<string, number | null>>({});
   const [selectedHistoryPoint, setSelectedHistoryPoint] = useState<AssetTradeHistoryPoint | null>(null);
+  const [marketSeries, setMarketSeries] = useState<AssetPriceSeriesPoint[]>([]);
+  const [marketMarkers, setMarketMarkers] = useState<AssetPriceSeriesMarker[]>([]);
+  const [marketSeriesLoading, setMarketSeriesLoading] = useState(false);
+  const [hoveredMarketPointIndex, setHoveredMarketPointIndex] = useState<number | null>(null);
 
   const numberLocale = i18n.language?.startsWith('pt') ? 'pt-BR' : 'en-US';
 
@@ -103,6 +123,21 @@ const AssetDetailsPage = () => {
     if (Math.abs(value) <= Number.EPSILON) return absolute;
     return `${value > 0 ? '+' : '-'}${absolute}`;
   }, [numberLocale]);
+
+  const formatSignedPercent = useCallback((value: number) => {
+    const absolute = Math.abs(value).toLocaleString(numberLocale, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    return `${value >= 0 ? '+' : '-'}${absolute}%`;
+  }, [numberLocale]);
+
+  const formatPercent = useCallback((ratio: number) => (
+    `${(ratio * 100).toLocaleString(numberLocale, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}%`
+  ), [numberLocale]);
 
   const formatCountryDetail = useCallback((country: string) =>
     `${COUNTRY_FLAG_MAP[country] || '🏳️'} ${COUNTRY_NAME_MAP[country] || country}`, []);
@@ -278,10 +313,60 @@ const AssetDetailsPage = () => {
     };
   }, [assetId, assetInvestedAmountById, assetQuantitiesById, assetSourcesById, assets]);
 
+  const assetRows = useMemo<AssetRow[]>(() => {
+    return assets.map((asset) => {
+      const labels = new Set<string>();
+      const assetSource = summarizeSourceValue(asset.source);
+      if (assetSource) labels.add(assetSource);
+      for (const candidate of (assetSourcesById[asset.assetId] || [])) {
+        const label = summarizeSourceValue(candidate);
+        if (label) labels.add(label);
+      }
+
+      return {
+        ...asset,
+        quantity: Number.isFinite(Number(asset.quantity))
+          ? Number(asset.quantity)
+          : (assetQuantitiesById[asset.assetId] || 0),
+        source: labels.size > 0 ? Array.from(labels).join(', ') : null,
+        investedAmount: assetInvestedAmountById[asset.assetId] || 0,
+      };
+    });
+  }, [assetInvestedAmountById, assetQuantitiesById, assetSourcesById, assets]);
+
+  const resolveRowCurrentValue = useCallback((row: AssetRow): number => {
+    const metricCurrentValue = portfolioMarketValueByAssetId[row.assetId];
+    if (typeof metricCurrentValue === 'number' && Number.isFinite(metricCurrentValue)) {
+      return metricCurrentValue;
+    }
+
+    const directCurrentValue = Number(row.currentValue);
+    if (Number.isFinite(directCurrentValue)) return directCurrentValue;
+    const directCurrentPrice = Number(row.currentPrice);
+    const quantity = Number(row.quantity);
+    if (!Number.isFinite(directCurrentPrice) || !Number.isFinite(quantity)) return 0;
+    return directCurrentPrice * quantity;
+  }, [portfolioMarketValueByAssetId]);
+
+  const currentValueByAssetId = useMemo(() => {
+    const values: Record<string, number> = {};
+    for (const row of assetRows) {
+      values[row.assetId] = resolveRowCurrentValue(row);
+    }
+    return values;
+  }, [assetRows, resolveRowCurrentValue]);
+
+  const portfolioCurrentTotal = useMemo(() => (
+    Object.values(currentValueByAssetId).reduce((sum, value) => sum + value, 0)
+  ), [currentValueByAssetId]);
+
   useEffect(() => {
     setCurrentQuote(null);
     setAverageCost(null);
     setSelectedHistoryPoint(null);
+    setMarketSeries([]);
+    setMarketMarkers([]);
+    setHoveredMarketPointIndex(null);
   }, [selectedAsset?.assetId]);
 
   useEffect(() => {
@@ -320,6 +405,100 @@ const AssetDetailsPage = () => {
     };
   }, [portfolioId, selectedAsset]);
 
+  useEffect(() => {
+    if (!portfolioId) return;
+    let cancelled = false;
+
+    api.getPortfolioMetrics(portfolioId)
+      .then((payload) => {
+        if (cancelled) return;
+        const metrics = Array.isArray((payload as { assets?: unknown[] }).assets)
+          ? (payload as { assets: unknown[] }).assets
+          : [];
+
+        const nextMarketValues: Record<string, number | null> = {};
+        for (const item of metrics) {
+          const metric = item as Record<string, unknown>;
+          const assetId = String(metric.assetId || '');
+          if (!assetId) continue;
+          const marketValue = Number(metric.market_value);
+          nextMarketValues[assetId] = Number.isFinite(marketValue) ? marketValue : null;
+        }
+        setPortfolioMarketValueByAssetId(nextMarketValues);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setPortfolioMarketValueByAssetId({});
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [portfolioId, assets.length, transactions.length]);
+
+  useEffect(() => {
+    if (!selectedAsset || !portfolioId) return;
+    let cancelled = false;
+    setMarketSeriesLoading(true);
+
+    api.getPriceChart(portfolioId, selectedAsset.ticker, 'price_history', '1A')
+      .then((payload) => {
+        if (cancelled) return;
+
+        const normalizedSeries = Array.isArray((payload as { series?: unknown[] }).series)
+          ? ((payload as { series: unknown[] }).series
+            .map((item) => {
+              const point = item as Record<string, unknown>;
+              const close = Number(point.close);
+              return {
+                date: String(point.date || ''),
+                display_date: point.display_date ? String(point.display_date) : undefined,
+                close: Number.isFinite(close) ? close : null,
+              } satisfies AssetPriceSeriesPoint;
+            })
+            .filter((point) => point.date))
+          : [];
+
+        const normalizedMarkers = Array.isArray((payload as { markers?: unknown[] }).markers)
+          ? ((payload as { markers: unknown[] }).markers
+            .map((item) => {
+              const marker = item as Record<string, unknown>;
+              const type = String(marker.type || '').toLowerCase();
+              if (type !== 'buy' && type !== 'sell') return null;
+              const quantity = Number(marker.quantity);
+              const unitPrice = Number(marker.unit_price);
+              const closeAtDate = Number(marker.close_at_date);
+
+              return {
+                date: String(marker.date || ''),
+                display_date: marker.display_date ? String(marker.display_date) : undefined,
+                type: type as 'buy' | 'sell',
+                quantity: Number.isFinite(quantity) ? quantity : 0,
+                unit_price: Number.isFinite(unitPrice) ? unitPrice : 0,
+                close_at_date: Number.isFinite(closeAtDate) ? closeAtDate : null,
+              } satisfies AssetPriceSeriesMarker;
+            })
+            .filter((marker): marker is AssetPriceSeriesMarker => Boolean(marker && marker.date)))
+          : [];
+
+        setMarketSeries(normalizedSeries);
+        setMarketMarkers(normalizedMarkers);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setMarketSeries([]);
+        setMarketMarkers([]);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setMarketSeriesLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [portfolioId, selectedAsset]);
+
   const fallbackAverageCost = useMemo(() => {
     if (!selectedAsset) return null;
     const quantity = Number(selectedAsset.quantity);
@@ -350,6 +529,11 @@ const AssetDetailsPage = () => {
 
   const resolvedCurrentValue = useMemo(() => {
     if (!selectedAsset) return null;
+    const metricCurrentValue = portfolioMarketValueByAssetId[selectedAsset.assetId];
+    if (typeof metricCurrentValue === 'number' && Number.isFinite(metricCurrentValue)) {
+      return metricCurrentValue;
+    }
+
     const quantity = Number(selectedAsset.quantity);
     if (resolvedCurrentPrice !== null && Number.isFinite(quantity)) {
       return quantity * resolvedCurrentPrice;
@@ -357,7 +541,7 @@ const AssetDetailsPage = () => {
 
     const directCurrentValue = Number(selectedAsset.currentValue);
     return Number.isFinite(directCurrentValue) ? directCurrentValue : null;
-  }, [resolvedCurrentPrice, selectedAsset]);
+  }, [portfolioMarketValueByAssetId, resolvedCurrentPrice, selectedAsset]);
 
   const quoteVsAverage = useMemo(() => {
     if (resolvedCurrentPrice === null || resolvedAverageCost === null) return null;
@@ -376,6 +560,29 @@ const AssetDetailsPage = () => {
     if (Math.abs(balanceMinusInvested) <= Number.EPSILON) return 'neutral';
     return balanceMinusInvested > 0 ? 'positive' : 'negative';
   }, [balanceMinusInvested]);
+
+  const selectedAssetWeightMetrics = useMemo(() => {
+    if (!selectedAsset) return null;
+
+    const storedSelectedCurrentValue = currentValueByAssetId[selectedAsset.assetId] || 0;
+    const selectedCurrentValue = resolvedCurrentValue ?? storedSelectedCurrentValue;
+    const adjustedPortfolioTotal = portfolioCurrentTotal - storedSelectedCurrentValue + selectedCurrentValue;
+    const portfolioWeight = adjustedPortfolioTotal > 0 ? selectedCurrentValue / adjustedPortfolioTotal : 0;
+
+    const storedClassTotal = assetRows
+      .filter((row) => row.assetClass === selectedAsset.assetClass)
+      .reduce((sum, row) => sum + (currentValueByAssetId[row.assetId] || 0), 0);
+    const adjustedClassTotal = storedClassTotal - storedSelectedCurrentValue + selectedCurrentValue;
+    const classWeight = adjustedClassTotal > 0 ? selectedCurrentValue / adjustedClassTotal : 0;
+
+    return {
+      selectedCurrentValue,
+      portfolioTotal: adjustedPortfolioTotal,
+      portfolioWeight,
+      classTotal: adjustedClassTotal,
+      classWeight,
+    };
+  }, [assetRows, currentValueByAssetId, portfolioCurrentTotal, resolvedCurrentValue, selectedAsset]);
 
   const assetTradeHistoryRows = useMemo<AssetTradeHistoryRow[]>(() => {
     if (!selectedAsset) return [];
@@ -454,6 +661,109 @@ const AssetDetailsPage = () => {
       yBase,
     };
   }, [assetTradeHistoryRows]);
+
+  const marketPriceChart = useMemo(() => {
+    const pointsInput = marketSeries
+      .filter((row) => row.date && Number.isFinite(row.close))
+      .sort((left, right) => new Date(left.date).getTime() - new Date(right.date).getTime());
+    if (!pointsInput.length) return null;
+
+    const chartPadding = { top: 16, right: 20, bottom: 28, left: 20 };
+    const chartWidth = HISTORY_CHART_WIDTH - chartPadding.left - chartPadding.right;
+    const chartHeight = HISTORY_CHART_HEIGHT - chartPadding.top - chartPadding.bottom;
+    const closes = pointsInput.map((row) => Number(row.close));
+    const minClose = Math.min(...closes);
+    const maxClose = Math.max(...closes);
+    const spread = Math.max(maxClose - minClose, 0.01);
+    const paddedMin = minClose - spread * 0.08;
+    const paddedMax = maxClose + spread * 0.08;
+    const yBase = chartPadding.top + chartHeight;
+
+    const xFor = (index: number) => (
+      pointsInput.length === 1
+        ? chartPadding.left + chartWidth / 2
+        : chartPadding.left + (index / (pointsInput.length - 1)) * chartWidth
+    );
+    const yFor = (close: number) => (
+      chartPadding.top + (1 - (close - paddedMin) / (paddedMax - paddedMin)) * chartHeight
+    );
+
+    const points = pointsInput.map((row, index) => {
+      const close = Number(row.close);
+      const previousClose = index > 0 ? Number(pointsInput[index - 1].close) : null;
+      const change = previousClose !== null ? close - previousClose : null;
+      const changePct =
+        previousClose !== null && Math.abs(previousClose) > Number.EPSILON
+          ? (change! / previousClose) * 100
+          : null;
+      return {
+        date: row.date,
+        displayDate: row.display_date || row.date,
+        close,
+        change,
+        changePct,
+        index,
+        x: xFor(index),
+        y: yFor(close),
+      };
+    });
+
+    const pointsByDate = new Map<string, typeof points[number]>();
+    for (const point of points) {
+      if (!pointsByDate.has(point.date)) pointsByDate.set(point.date, point);
+    }
+
+    const markerPoints = marketMarkers
+      .map((marker) => {
+        const target = pointsByDate.get(marker.date);
+        if (!target) return null;
+        return {
+          ...marker,
+          x: target.x,
+          y: target.y,
+        };
+      })
+      .filter((marker): marker is NonNullable<typeof marker> => Boolean(marker));
+
+    const polyline = points
+      .map((point, index) => {
+        const x = point.x.toFixed(2);
+        const y = point.y.toFixed(2);
+        return `${index === 0 ? 'M' : 'L'} ${x} ${y}`;
+      })
+      .join(' ');
+    const areaPath = `${polyline} L ${points[points.length - 1].x.toFixed(2)} ${yBase.toFixed(2)} L ${points[0].x.toFixed(2)} ${yBase.toFixed(2)} Z`;
+
+    return {
+      points,
+      markerPoints,
+      polyline,
+      areaPath,
+      firstDate: points[0].date,
+      lastDate: points[points.length - 1].date,
+      lastClose: points[points.length - 1].close,
+      minClose: paddedMin,
+      maxClose: paddedMax,
+      padding: chartPadding,
+      yBase,
+    };
+  }, [marketMarkers, marketSeries]);
+
+  const hoveredMarketPoint = useMemo(() => {
+    if (!marketPriceChart || hoveredMarketPointIndex === null) return null;
+    return marketPriceChart.points[hoveredMarketPointIndex] || null;
+  }, [hoveredMarketPointIndex, marketPriceChart]);
+
+  const hoveredMarketTooltipStyle = useMemo(() => {
+    if (!hoveredMarketPoint) return null;
+    const isRightSide = hoveredMarketPoint.x > HISTORY_CHART_WIDTH * 0.68;
+    const isNearTop = hoveredMarketPoint.y < HISTORY_CHART_HEIGHT * 0.25;
+    return {
+      left: `${(hoveredMarketPoint.x / HISTORY_CHART_WIDTH) * 100}%`,
+      top: `${(hoveredMarketPoint.y / HISTORY_CHART_HEIGHT) * 100}%`,
+      transform: `translate(${isRightSide ? '-100%' : '0'}, ${isNearTop ? '12px' : 'calc(-100% - 12px)'})`,
+    };
+  }, [hoveredMarketPoint]);
 
   const assetTradeHistoryStats = useMemo(() => {
     const buys = assetTradeHistoryRows.filter((row) => row.type === 'buy');
@@ -599,12 +909,12 @@ const AssetDetailsPage = () => {
         <div className="asset-details-page__header">
           <div>
             <h1 className="asset-details-page__title">
-              {t('assets.detail.title', { defaultValue: 'Asset Details' })}
-            </h1>
-            <p className="asset-details-page__subtitle">
               {selectedAsset
                 ? `${selectedAsset.ticker} • ${selectedAsset.name}`
-                : t('assets.detail.subtitle', { defaultValue: 'Complete detail view for the selected asset.' })}
+                : t('assets.detail.title', { defaultValue: 'Asset Details' })}
+            </h1>
+            <p className="asset-details-page__subtitle">
+              {t('assets.detail.subtitle', { defaultValue: 'Complete detail view for the selected asset.' })}
             </p>
           </div>
           <button
@@ -657,8 +967,182 @@ const AssetDetailsPage = () => {
               </section>
             </div>
 
+            {selectedAssetWeightMetrics ? (
+              <section className="asset-details-page__card asset-details-page__card--full">
+                <div className="assets-page__weights">
+                  <h3>{t('assets.modal.weights.title')}</h3>
+                  <div className="assets-page__weights-grid">
+                    <article className="assets-page__weight-card">
+                      <h4>{t('assets.modal.weights.portfolio')}</h4>
+                      <div className="assets-page__weight-chart">
+                        <svg viewBox="0 0 120 120" aria-hidden="true">
+                          <circle className="assets-page__weight-ring-bg" cx="60" cy="60" r="44" />
+                          <circle
+                            className="assets-page__weight-ring assets-page__weight-ring--portfolio"
+                            cx="60"
+                            cy="60"
+                            r="44"
+                            strokeDasharray={`${2 * Math.PI * 44} ${2 * Math.PI * 44}`}
+                            strokeDashoffset={(2 * Math.PI * 44) * (1 - Math.max(0, Math.min(1, selectedAssetWeightMetrics.portfolioWeight)))}
+                          />
+                        </svg>
+                        <div className="assets-page__weight-chart-center">
+                          <strong>{formatPercent(selectedAssetWeightMetrics.portfolioWeight)}</strong>
+                        </div>
+                      </div>
+                      <div className="assets-page__weight-meta">
+                        <span>{t('assets.modal.weights.assetValue')}: <strong>{formatCurrency(selectedAssetWeightMetrics.selectedCurrentValue, selectedAsset.currency || 'BRL', numberLocale)}</strong></span>
+                        <span>{t('assets.modal.weights.portfolioTotal')}: <strong>{formatCurrency(selectedAssetWeightMetrics.portfolioTotal, selectedAsset.currency || 'BRL', numberLocale)}</strong></span>
+                      </div>
+                    </article>
+
+                    <article className="assets-page__weight-card">
+                      <h4>{t('assets.modal.weights.class', { className: t(`assets.classes.${selectedAsset.assetClass}`, { defaultValue: selectedAsset.assetClass }) })}</h4>
+                      <div className="assets-page__weight-chart">
+                        <svg viewBox="0 0 120 120" aria-hidden="true">
+                          <circle className="assets-page__weight-ring-bg" cx="60" cy="60" r="44" />
+                          <circle
+                            className="assets-page__weight-ring assets-page__weight-ring--class"
+                            cx="60"
+                            cy="60"
+                            r="44"
+                            strokeDasharray={`${2 * Math.PI * 44} ${2 * Math.PI * 44}`}
+                            strokeDashoffset={(2 * Math.PI * 44) * (1 - Math.max(0, Math.min(1, selectedAssetWeightMetrics.classWeight)))}
+                          />
+                        </svg>
+                        <div className="assets-page__weight-chart-center">
+                          <strong>{formatPercent(selectedAssetWeightMetrics.classWeight)}</strong>
+                        </div>
+                      </div>
+                      <div className="assets-page__weight-meta">
+                        <span>{t('assets.modal.weights.assetValue')}: <strong>{formatCurrency(selectedAssetWeightMetrics.selectedCurrentValue, selectedAsset.currency || 'BRL', numberLocale)}</strong></span>
+                        <span>{t('assets.modal.weights.classTotal')}: <strong>{formatCurrency(selectedAssetWeightMetrics.classTotal, selectedAsset.currency || 'BRL', numberLocale)}</strong></span>
+                      </div>
+                    </article>
+                  </div>
+                </div>
+              </section>
+            ) : null}
+
             <section className="asset-details-page__card asset-details-page__card--full">
               <div className="assets-page__history">
+                <h3>{t('assets.modal.priceHistory.title')}</h3>
+                {marketSeriesLoading ? (
+                  <p className="assets-page__history-empty">{t('assets.modal.priceHistory.loading')}</p>
+                ) : null}
+                {!marketSeriesLoading && !marketPriceChart ? (
+                  <p className="assets-page__history-empty">{t('assets.modal.priceHistory.empty')}</p>
+                ) : null}
+                {!marketSeriesLoading && marketPriceChart ? (
+                  <div className="assets-page__market-chart">
+                    <svg
+                      viewBox={`0 0 ${HISTORY_CHART_WIDTH} ${HISTORY_CHART_HEIGHT}`}
+                      role="img"
+                      aria-label={t('assets.modal.priceHistory.chart')}
+                      onMouseMove={(event) => {
+                        const bounds = event.currentTarget.getBoundingClientRect();
+                        const relativeX = ((event.clientX - bounds.left) / bounds.width) * HISTORY_CHART_WIDTH;
+
+                        let nearestIndex = 0;
+                        let nearestDistance = Number.POSITIVE_INFINITY;
+                        marketPriceChart.points.forEach((point, index) => {
+                          const distance = Math.abs(point.x - relativeX);
+                          if (distance < nearestDistance) {
+                            nearestDistance = distance;
+                            nearestIndex = index;
+                          }
+                        });
+
+                        setHoveredMarketPointIndex(nearestIndex);
+                      }}
+                      onMouseLeave={() => setHoveredMarketPointIndex(null)}
+                    >
+                      <defs>
+                        <linearGradient id="asset-market-history-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                          <stop offset="0%" stopColor="rgba(34, 211, 238, 0.34)" />
+                          <stop offset="100%" stopColor="rgba(34, 211, 238, 0.02)" />
+                        </linearGradient>
+                      </defs>
+                      <line
+                        className="assets-page__history-grid"
+                        x1={marketPriceChart.padding.left}
+                        x2={HISTORY_CHART_WIDTH - marketPriceChart.padding.right}
+                        y1={marketPriceChart.padding.top}
+                        y2={marketPriceChart.padding.top}
+                      />
+                      <line
+                        className="assets-page__history-grid"
+                        x1={marketPriceChart.padding.left}
+                        x2={HISTORY_CHART_WIDTH - marketPriceChart.padding.right}
+                        y1={marketPriceChart.padding.top + ((marketPriceChart.yBase - marketPriceChart.padding.top) / 2)}
+                        y2={marketPriceChart.padding.top + ((marketPriceChart.yBase - marketPriceChart.padding.top) / 2)}
+                      />
+                      <line
+                        className="assets-page__history-grid"
+                        x1={marketPriceChart.padding.left}
+                        x2={HISTORY_CHART_WIDTH - marketPriceChart.padding.right}
+                        y1={marketPriceChart.yBase}
+                        y2={marketPriceChart.yBase}
+                      />
+                      <path className="assets-page__market-area" d={marketPriceChart.areaPath} fill="url(#asset-market-history-gradient)" />
+                      <path className="assets-page__market-line" d={marketPriceChart.polyline} />
+                      {marketPriceChart.markerPoints.map((marker, index) => (
+                        <circle
+                          key={`${marker.type}-${marker.date}-${index}`}
+                          className={`assets-page__market-marker assets-page__market-marker--${marker.type}`}
+                          cx={marker.x}
+                          cy={marker.y}
+                          r={3.6}
+                        >
+                          <title>
+                            {`${formatDate(marker.display_date || marker.date, numberLocale)} | ${t(`transactions.types.${marker.type}`, { defaultValue: marker.type })} | ${formatCurrency(marker.unit_price, selectedAsset.currency || 'BRL', numberLocale)}`}
+                          </title>
+                        </circle>
+                      ))}
+                      {hoveredMarketPoint ? (
+                        <circle
+                          className="assets-page__market-hover-point"
+                          cx={hoveredMarketPoint.x}
+                          cy={hoveredMarketPoint.y}
+                          r={5}
+                        />
+                      ) : null}
+                    </svg>
+                    {hoveredMarketPoint && hoveredMarketTooltipStyle ? (
+                      <div className="assets-page__history-tooltip" style={hoveredMarketTooltipStyle}>
+                        <div className="assets-page__history-tooltip-header">
+                          <strong>{formatDate(hoveredMarketPoint.displayDate, numberLocale)}</strong>
+                        </div>
+                        <div className="assets-page__history-tooltip-grid">
+                          <span>{t('assets.modal.priceHistory.close')}</span>
+                          <strong>{formatCurrency(hoveredMarketPoint.close, selectedAsset.currency || 'BRL', numberLocale)}</strong>
+                          <span>{t('assets.modal.priceHistory.change')}</span>
+                          <strong>
+                            {hoveredMarketPoint.change === null
+                              ? '-'
+                              : formatSignedCurrency(hoveredMarketPoint.change, selectedAsset.currency || 'BRL')}
+                          </strong>
+                          <span>{t('assets.modal.priceHistory.changePct')}</span>
+                          <strong>
+                            {hoveredMarketPoint.changePct === null
+                              ? '-'
+                              : formatSignedPercent(hoveredMarketPoint.changePct)}
+                          </strong>
+                        </div>
+                      </div>
+                    ) : null}
+                    <div className="assets-page__history-scale">
+                      <span>{formatDate(marketPriceChart.firstDate, numberLocale)}</span>
+                      <span>{formatCurrency(marketPriceChart.minClose, selectedAsset.currency || 'BRL', numberLocale)}</span>
+                      <span>{formatCurrency(marketPriceChart.maxClose, selectedAsset.currency || 'BRL', numberLocale)}</span>
+                      <span>{formatDate(marketPriceChart.lastDate, numberLocale)}</span>
+                    </div>
+                    <div className="assets-page__history-meta">
+                      <span>{t('assets.modal.priceHistory.lastClose')}: <strong>{formatCurrency(marketPriceChart.lastClose, selectedAsset.currency || 'BRL', numberLocale)}</strong></span>
+                    </div>
+                  </div>
+                ) : null}
+
                 <h3>{t('assets.modal.history.title')}</h3>
 
                 {assetTradeHistoryRows.length === 0 ? (

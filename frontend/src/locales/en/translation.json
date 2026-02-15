@@ -27,6 +27,9 @@
     "ticker": "Ticker",
     "name": "Name",
     "quantity": "Quantity",
+    "averagePrice": "Average Price",
+    "balance": "Balance",
+    "portfolioWeight": "Portfolio Weight",
     "class": "Class",
     "country": "Country",
     "currency": "Currency",
@@ -114,6 +117,24 @@
         "price": "Price",
         "amount": "Amount",
         "source": "Source"
+      },
+      "priceHistory": {
+        "title": "Asset Price History",
+        "loading": "Loading price history...",
+        "empty": "No price data available for this asset in the selected period.",
+        "chart": "Closing price variation",
+        "close": "Close",
+        "change": "Change",
+        "changePct": "Change %",
+        "lastClose": "Last close"
+      },
+      "weights": {
+        "title": "Asset Weight",
+        "portfolio": "In Portfolio",
+        "class": "In Class ({{className}})",
+        "assetValue": "Asset Value",
+        "portfolioTotal": "Portfolio Total",
+        "classTotal": "Class Total"
       }
     },
     "detail": {
