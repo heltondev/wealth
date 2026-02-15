@@ -58,6 +58,23 @@ function normalizeQuantityForKey(value) {
 	return numeric.toFixed(8).replace(/\.?0+$/, '');
 }
 
+function resolveSnapshotCurrentValue(asset) {
+	const numeric = Number(asset?.value);
+	if (!Number.isFinite(numeric)) return null;
+	if (numeric <= 0) return null;
+	return numeric;
+}
+
+function resolveSnapshotCurrentPrice(asset, quantity) {
+	const direct = Number(asset?.price);
+	if (Number.isFinite(direct) && direct > 0) return direct;
+
+	const value = resolveSnapshotCurrentValue(asset);
+	if (value === null) return null;
+	if (!Number.isFinite(quantity) || Math.abs(quantity) <= Number.EPSILON) return null;
+	return value / quantity;
+}
+
 /**
  * Parse quantity for transaction storage.
  * Accepts numeric quantities, including fractional values found in B3 reports
@@ -305,11 +322,13 @@ async function run() {
 			await dynamo.send(new UpdateCommand({
 				TableName: TABLE_NAME,
 				Key: { PK: `PORTFOLIO#${PORTFOLIO_ID}`, SK: `ASSET#${assetId}` },
-				UpdateExpression: 'SET #s = :status, quantity = :quantity, updatedAt = :updatedAt',
+				UpdateExpression: 'SET #s = :status, quantity = :quantity, currentPrice = :currentPrice, currentValue = :currentValue, updatedAt = :updatedAt',
 				ExpressionAttributeNames: { '#s': 'status' },
 				ExpressionAttributeValues: {
 					':status': 'inactive',
 					':quantity': 0,
+					':currentPrice': null,
+					':currentValue': 0,
 					':updatedAt': now,
 				},
 			}));
@@ -322,6 +341,11 @@ async function run() {
 		const normalizedAssetQuantity = Number.isFinite(Number(asset.quantity))
 			? Number(asset.quantity)
 			: 0;
+		const snapshotCurrentValue = resolveSnapshotCurrentValue(asset);
+		const snapshotCurrentPrice = resolveSnapshotCurrentPrice(
+			asset,
+			normalizedAssetQuantity
+		);
 
 		if (existingAssets.has(ticker)) {
 			// Update existing asset to ensure it reflects the latest position snapshot
@@ -329,7 +353,7 @@ async function run() {
 			await dynamo.send(new UpdateCommand({
 				TableName: TABLE_NAME,
 				Key: { PK: `PORTFOLIO#${PORTFOLIO_ID}`, SK: `ASSET#${assetId}` },
-				UpdateExpression: 'SET #s = :status, assetClass = :cls, #n = :name, country = :country, currency = :currency, quantity = :quantity, #src = :source, updatedAt = :updatedAt',
+				UpdateExpression: 'SET #s = :status, assetClass = :cls, #n = :name, country = :country, currency = :currency, quantity = :quantity, currentPrice = :currentPrice, currentValue = :currentValue, #src = :source, updatedAt = :updatedAt',
 				ExpressionAttributeNames: { '#s': 'status', '#n': 'name', '#src': 'source' },
 				ExpressionAttributeValues: {
 					':status': 'active',
@@ -338,6 +362,8 @@ async function run() {
 					':country': asset.country || 'BR',
 					':currency': asset.currency || 'BRL',
 					':quantity': normalizedAssetQuantity,
+					':currentPrice': snapshotCurrentPrice,
+					':currentValue': snapshotCurrentValue,
 					':source': snapshotSource || null,
 					':updatedAt': now,
 				},
@@ -358,6 +384,8 @@ async function run() {
 			country: asset.country || 'BR',
 			currency: asset.currency || 'BRL',
 			quantity: normalizedAssetQuantity,
+			currentPrice: snapshotCurrentPrice,
+			currentValue: snapshotCurrentValue,
 			source: snapshotSource || null,
 			status: 'active',
 			createdAt: now,

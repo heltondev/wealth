@@ -28,8 +28,10 @@ interface PortfolioDataContextType {
 }
 
 const METRICS_TTL_MS = 5 * 60 * 1000;
+const METRICS_STORAGE_VERSION = 'v2';
 
-const storageKeyMetrics = (portfolioId: string) => `portfolio_metrics_${portfolioId}`;
+const storageKeyMetrics = (portfolioId: string) =>
+  `portfolio_metrics_${METRICS_STORAGE_VERSION}_${portfolioId}`;
 const STORAGE_KEY_SELECTED = 'portfolio_selected';
 
 const readMetricsFromStorage = (portfolioId: string): PortfolioMetricsData | null => {
@@ -70,6 +72,21 @@ const writeSelectedToStorage = (id: string) => {
   }
 };
 
+const parseOptionalNumber = (value: unknown): number | null => {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const numeric = Number(trimmed);
+    return Number.isFinite(numeric) ? numeric : null;
+  }
+
+  return null;
+};
+
 const parseMetricsPayload = (payload: unknown): Omit<PortfolioMetricsData, 'fetchedAt'> => {
   const metrics = Array.isArray((payload as { assets?: unknown[] }).assets)
     ? (payload as { assets: unknown[] }).assets
@@ -84,24 +101,24 @@ const parseMetricsPayload = (payload: unknown): Omit<PortfolioMetricsData, 'fetc
     const assetId = String(metric.assetId || '');
     if (!assetId) continue;
 
-    const marketValue = Number(metric.market_value);
-    const averageCost = Number(metric.average_cost);
-    const currentPrice = Number(metric.current_price);
-    const quantityCurrent = Number(metric.quantity_current);
+    const marketValue = parseOptionalNumber(metric.market_value);
+    const averageCost = parseOptionalNumber(metric.average_cost);
+    const currentPrice = parseOptionalNumber(metric.current_price);
+    const quantityCurrent = parseOptionalNumber(metric.quantity_current);
     const resolvedMarketValue =
-      Number.isFinite(marketValue)
+      marketValue !== null
         ? marketValue
-        : (Number.isFinite(currentPrice) && Number.isFinite(quantityCurrent))
+        : (currentPrice !== null && quantityCurrent !== null)
           ? currentPrice * quantityCurrent
           : null;
 
-    if (Number.isFinite(resolvedMarketValue)) {
+    if (resolvedMarketValue !== null) {
       marketValues[assetId] = resolvedMarketValue;
     }
-    if (Number.isFinite(averageCost)) {
+    if (averageCost !== null) {
       averageCosts[assetId] = averageCost;
     }
-    if (Number.isFinite(currentPrice)) {
+    if (currentPrice !== null) {
       currentQuotes[assetId] = currentPrice;
     }
   }
