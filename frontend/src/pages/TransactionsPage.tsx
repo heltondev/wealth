@@ -3,7 +3,18 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Layout from '../components/Layout';
 import DataTable, { type DataTableColumn, type DataTableFilter } from '../components/DataTable';
 import RecordDetailsModal, { type RecordDetailsSection } from '../components/RecordDetailsModal';
-import { api, type Asset, type Portfolio, type Transaction } from '../services/api';
+import {
+  api,
+  type Asset,
+  type Portfolio,
+  type Transaction,
+  type DropdownConfigMap,
+} from '../services/api';
+import {
+  DEFAULT_DROPDOWN_CONFIG,
+  getDropdownOptions,
+  normalizeDropdownConfig,
+} from '../config/dropdowns';
 import { formatCurrency, formatDate } from '../utils/formatters';
 import './TransactionsPage.scss';
 
@@ -13,7 +24,37 @@ interface TransactionRow extends Transaction {
   assetClass: Asset['assetClass'] | 'unknown';
 }
 
-const PAGE_SIZE_OPTIONS = [5, 10, 25, 50];
+const DECIMAL_PRECISION = 2;
+const DEFAULT_ITEMS_PER_PAGE = 10;
+
+const normalizeText = (value: unknown): string =>
+  (value || '')
+    .toString()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase();
+
+const summarizeSourceValue = (value: unknown): string | null => {
+  const normalized = normalizeText(value);
+  if (!normalized) return null;
+  if (normalized.includes('NUBANK') || normalized.includes('NU INVEST') || normalized.includes('NU BANK')) return 'NU BANK';
+  if (normalized.includes('XP')) return 'XP';
+  if (normalized.includes('ITAU')) return 'ITAU';
+  if (normalized.includes('B3')) return 'B3';
+  return null;
+};
+
+const toPageSizeOptions = (options: { value: string }[]): number[] => {
+  const values = new Set<number>();
+
+  for (const option of options) {
+    const numeric = Number(option.value);
+    if (!Number.isFinite(numeric) || numeric <= 0) continue;
+    values.add(Math.round(numeric));
+  }
+
+  return Array.from(values).sort((left, right) => left - right);
+};
 
 const TransactionsPage = () => {
   const { t, i18n } = useTranslation();
@@ -25,16 +66,23 @@ const TransactionsPage = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [itemsPerPage, setItemsPerPage] = useState(10);
+  const [itemsPerPage, setItemsPerPage] = useState(DEFAULT_ITEMS_PER_PAGE);
   const [selectedTransaction, setSelectedTransaction] = useState<TransactionRow | null>(null);
+  const [dropdownConfig, setDropdownConfig] = useState<DropdownConfigMap>(() =>
+    normalizeDropdownConfig(DEFAULT_DROPDOWN_CONFIG)
+  );
 
   useEffect(() => {
-    api.getPortfolios()
-      .then((items) => {
-        setPortfolios(items);
-        if (items.length > 0) setSelectedPortfolio(items[0].portfolioId);
+    Promise.all([api.getPortfolios(), api.getDropdownSettings()])
+      .then(([portfolioItems, dropdownSettings]) => {
+        setPortfolios(portfolioItems);
+        if (portfolioItems.length > 0) setSelectedPortfolio(portfolioItems[0].portfolioId);
+        setDropdownConfig(normalizeDropdownConfig(dropdownSettings.dropdowns));
       })
-      .catch(() => setPortfolios([]))
+      .catch(() => {
+        setPortfolios([]);
+        setDropdownConfig(normalizeDropdownConfig(DEFAULT_DROPDOWN_CONFIG));
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -71,13 +119,78 @@ const TransactionsPage = () => {
     });
   }, [assetsById, transactions]);
 
+  const configuredTypeOptions = useMemo(() => {
+    const options = getDropdownOptions(dropdownConfig, 'transactions.filters.type');
+    return options.length > 0
+      ? options
+      : getDropdownOptions(DEFAULT_DROPDOWN_CONFIG, 'transactions.filters.type');
+  }, [dropdownConfig]);
+
+  const configuredStatusOptions = useMemo(() => {
+    const options = getDropdownOptions(dropdownConfig, 'transactions.filters.status');
+    return options.length > 0
+      ? options
+      : getDropdownOptions(DEFAULT_DROPDOWN_CONFIG, 'transactions.filters.status');
+  }, [dropdownConfig]);
+
+  const pageSizeOptions = useMemo(() => {
+    const configuredOptions = toPageSizeOptions(
+      getDropdownOptions(dropdownConfig, 'tables.pagination.itemsPerPage')
+    );
+    if (configuredOptions.length > 0) return configuredOptions;
+    return toPageSizeOptions(
+      getDropdownOptions(DEFAULT_DROPDOWN_CONFIG, 'tables.pagination.itemsPerPage')
+    );
+  }, [dropdownConfig]);
+
   const typeOptions = useMemo(() => {
-    return Array.from(new Set(rows.map((row) => row.type?.toLowerCase()).filter(Boolean))).sort();
-  }, [rows]);
+    const labels = new Map(configuredTypeOptions.map((option) => [option.value, option.label]));
+    const orderedValues = configuredTypeOptions.map((option) => option.value);
+
+    for (const type of rows.map((row) => row.type?.toLowerCase()).filter(Boolean) as string[]) {
+      if (labels.has(type)) continue;
+      labels.set(type, type);
+      orderedValues.push(type);
+    }
+
+    return orderedValues.map((value) => ({
+      value,
+      label: labels.get(value) || value,
+    }));
+  }, [configuredTypeOptions, rows]);
 
   const statusOptions = useMemo(() => {
-    return Array.from(new Set(rows.map((row) => row.status?.toLowerCase() || 'unknown'))).sort();
-  }, [rows]);
+    const labels = new Map(configuredStatusOptions.map((option) => [option.value, option.label]));
+    const orderedValues = configuredStatusOptions.map((option) => option.value);
+
+    for (const status of rows.map((row) => row.status?.toLowerCase() || 'unknown')) {
+      if (labels.has(status)) continue;
+      labels.set(status, status);
+      orderedValues.push(status);
+    }
+
+    return orderedValues.map((value) => ({
+      value,
+      label: labels.get(value) || value,
+    }));
+  }, [configuredStatusOptions, rows]);
+
+  useEffect(() => {
+    if (!typeOptions.some((option) => option.value === typeFilter)) {
+      setTypeFilter(typeOptions[0]?.value || 'all');
+    }
+  }, [typeFilter, typeOptions]);
+
+  useEffect(() => {
+    if (!statusOptions.some((option) => option.value === statusFilter)) {
+      setStatusFilter(statusOptions[0]?.value || 'all');
+    }
+  }, [statusFilter, statusOptions]);
+
+  useEffect(() => {
+    if (pageSizeOptions.includes(itemsPerPage)) return;
+    setItemsPerPage(pageSizeOptions[0] || DEFAULT_ITEMS_PER_PAGE);
+  }, [itemsPerPage, pageSizeOptions]);
 
   const numberLocale = i18n.language?.startsWith('pt') ? 'pt-BR' : 'en-US';
 
@@ -88,8 +201,8 @@ const TransactionsPage = () => {
 
     const hasFraction = Math.abs(numeric % 1) > Number.EPSILON;
     return numeric.toLocaleString(numberLocale, {
-      minimumFractionDigits: hasFraction ? 2 : 0,
-      maximumFractionDigits: hasFraction ? 4 : 0,
+      minimumFractionDigits: hasFraction ? DECIMAL_PRECISION : 0,
+      maximumFractionDigits: hasFraction ? DECIMAL_PRECISION : 0,
     });
   }, [numberLocale, t]);
 
@@ -185,13 +298,12 @@ const TransactionsPage = () => {
       key: 'type',
       label: t('transactions.filters.type.label'),
       value: typeFilter,
-      options: [
-        { value: 'all', label: t('transactions.filters.type.all') },
-        ...typeOptions.map((type) => ({
-          value: type,
-          label: t(`transactions.types.${type}`, { defaultValue: type }),
-        })),
-      ],
+      options: typeOptions.map((option) => ({
+        value: option.value,
+        label: option.value === 'all'
+          ? t('transactions.filters.type.all')
+          : t(`transactions.types.${option.value}`, { defaultValue: option.label }),
+      })),
       onChange: setTypeFilter,
       matches: (row, filterValue) => filterValue === 'all' || (row.type?.toLowerCase() || '') === filterValue,
     },
@@ -199,13 +311,12 @@ const TransactionsPage = () => {
       key: 'status',
       label: t('transactions.filters.status.label'),
       value: statusFilter,
-      options: [
-        { value: 'all', label: t('transactions.filters.status.all') },
-        ...statusOptions.map((status) => ({
-          value: status,
-          label: t(`transactions.statuses.${status}`, { defaultValue: status }),
-        })),
-      ],
+      options: statusOptions.map((option) => ({
+        value: option.value,
+        label: option.value === 'all'
+          ? t('transactions.filters.status.all')
+          : t(`transactions.statuses.${option.value}`, { defaultValue: option.label }),
+      })),
       onChange: setStatusFilter,
       matches: (row, filterValue) => filterValue === 'all' || (row.status?.toLowerCase() || 'unknown') === filterValue,
     },
@@ -216,6 +327,18 @@ const TransactionsPage = () => {
     return String(value);
   }, [t]);
 
+  const formatTransactionSource = useCallback((transaction: TransactionRow) => {
+    const labels = new Set<string>();
+    const sourceDocLabel = summarizeSourceValue(transaction.sourceDocId);
+    const institutionLabel = summarizeSourceValue(transaction.institution);
+
+    if (sourceDocLabel) labels.add(sourceDocLabel);
+    if (institutionLabel) labels.add(institutionLabel);
+
+    if (labels.size > 0) return Array.from(labels).join(', ');
+    return t('transactions.modal.noValue');
+  }, [t]);
+
   const transactionDetailsSections = useMemo<RecordDetailsSection[]>(() => {
     if (!selectedTransaction) return [];
     return [
@@ -223,21 +346,6 @@ const TransactionsPage = () => {
         key: 'overview',
         title: t('transactions.modal.sections.overview'),
         fields: [
-          {
-            key: 'transId',
-            label: t('transactions.modal.fields.transId'),
-            value: formatDetailValue(selectedTransaction.transId),
-          },
-          {
-            key: 'portfolioId',
-            label: t('transactions.modal.fields.portfolioId'),
-            value: formatDetailValue(selectedTransaction.portfolioId),
-          },
-          {
-            key: 'assetId',
-            label: t('transactions.modal.fields.assetId'),
-            value: formatDetailValue(selectedTransaction.assetId),
-          },
           { key: 'ticker', label: t('transactions.modal.fields.ticker'), value: formatDetailValue(selectedTransaction.ticker) },
           { key: 'name', label: t('transactions.modal.fields.name'), value: formatDetailValue(selectedTransaction.name) },
           {
@@ -255,14 +363,9 @@ const TransactionsPage = () => {
             }),
           },
           {
-            key: 'sourceDocId',
-            label: t('transactions.modal.fields.sourceDocId'),
-            value: formatDetailValue(selectedTransaction.sourceDocId),
-          },
-          {
-            key: 'createdAt',
-            label: t('transactions.modal.fields.createdAt'),
-            value: formatDetailValue(selectedTransaction.createdAt),
+            key: 'source',
+            label: t('transactions.modal.fields.source'),
+            value: formatTransactionSource(selectedTransaction),
           },
         ],
       },
@@ -306,7 +409,7 @@ const TransactionsPage = () => {
         ],
       },
     ];
-  }, [formatDetailValue, formatTransactionQuantity, numberLocale, selectedTransaction, t]);
+  }, [formatDetailValue, formatTransactionQuantity, formatTransactionSource, numberLocale, selectedTransaction, t]);
 
   return (
     <Layout>
@@ -373,7 +476,7 @@ const TransactionsPage = () => {
             filters={filters}
             itemsPerPage={itemsPerPage}
             onItemsPerPageChange={setItemsPerPage}
-            pageSizeOptions={PAGE_SIZE_OPTIONS}
+            pageSizeOptions={pageSizeOptions}
             emptyLabel={t('transactions.emptyFiltered')}
             labels={{
               itemsPerPage: t('transactions.pagination.itemsPerPage'),

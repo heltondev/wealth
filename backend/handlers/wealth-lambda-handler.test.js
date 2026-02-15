@@ -8,6 +8,9 @@ const {
 	_test: {
 		parseBody,
 		resolveCorsOrigin,
+		queryAllItems,
+		scanAllItems,
+		normalizeDropdownSettings,
 		normalizeAppRole,
 		hasAppAccess,
 		resolveAppRole,
@@ -45,6 +48,90 @@ test('resolveCorsOrigin returns * when allowlist is empty', () => {
 	// Need to re-evaluate, but since CORS_ALLOWLIST is read at module load,
 	// we test with the current module state which has a non-empty allowlist
 	process.env.CORS_ALLOWLIST = origAllowlist;
+});
+
+test('queryAllItems concatenates all Query pages', async () => {
+	const pages = [
+		{
+			Items: [{ id: 1 }],
+			LastEvaluatedKey: { PK: 'A', SK: '1' },
+		},
+		{
+			Items: [{ id: 2 }],
+		},
+	];
+	let calls = 0;
+	const sentKeys = [];
+
+	const items = await queryAllItems(
+		{ TableName: 'wealth-main' },
+		async (command) => {
+			sentKeys.push(command.input.ExclusiveStartKey);
+			const page = pages[calls];
+			calls += 1;
+			return page;
+		}
+	);
+
+	assert.equal(calls, 2);
+	assert.deepEqual(sentKeys, [undefined, { PK: 'A', SK: '1' }]);
+	assert.deepEqual(items, [{ id: 1 }, { id: 2 }]);
+});
+
+test('scanAllItems concatenates all Scan pages', async () => {
+	const pages = [
+		{
+			Items: [{ id: 'x' }],
+			LastEvaluatedKey: { PK: 'B', SK: '1' },
+		},
+		{
+			Items: [{ id: 'y' }],
+		},
+	];
+	let calls = 0;
+	const sentKeys = [];
+
+	const items = await scanAllItems(
+		{ TableName: 'wealth-main' },
+		async (command) => {
+			sentKeys.push(command.input.ExclusiveStartKey);
+			const page = pages[calls];
+			calls += 1;
+			return page;
+		}
+	);
+
+	assert.equal(calls, 2);
+	assert.deepEqual(sentKeys, [undefined, { PK: 'B', SK: '1' }]);
+	assert.deepEqual(items, [{ id: 'x' }, { id: 'y' }]);
+});
+
+test('normalizeDropdownSettings merges defaults and sanitizes custom entries', () => {
+	const normalized = normalizeDropdownSettings({
+		'assets.form.currency': {
+			label: 'Custom Currency',
+			options: [
+				{ value: 'EUR', label: 'Euro' },
+				{ value: 'USD', label: 'US Dollar' },
+				{ value: '', label: 'Invalid' },
+				{ value: 'EUR', label: 'Duplicate' },
+			],
+		},
+		'custom.dropdown': {
+			label: 'Custom Dropdown',
+			options: [{ value: 'foo', label: 'Foo' }],
+		},
+	});
+
+	assert.equal(normalized['assets.form.currency'].label, 'Custom Currency');
+	assert.deepEqual(normalized['assets.form.currency'].options, [
+		{ value: 'EUR', label: 'Euro' },
+		{ value: 'USD', label: 'US Dollar' },
+	]);
+	assert.ok(normalized['assets.form.assetClass']);
+	assert.deepEqual(normalized['custom.dropdown'].options, [
+		{ value: 'foo', label: 'Foo' },
+	]);
 });
 
 test('normalizeAppRole normalizes roles correctly', () => {
@@ -146,18 +233,30 @@ test('handler POST /portfolios/{id}/transactions requires assetId, type, date', 
 	assert.match(body.error, /assetId/i);
 });
 
-test('handler POST /portfolios/{id}/transactions requires integer quantity', async () => {
+test('handler POST /portfolios/{id}/transactions rejects quantity with more than 2 decimals', async () => {
 	const response = await handler(
 		makeEvent('POST', '/portfolios/test-portfolio/transactions', {
 			assetId: 'asset-test',
 			type: 'buy',
 			date: '2025-01-01',
-			quantity: 10.5,
+			quantity: 10.555,
 		})
 	);
 	assert.equal(response.statusCode, 400);
 	const body = JSON.parse(response.body);
-	assert.match(body.error, /quantity must be an integer/i);
+	assert.match(body.error, /quantity must be an integer or have up to 2 decimals/i);
+});
+
+test('handler POST /portfolios/{id}/transactions accepts quantity with 2 decimals', async () => {
+	const response = await handler(
+		makeEvent('POST', '/portfolios/test-portfolio/transactions', {
+			assetId: 'asset-test',
+			type: 'buy',
+			date: '2025-01-01',
+			quantity: 0.07,
+		})
+	);
+	assert.notEqual(response.statusCode, 400);
 });
 
 test('handler GET /settings/profile returns profile data', async () => {

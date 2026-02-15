@@ -1,5 +1,5 @@
-export type AssetClass = 'stock' | 'fii' | 'bond' | 'crypto' | 'rsu';
-export type Country = 'BR' | 'US' | 'CA';
+export type AssetClass = string;
+export type Country = string;
 
 export interface Asset {
   assetId: string;

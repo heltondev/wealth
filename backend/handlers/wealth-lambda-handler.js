@@ -6,6 +6,7 @@ const {
 	GetCommand,
 	UpdateCommand,
 	DeleteCommand,
+	ScanCommand,
 } = require('@aws-sdk/lib-dynamodb');
 
 const ddbClient = new DynamoDBClient({
@@ -21,6 +22,101 @@ const CORS_ALLOWLIST = (process.env.CORS_ALLOWLIST || '')
 	.split(',')
 	.map((v) => v.trim())
 	.filter(Boolean);
+const DEFAULT_DROPDOWN_SETTINGS = {
+	'assets.form.assetClass': {
+		label: 'Assets / Asset Class',
+		options: [
+			{ value: 'stock', label: 'Stock' },
+			{ value: 'fii', label: 'FII' },
+			{ value: 'bond', label: 'Bond' },
+			{ value: 'crypto', label: 'Crypto' },
+			{ value: 'rsu', label: 'RSU' },
+		],
+	},
+	'assets.form.country': {
+		label: 'Assets / Country',
+		options: [
+			{ value: 'BR', label: 'Brazil' },
+			{ value: 'US', label: 'United States' },
+			{ value: 'CA', label: 'Canada' },
+		],
+	},
+	'assets.form.currency': {
+		label: 'Assets / Currency',
+		options: [
+			{ value: 'BRL', label: 'BRL' },
+			{ value: 'USD', label: 'USD' },
+			{ value: 'CAD', label: 'CAD' },
+		],
+	},
+	'assets.filters.status': {
+		label: 'Assets / Status Filter',
+		options: [
+			{ value: 'active', label: 'Active' },
+			{ value: 'inactive', label: 'Inactive' },
+			{ value: 'all', label: 'All' },
+		],
+	},
+	'transactions.filters.type': {
+		label: 'Transactions / Type Filter',
+		options: [
+			{ value: 'all', label: 'All' },
+			{ value: 'buy', label: 'Buy' },
+			{ value: 'sell', label: 'Sell' },
+			{ value: 'dividend', label: 'Dividend' },
+			{ value: 'jcp', label: 'JCP' },
+			{ value: 'tax', label: 'Tax' },
+			{ value: 'subscription', label: 'Subscription' },
+			{ value: 'transfer', label: 'Transfer' },
+		],
+	},
+	'transactions.filters.status': {
+		label: 'Transactions / Status Filter',
+		options: [
+			{ value: 'all', label: 'All' },
+			{ value: 'confirmed', label: 'Confirmed' },
+			{ value: 'pending', label: 'Pending' },
+			{ value: 'failed', label: 'Failed' },
+			{ value: 'canceled', label: 'Canceled' },
+			{ value: 'unknown', label: 'Unknown' },
+		],
+	},
+	'settings.profile.preferredCurrency': {
+		label: 'Settings / Preferred Currency',
+		options: [
+			{ value: 'BRL', label: 'BRL' },
+			{ value: 'USD', label: 'USD' },
+			{ value: 'CAD', label: 'CAD' },
+		],
+	},
+	'settings.aliases.source': {
+		label: 'Settings / Alias Source',
+		options: [
+			{ value: 'manual', label: 'Manual' },
+			{ value: 'b3', label: 'B3' },
+			{ value: 'itau', label: 'Itau' },
+			{ value: 'robinhood', label: 'Robinhood' },
+			{ value: 'equate', label: 'Equate' },
+			{ value: 'coinbase', label: 'Coinbase' },
+		],
+	},
+	'settings.preferences.language': {
+		label: 'Settings / Language',
+		options: [
+			{ value: 'en', label: 'English' },
+			{ value: 'pt', label: 'Portugues' },
+		],
+	},
+	'tables.pagination.itemsPerPage': {
+		label: 'Tables / Items Per Page',
+		options: [
+			{ value: '5', label: '5' },
+			{ value: '10', label: '10' },
+			{ value: '25', label: '25' },
+			{ value: '50', label: '50' },
+		],
+	},
+};
 
 // --- Helpers ---
 
@@ -36,11 +132,15 @@ const parseBody = (body) => {
 	}
 };
 
-const parseIntegerQuantity = (value) => {
+const parseTransactionQuantity = (value) => {
 	if (value === undefined || value === null || value === '') return 0;
-	const numeric = Number(value);
-	if (!Number.isFinite(numeric) || !Number.isInteger(numeric)) {
-		throw errorResponse(400, 'quantity must be an integer');
+	const normalized = value.toString().trim().replace(',', '.');
+	if (!/^-?\d+(\.\d{1,2})?$/.test(normalized)) {
+		throw errorResponse(400, 'quantity must be an integer or have up to 2 decimals');
+	}
+	const numeric = Number(normalized);
+	if (!Number.isFinite(numeric)) {
+		throw errorResponse(400, 'quantity must be numeric');
 	}
 	return numeric;
 };
@@ -65,6 +165,97 @@ const errorResponse = (statusCode, message) => ({
 	statusCode,
 	message,
 });
+
+const sanitizeDropdownOption = (option) => {
+	if (!option || typeof option !== 'object') return null;
+	const value = String(option.value ?? '').trim();
+	if (!value) return null;
+	const label = String(option.label ?? value).trim() || value;
+	return { value, label };
+};
+
+const sanitizeDropdownConfig = (key, config, fallbackConfig) => {
+	const label =
+		String(config?.label ?? fallbackConfig?.label ?? key).trim() || key;
+	const rawOptions = Array.isArray(config?.options)
+		? config.options
+		: fallbackConfig?.options || [];
+	const seen = new Set();
+	const options = [];
+
+	for (const option of rawOptions) {
+		const sanitized = sanitizeDropdownOption(option);
+		if (!sanitized || seen.has(sanitized.value)) continue;
+		seen.add(sanitized.value);
+		options.push(sanitized);
+	}
+
+	return { label, options };
+};
+
+const normalizeDropdownSettings = (settings = {}) => {
+	const normalized = {};
+	const keys = new Set([
+		...Object.keys(DEFAULT_DROPDOWN_SETTINGS),
+		...Object.keys(settings || {}),
+	]);
+
+	for (const key of keys) {
+		normalized[key] = sanitizeDropdownConfig(
+			key,
+			settings?.[key],
+			DEFAULT_DROPDOWN_SETTINGS[key]
+		);
+	}
+
+	return normalized;
+};
+
+const queryAllItems = async (
+	queryInput,
+	sendCommand = (command) => dynamo.send(command)
+) => {
+	const items = [];
+	let lastEvaluatedKey;
+
+	do {
+		const result = await sendCommand(
+			new QueryCommand({
+				...queryInput,
+				ExclusiveStartKey: lastEvaluatedKey,
+			})
+		);
+		if (Array.isArray(result.Items) && result.Items.length > 0) {
+			items.push(...result.Items);
+		}
+		lastEvaluatedKey = result.LastEvaluatedKey;
+	} while (lastEvaluatedKey);
+
+	return items;
+};
+
+const scanAllItems = async (
+	scanInput,
+	sendCommand = (command) => dynamo.send(command)
+) => {
+	const items = [];
+	let lastEvaluatedKey;
+
+	do {
+		const result = await sendCommand(
+			new ScanCommand({
+				...scanInput,
+				ExclusiveStartKey: lastEvaluatedKey,
+			})
+		);
+		if (Array.isArray(result.Items) && result.Items.length > 0) {
+			items.push(...result.Items);
+		}
+		lastEvaluatedKey = result.LastEvaluatedKey;
+	} while (lastEvaluatedKey);
+
+	return items;
+};
 
 // --- Authorization ---
 
@@ -120,17 +311,14 @@ const parseGroups = (groupsStr) => {
 
 async function handlePortfolios(method, userId, body) {
 	if (method === 'GET') {
-		const result = await dynamo.send(
-			new QueryCommand({
-				TableName: TABLE_NAME,
-				KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
-				ExpressionAttributeValues: {
-					':pk': `USER#${userId}`,
-					':sk': 'PORTFOLIO#',
-				},
-			})
-		);
-		return result.Items || [];
+		return queryAllItems({
+			TableName: TABLE_NAME,
+			KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
+			ExpressionAttributeValues: {
+				':pk': `USER#${userId}`,
+				':sk': 'PORTFOLIO#',
+			},
+		});
 	}
 
 	if (method === 'POST') {
@@ -216,17 +404,14 @@ async function handlePortfolioById(method, userId, portfolioId, body) {
 
 async function handleAssets(method, portfolioId, body) {
 	if (method === 'GET') {
-		const result = await dynamo.send(
-			new QueryCommand({
-				TableName: TABLE_NAME,
-				KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
-				ExpressionAttributeValues: {
-					':pk': `PORTFOLIO#${portfolioId}`,
-					':sk': 'ASSET#',
-				},
-			})
-		);
-		return result.Items || [];
+		return queryAllItems({
+			TableName: TABLE_NAME,
+			KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
+			ExpressionAttributeValues: {
+				':pk': `PORTFOLIO#${portfolioId}`,
+				':sk': 'ASSET#',
+			},
+		});
 	}
 
 	if (method === 'POST') {
@@ -339,17 +524,14 @@ async function handleAssetById(method, portfolioId, assetId, body) {
 
 async function handleTransactions(method, portfolioId, body) {
 	if (method === 'GET') {
-		const result = await dynamo.send(
-			new QueryCommand({
-				TableName: TABLE_NAME,
-				KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
-				ExpressionAttributeValues: {
-					':pk': `PORTFOLIO#${portfolioId}`,
-					':sk': 'TRANS#',
-				},
-			})
-		);
-		return result.Items || [];
+		return queryAllItems({
+			TableName: TABLE_NAME,
+			KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
+			ExpressionAttributeValues: {
+				':pk': `PORTFOLIO#${portfolioId}`,
+				':sk': 'TRANS#',
+			},
+		});
 	}
 
 	if (method === 'POST') {
@@ -366,7 +548,7 @@ async function handleTransactions(method, portfolioId, body) {
 		} = parseBody(body);
 		if (!assetId || !type || !date)
 			throw errorResponse(400, 'assetId, type, and date are required');
-		const normalizedQuantity = parseIntegerQuantity(quantity);
+		const normalizedQuantity = parseTransactionQuantity(quantity);
 
 		const transId = generateId();
 		const now = new Date().toISOString();
@@ -445,6 +627,41 @@ async function handleSettingsProfile(method, userId, body) {
 	throw errorResponse(405, 'Method not allowed');
 }
 
+async function handleSettingsDropdowns(method, userId, body) {
+	const key = { PK: `USER#${userId}`, SK: 'SETTINGS#dropdowns' };
+
+	if (method === 'GET') {
+		const result = await dynamo.send(
+			new GetCommand({ TableName: TABLE_NAME, Key: key })
+		);
+		return {
+			PK: key.PK,
+			SK: key.SK,
+			dropdowns: normalizeDropdownSettings(result.Item?.dropdowns || {}),
+			updatedAt: result.Item?.updatedAt || null,
+		};
+	}
+
+	if (method === 'PUT') {
+		const data = parseBody(body);
+		if (!data.dropdowns || typeof data.dropdowns !== 'object') {
+			throw errorResponse(400, 'dropdowns object is required');
+		}
+
+		const now = new Date().toISOString();
+		const item = {
+			PK: key.PK,
+			SK: key.SK,
+			dropdowns: normalizeDropdownSettings(data.dropdowns),
+			updatedAt: now,
+		};
+		await dynamo.send(new PutCommand({ TableName: TABLE_NAME, Item: item }));
+		return item;
+	}
+
+	throw errorResponse(405, 'Method not allowed');
+}
+
 async function handleAliases(method, body) {
 	if (method === 'GET') {
 		const result = await dynamo.send(
@@ -486,18 +703,14 @@ async function handleAliases(method, body) {
 
 async function handleAliasesList(method) {
 	if (method === 'GET') {
-		// For aliases, we scan with a filter since PK varies
-		const { ScanCommand } = require('@aws-sdk/lib-dynamodb');
-		const result = await dynamo.send(
-			new ScanCommand({
-				TableName: TABLE_NAME,
-				FilterExpression: 'begins_with(PK, :prefix)',
-				ExpressionAttributeValues: {
-					':prefix': 'ALIAS#',
-				},
-			})
-		);
-		return result.Items || [];
+		// For aliases, we scan with a filter since PK varies.
+		return scanAllItems({
+			TableName: TABLE_NAME,
+			FilterExpression: 'begins_with(PK, :prefix)',
+			ExpressionAttributeValues: {
+				':prefix': 'ALIAS#',
+			},
+		});
 	}
 
 	throw errorResponse(405, 'Method not allowed');
@@ -572,6 +785,9 @@ async function handleImport(portfolioId, body) {
 				currency: trans.currency || 'BRL',
 				amount: trans.amount,
 				status: 'confirmed',
+				institution: trans.institution || null,
+				direction: trans.direction || null,
+				market: trans.market || null,
 				sourceDocId: trans.source || null,
 				createdAt: now,
 			},
@@ -693,6 +909,12 @@ exports.handler = async (event) => {
 					userId,
 					requestBody
 				);
+			} else if (section === 'dropdowns') {
+				body = await handleSettingsDropdowns(
+					httpMethod,
+					userId,
+					requestBody
+				);
 			} else if (section === 'aliases') {
 				body = await handleAliasesList(httpMethod);
 				if (httpMethod === 'POST' || httpMethod === 'PUT') {
@@ -723,6 +945,9 @@ exports._test = {
 	generateId,
 	parseBody,
 	resolveCorsOrigin,
+	queryAllItems,
+	scanAllItems,
+	normalizeDropdownSettings,
 	normalizeAppRole,
 	hasAppAccess,
 	resolveAppRole,

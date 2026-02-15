@@ -12,6 +12,7 @@ export interface Transaction {
   currency: string;
   amount: number;
   status: TransactionStatus;
+  institution?: string | null;
   sourceDocId: string | null;
   createdAt: string;
 }

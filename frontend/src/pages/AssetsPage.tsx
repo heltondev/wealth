@@ -3,14 +3,24 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Layout from '../components/Layout';
 import DataTable, { type DataTableColumn, type DataTableFilter } from '../components/DataTable';
 import RecordDetailsModal, { type RecordDetailsSection } from '../components/RecordDetailsModal';
-import { api, type Asset, type Portfolio, type Transaction } from '../services/api';
+import {
+  api,
+  type Asset,
+  type Portfolio,
+  type Transaction,
+  type DropdownConfigMap,
+} from '../services/api';
+import {
+  DEFAULT_DROPDOWN_CONFIG,
+  getDropdownOptions,
+  normalizeDropdownConfig,
+} from '../config/dropdowns';
 import { useToast } from '../context/ToastContext';
+import { formatCurrency } from '../utils/formatters';
 import './AssetsPage.scss';
 
-type StatusFilter = 'active' | 'inactive' | 'all';
-type AssetRow = Asset & { quantity: number; source: string | null };
+type AssetRow = Asset & { quantity: number; source: string | null; investedAmount: number };
 
-const PAGE_SIZE_OPTIONS = [5, 10, 25, 50];
 const COUNTRY_FLAG_MAP: Record<string, string> = {
   BR: '🇧🇷',
   US: '🇺🇸',
@@ -20,6 +30,43 @@ const COUNTRY_NAME_MAP: Record<string, string> = {
   BR: 'Brazil',
   US: 'United States',
   CA: 'Canada',
+};
+const DECIMAL_PRECISION = 2;
+const DECIMAL_FACTOR = 10 ** DECIMAL_PRECISION;
+const DEFAULT_ITEMS_PER_PAGE = 10;
+
+const toPageSizeOptions = (options: { value: string }[]): number[] => {
+  const values = new Set<number>();
+
+  for (const option of options) {
+    const numeric = Number(option.value);
+    if (!Number.isFinite(numeric) || numeric <= 0) continue;
+    values.add(Math.round(numeric));
+  }
+
+  return Array.from(values).sort((left, right) => left - right);
+};
+
+const ensureSelectedValue = (current: string, options: { value: string }[]): string => {
+  if (options.some((option) => option.value === current)) return current;
+  return options[0]?.value || '';
+};
+
+const normalizeText = (value: unknown): string =>
+  (value || '')
+    .toString()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase();
+
+const summarizeSourceValue = (value: unknown): string | null => {
+  const normalized = normalizeText(value);
+  if (!normalized) return null;
+  if (normalized.includes('NUBANK') || normalized.includes('NU INVEST') || normalized.includes('NU BANK')) return 'NU BANK';
+  if (normalized.includes('XP')) return 'XP';
+  if (normalized.includes('ITAU')) return 'ITAU';
+  if (normalized.includes('B3')) return 'B3';
+  return null;
 };
 
 const AssetsPage = () => {
@@ -32,9 +79,12 @@ const AssetsPage = () => {
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('active');
-  const [itemsPerPage, setItemsPerPage] = useState(10);
+  const [statusFilter, setStatusFilter] = useState('active');
+  const [itemsPerPage, setItemsPerPage] = useState(DEFAULT_ITEMS_PER_PAGE);
   const [selectedAsset, setSelectedAsset] = useState<AssetRow | null>(null);
+  const [dropdownConfig, setDropdownConfig] = useState<DropdownConfigMap>(() =>
+    normalizeDropdownConfig(DEFAULT_DROPDOWN_CONFIG)
+  );
   const [form, setForm] = useState<{
     ticker: string;
     name: string;
@@ -44,18 +94,22 @@ const AssetsPage = () => {
   }>({
     ticker: '',
     name: '',
-    assetClass: 'stock',
-    country: 'BR',
-    currency: 'BRL',
+    assetClass: getDropdownOptions(DEFAULT_DROPDOWN_CONFIG, 'assets.form.assetClass')[0]?.value || 'stock',
+    country: getDropdownOptions(DEFAULT_DROPDOWN_CONFIG, 'assets.form.country')[0]?.value || 'BR',
+    currency: getDropdownOptions(DEFAULT_DROPDOWN_CONFIG, 'assets.form.currency')[0]?.value || 'BRL',
   });
 
   useEffect(() => {
-    api.getPortfolios()
-      .then((items) => {
-        setPortfolios(items);
-        if (items.length > 0) setSelectedPortfolio(items[0].portfolioId);
+    Promise.all([api.getPortfolios(), api.getDropdownSettings()])
+      .then(([portfolioItems, dropdownSettings]) => {
+        setPortfolios(portfolioItems);
+        if (portfolioItems.length > 0) setSelectedPortfolio(portfolioItems[0].portfolioId);
+        setDropdownConfig(normalizeDropdownConfig(dropdownSettings.dropdowns));
       })
-      .catch(() => setPortfolios([]))
+      .catch(() => {
+        setPortfolios([]);
+        setDropdownConfig(normalizeDropdownConfig(DEFAULT_DROPDOWN_CONFIG));
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -74,6 +128,73 @@ const AssetsPage = () => {
       .finally(() => setLoading(false));
   }, [selectedPortfolio]);
 
+  const assetClassOptions = useMemo(() => {
+    const options = getDropdownOptions(dropdownConfig, 'assets.form.assetClass');
+    return options.length > 0
+      ? options
+      : getDropdownOptions(DEFAULT_DROPDOWN_CONFIG, 'assets.form.assetClass');
+  }, [dropdownConfig]);
+
+  const countryOptions = useMemo(() => {
+    const options = getDropdownOptions(dropdownConfig, 'assets.form.country');
+    return options.length > 0
+      ? options
+      : getDropdownOptions(DEFAULT_DROPDOWN_CONFIG, 'assets.form.country');
+  }, [dropdownConfig]);
+
+  const currencyOptions = useMemo(() => {
+    const options = getDropdownOptions(dropdownConfig, 'assets.form.currency');
+    return options.length > 0
+      ? options
+      : getDropdownOptions(DEFAULT_DROPDOWN_CONFIG, 'assets.form.currency');
+  }, [dropdownConfig]);
+
+  const statusFilterOptions = useMemo(() => {
+    const options = getDropdownOptions(dropdownConfig, 'assets.filters.status');
+    return options.length > 0
+      ? options
+      : getDropdownOptions(DEFAULT_DROPDOWN_CONFIG, 'assets.filters.status');
+  }, [dropdownConfig]);
+
+  const pageSizeOptions = useMemo(() => {
+    const configuredOptions = toPageSizeOptions(
+      getDropdownOptions(dropdownConfig, 'tables.pagination.itemsPerPage')
+    );
+    if (configuredOptions.length > 0) return configuredOptions;
+    return toPageSizeOptions(
+      getDropdownOptions(DEFAULT_DROPDOWN_CONFIG, 'tables.pagination.itemsPerPage')
+    );
+  }, [dropdownConfig]);
+
+  useEffect(() => {
+    setForm((previous) => {
+      const next = {
+        ...previous,
+        assetClass: ensureSelectedValue(previous.assetClass, assetClassOptions),
+        country: ensureSelectedValue(previous.country, countryOptions),
+        currency: ensureSelectedValue(previous.currency, currencyOptions),
+      };
+      if (
+        next.assetClass === previous.assetClass
+        && next.country === previous.country
+        && next.currency === previous.currency
+      ) {
+        return previous;
+      }
+      return next;
+    });
+  }, [assetClassOptions, countryOptions, currencyOptions]);
+
+  useEffect(() => {
+    if (statusFilterOptions.some((option) => option.value === statusFilter)) return;
+    setStatusFilter(statusFilterOptions[0]?.value || 'all');
+  }, [statusFilter, statusFilterOptions]);
+
+  useEffect(() => {
+    if (pageSizeOptions.includes(itemsPerPage)) return;
+    setItemsPerPage(pageSizeOptions[0] || DEFAULT_ITEMS_PER_PAGE);
+  }, [itemsPerPage, pageSizeOptions]);
+
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!selectedPortfolio) return;
@@ -82,7 +203,13 @@ const AssetsPage = () => {
       const newAsset = await api.createAsset(selectedPortfolio, form);
       setAssets((previous) => [...previous, newAsset]);
       setShowModal(false);
-      setForm({ ticker: '', name: '', assetClass: 'stock', country: 'BR', currency: 'BRL' });
+      setForm({
+        ticker: '',
+        name: '',
+        assetClass: assetClassOptions[0]?.value || '',
+        country: countryOptions[0]?.value || '',
+        currency: currencyOptions[0]?.value || '',
+      });
       showToast('Asset added', 'success');
     } catch {
       showToast('Failed to add asset', 'error');
@@ -119,8 +246,8 @@ const AssetsPage = () => {
 
     const hasFraction = Math.abs(numeric % 1) > Number.EPSILON;
     return numeric.toLocaleString(numberLocale, {
-      minimumFractionDigits: hasFraction ? 2 : 0,
-      maximumFractionDigits: hasFraction ? 4 : 0,
+      minimumFractionDigits: hasFraction ? DECIMAL_PRECISION : 0,
+      maximumFractionDigits: hasFraction ? DECIMAL_PRECISION : 0,
     });
   }, [formatDetailValue, numberLocale]);
 
@@ -132,7 +259,7 @@ const AssetsPage = () => {
       if (normalizedStatus !== 'confirmed') continue;
 
       const normalizedType = transaction.type?.toLowerCase() || '';
-      const normalizedQuantity = Number(transaction.quantity || 0);
+      const normalizedQuantity = Math.round(Number(transaction.quantity || 0) * DECIMAL_FACTOR) / DECIMAL_FACTOR;
 
       if (!Number.isFinite(normalizedQuantity)) continue;
 
@@ -149,13 +276,44 @@ const AssetsPage = () => {
     return quantities;
   }, [transactions]);
 
-  const assetSourcesById = useMemo(() => {
-    const sources: Record<string, string> = {};
+  const assetInvestedAmountById = useMemo(() => {
+    const investedById: Record<string, number> = {};
 
     for (const transaction of transactions) {
-      const source = transaction.sourceDocId?.toString().trim();
-      if (!source) continue;
-      if (!sources[transaction.assetId]) sources[transaction.assetId] = source;
+      const normalizedStatus = transaction.status?.toLowerCase() || 'unknown';
+      if (normalizedStatus !== 'confirmed') continue;
+
+      const amount = Number(transaction.amount || 0);
+      if (!Number.isFinite(amount)) continue;
+
+      const normalizedType = transaction.type?.toLowerCase() || '';
+      if (normalizedType === 'buy' || normalizedType === 'subscription') {
+        investedById[transaction.assetId] = (investedById[transaction.assetId] || 0) + amount;
+        continue;
+      }
+
+      if (normalizedType === 'sell') {
+        investedById[transaction.assetId] = (investedById[transaction.assetId] || 0) - amount;
+      }
+    }
+
+    return investedById;
+  }, [transactions]);
+
+  const assetSourcesById = useMemo(() => {
+    const sources: Record<string, string[]> = {};
+
+    for (const transaction of transactions) {
+      const sourceDocId = transaction.sourceDocId?.toString().trim();
+      const institution = transaction.institution?.toString().trim();
+
+      if (sourceDocId) {
+        sources[transaction.assetId] = [...(sources[transaction.assetId] || []), sourceDocId];
+      }
+
+      if (institution) {
+        sources[transaction.assetId] = [...(sources[transaction.assetId] || []), institution];
+      }
     }
 
     return sources;
@@ -167,9 +325,20 @@ const AssetsPage = () => {
       quantity: Number.isFinite(Number(asset.quantity))
         ? Number(asset.quantity)
         : (assetQuantitiesById[asset.assetId] || 0),
-      source: asset.source || assetSourcesById[asset.assetId] || null,
+      source: (() => {
+        const labels = new Set<string>();
+        const assetSource = summarizeSourceValue(asset.source);
+        if (assetSource) labels.add(assetSource);
+        for (const candidate of (assetSourcesById[asset.assetId] || [])) {
+          const label = summarizeSourceValue(candidate);
+          if (label) labels.add(label);
+        }
+        if (labels.size > 0) return Array.from(labels).join(', ');
+        return null;
+      })(),
+      investedAmount: assetInvestedAmountById[asset.assetId] || 0,
     }));
-  }, [assetQuantitiesById, assetSourcesById, assets]);
+  }, [assetInvestedAmountById, assetQuantitiesById, assetSourcesById, assets]);
 
   const columns: DataTableColumn<AssetRow>[] = [
     {
@@ -250,12 +419,11 @@ const AssetsPage = () => {
       key: 'status',
       label: t('assets.filters.status.label'),
       value: statusFilter,
-      options: [
-        { value: 'active', label: t('assets.filters.status.active') },
-        { value: 'inactive', label: t('assets.filters.status.inactive') },
-        { value: 'all', label: t('assets.filters.status.all') },
-      ],
-      onChange: (value) => setStatusFilter(value as StatusFilter),
+      options: statusFilterOptions.map((option) => ({
+        value: option.value,
+        label: t(`assets.filters.status.${option.value}`, { defaultValue: option.label }),
+      })),
+      onChange: setStatusFilter,
       matches: (asset, filterValue) =>
         filterValue === 'all' || (asset.status?.toLowerCase() || '') === filterValue,
     },
@@ -276,6 +444,17 @@ const AssetsPage = () => {
             value: formatAssetQuantity(selectedAsset.quantity),
           },
           {
+            key: 'investedAmount',
+            label: t('assets.modal.fields.investedAmount'),
+            value: formatCurrency(selectedAsset.investedAmount, selectedAsset.currency || 'BRL', numberLocale),
+          },
+        ],
+      },
+      {
+        key: 'market',
+        title: t('assets.modal.sections.market'),
+        fields: [
+          {
             key: 'assetClass',
             label: t('assets.modal.fields.class'),
             value: t(`assets.classes.${selectedAsset.assetClass}`, { defaultValue: selectedAsset.assetClass }),
@@ -292,12 +471,6 @@ const AssetsPage = () => {
             label: t('assets.modal.fields.source'),
             value: formatDetailValue(selectedAsset.source),
           },
-        ],
-      },
-      {
-        key: 'market',
-        title: t('assets.modal.sections.market'),
-        fields: [
           {
             key: 'country',
             label: t('assets.modal.fields.country'),
@@ -311,7 +484,7 @@ const AssetsPage = () => {
         ],
       },
     ];
-  }, [formatAssetQuantity, formatCountryDetail, formatDetailValue, selectedAsset, t]);
+  }, [formatAssetQuantity, formatCountryDetail, formatDetailValue, numberLocale, selectedAsset, t]);
 
   return (
     <Layout>
@@ -373,7 +546,7 @@ const AssetsPage = () => {
             filters={filters}
             itemsPerPage={itemsPerPage}
             onItemsPerPageChange={setItemsPerPage}
-            pageSizeOptions={PAGE_SIZE_OPTIONS}
+            pageSizeOptions={pageSizeOptions}
             emptyLabel={t('assets.emptyFiltered')}
             labels={{
               itemsPerPage: t('assets.pagination.itemsPerPage'),
@@ -428,11 +601,11 @@ const AssetsPage = () => {
                     value={form.assetClass}
                     onChange={(event) => setForm({ ...form, assetClass: event.target.value })}
                   >
-                    <option value="stock">{t('assets.classes.stock')}</option>
-                    <option value="fii">{t('assets.classes.fii')}</option>
-                    <option value="bond">{t('assets.classes.bond')}</option>
-                    <option value="crypto">{t('assets.classes.crypto')}</option>
-                    <option value="rsu">{t('assets.classes.rsu')}</option>
+                    {assetClassOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {t(`assets.classes.${option.value}`, { defaultValue: option.label })}
+                      </option>
+                    ))}
                   </select>
                 </div>
                 <div className="modal__field">
@@ -441,9 +614,11 @@ const AssetsPage = () => {
                     value={form.country}
                     onChange={(event) => setForm({ ...form, country: event.target.value })}
                   >
-                    <option value="BR">Brazil</option>
-                    <option value="US">United States</option>
-                    <option value="CA">Canada</option>
+                    {countryOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
                   </select>
                 </div>
                 <div className="modal__field">
@@ -452,9 +627,11 @@ const AssetsPage = () => {
                     value={form.currency}
                     onChange={(event) => setForm({ ...form, currency: event.target.value })}
                   >
-                    <option value="BRL">BRL</option>
-                    <option value="USD">USD</option>
-                    <option value="CAD">CAD</option>
+                    {currencyOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
                   </select>
                 </div>
                 <div className="modal__actions">

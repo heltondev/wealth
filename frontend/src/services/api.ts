@@ -39,8 +39,8 @@ export interface Asset {
   portfolioId: string;
   ticker: string;
   name: string;
-  assetClass: 'stock' | 'fii' | 'bond' | 'crypto' | 'rsu';
-  country: 'BR' | 'US' | 'CA';
+  assetClass: string;
+  country: string;
   currency: string;
   status: string;
   quantity?: number;
@@ -59,6 +59,7 @@ export interface Transaction {
   currency: string;
   amount: number;
   status: string;
+  institution?: string | null;
   sourceDocId: string | null;
   createdAt: string;
 }
@@ -76,6 +77,23 @@ export interface UserSettings {
   preferredCurrency?: string;
   locale?: string;
   updatedAt?: string;
+}
+
+export interface DropdownOption {
+  value: string;
+  label: string;
+}
+
+export interface DropdownConfig {
+  label: string;
+  options: DropdownOption[];
+}
+
+export type DropdownConfigMap = Record<string, DropdownConfig>;
+
+export interface DropdownSettings {
+  dropdowns: DropdownConfigMap;
+  updatedAt?: string | null;
 }
 
 // --- API Methods ---
@@ -114,6 +132,9 @@ export const api = {
   getProfile: () => request<UserSettings>('/settings/profile'),
   updateProfile: (data: Partial<UserSettings>) =>
     request<UserSettings>('/settings/profile', { method: 'PUT', body: JSON.stringify(data) }),
+  getDropdownSettings: () => request<DropdownSettings>('/settings/dropdowns'),
+  updateDropdownSettings: (data: DropdownSettings) =>
+    request<DropdownSettings>('/settings/dropdowns', { method: 'PUT', body: JSON.stringify(data) }),
 
   // Aliases
   getAliases: () => request<Alias[]>('/settings/aliases'),

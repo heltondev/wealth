@@ -52,7 +52,8 @@ function parseTransactionQuantity(value, ticker = '', context = '') {
 	if (!Number.isFinite(numeric)) {
 		throw new Error(`Invalid quantity "${value}"${context ? ` (${context})` : ''}: quantity must be numeric`);
 	}
-	return numeric;
+	const scaled = Math.round(numeric * 100);
+	return scaled / 100;
 }
 
 /**
@@ -346,6 +347,9 @@ async function run() {
 			currency: trans.currency || 'BRL',
 			amount: trans.amount,
 			status: 'confirmed',
+			institution: trans.institution || null,
+			direction: trans.direction || null,
+			market: trans.market || null,
 			sourceDocId: trans.source || null,
 			createdAt: now,
 		};
