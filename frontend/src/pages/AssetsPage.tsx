@@ -95,6 +95,7 @@ const AssetsPage = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const portfolioIdFromQuery = searchParams.get('portfolioId')?.trim() || '';
+  const tickerFromQuery = searchParams.get('ticker')?.trim().toUpperCase() || '';
   const { showToast } = useToast();
   const {
     portfolios,
@@ -153,6 +154,12 @@ const AssetsPage = () => {
       }
     }
   }, [portfolioIdFromQuery, portfolios, selectedPortfolio, setSelectedPortfolio]);
+
+  useEffect(() => {
+    if (!tickerFromQuery) return;
+    setSearchTerm((current) => (current === tickerFromQuery ? current : tickerFromQuery));
+    setStatusFilter('active');
+  }, [tickerFromQuery]);
 
   useEffect(() => {
     api.getDropdownSettings()

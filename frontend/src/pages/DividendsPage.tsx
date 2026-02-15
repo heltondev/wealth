@@ -9,6 +9,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import { Link } from 'react-router';
 import Layout from '../components/Layout';
 import {
   api,
@@ -64,13 +65,6 @@ const toDateMinusMonths = (monthsBack: number) => {
   return date.toISOString().slice(0, 10);
 };
 
-const addDaysToIso = (isoDate: string, days: number) => {
-  const date = new Date(`${isoDate}T00:00:00`);
-  if (Number.isNaN(date.getTime())) return isoDate;
-  date.setDate(date.getDate() + days);
-  return date.toISOString().slice(0, 10);
-};
-
 const getLocalIsoDate = () => {
   const now = new Date();
   const year = now.getFullYear();
@@ -123,13 +117,12 @@ const formatMonthLabel = (month: string, locale: string) => {
 
 const DividendsPage = () => {
   const { t, i18n } = useTranslation();
-  const { portfolios, selectedPortfolio, setSelectedPortfolio } = usePortfolioData();
+  const { portfolios, selectedPortfolio, setSelectedPortfolio, assets: portfolioAssets } = usePortfolioData();
   const [dropdownConfig, setDropdownConfig] = useState<DropdownConfigMap>(() =>
     normalizeDropdownConfig(DEFAULT_DROPDOWN_CONFIG)
   );
   const [periodMonths, setPeriodMonths] = useState('12');
   const [method, setMethod] = useState('fifo');
-  const [calendarLookaheadDays, setCalendarLookaheadDays] = useState('90');
   const [calendarMonth, setCalendarMonth] = useState(getLocalMonth());
   const [visibleStatuses, setVisibleStatuses] = useState<Record<ProventStatus, boolean>>({
     paid: true,
@@ -173,13 +166,6 @@ const DividendsPage = () => {
     return normalizeMethodOptions(source, 'fifo');
   }, [dropdownConfig]);
 
-  const calendarLookaheadOptions = useMemo(() => {
-    const configured = getDropdownOptions(dropdownConfig, 'dividends.calendar.lookaheadDays');
-    const fallback = getDropdownOptions(DEFAULT_DROPDOWN_CONFIG, 'dividends.calendar.lookaheadDays');
-    const source = configured.length > 0 ? configured : fallback;
-    return normalizeNumericOptions(source, '90');
-  }, [dropdownConfig]);
-
   useEffect(() => {
     if (!periodOptions.some((option) => option.value === periodMonths)) {
       setPeriodMonths(periodOptions[0]?.value || '12');
@@ -191,12 +177,6 @@ const DividendsPage = () => {
       setMethod(methodOptions[0]?.value || 'fifo');
     }
   }, [method, methodOptions]);
-
-  useEffect(() => {
-    if (!calendarLookaheadOptions.some((option) => option.value === calendarLookaheadDays)) {
-      setCalendarLookaheadDays(calendarLookaheadOptions[0]?.value || '90');
-    }
-  }, [calendarLookaheadDays, calendarLookaheadOptions]);
 
   const fromDate = useMemo(() => {
     const months = Number(periodMonths);
@@ -258,20 +238,58 @@ const DividendsPage = () => {
     return serverTodayIso > local ? serverTodayIso : local;
   }, [serverTodayIso]);
 
+  const quantityByTicker = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const asset of portfolioAssets) {
+      const status = String(asset.status || '').toLowerCase();
+      if (status && status !== 'active') continue;
+      const ticker = String(asset.ticker || '').toUpperCase();
+      if (!ticker) continue;
+      const quantity = toAmount(asset.quantity) ?? 0;
+      map.set(ticker, (map.get(ticker) ?? 0) + quantity);
+    }
+    return map;
+  }, [portfolioAssets]);
+
+  const assetIdByTicker = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const asset of portfolioAssets) {
+      const status = String(asset.status || '').toLowerCase();
+      if (status && status !== 'active') continue;
+      const ticker = String(asset.ticker || '').toUpperCase();
+      const assetId = String(asset.assetId || '').trim();
+      if (!ticker || !assetId || map.has(ticker)) continue;
+      map.set(ticker, assetId);
+    }
+    return map;
+  }, [portfolioAssets]);
+
   const upcomingEvents = useMemo(() => {
     const source = payload?.calendar_upcoming || [];
-    const lookaheadDays = Number(calendarLookaheadDays);
-    const untilDate = addDaysToIso(todayIso, Number.isFinite(lookaheadDays) ? Math.round(lookaheadDays) : 90);
     return source
       .map((event) => ({
         ...event,
         ticker: String(event.ticker || '').toUpperCase(),
         eventType: String(event.eventType || '').replace(/_/g, ' '),
         eventDate: normalizeIsoDate(event.eventDate || event.date || event.fetched_at),
+        amountPerUnit: toAmount(toRecord(event.details).value),
+        quantity: quantityByTicker.get(String(event.ticker || '').toUpperCase()) ?? null,
+        assetId: assetIdByTicker.get(String(event.ticker || '').toUpperCase()) ?? null,
       }))
-      .filter((event) => event.eventDate && event.eventDate >= todayIso && event.eventDate <= untilDate)
+      .filter((event) =>
+        event.eventDate
+        && event.eventDate >= todayIso
+        && event.eventDate.startsWith(`${calendarMonth}-`)
+      )
+      .map((event) => ({
+        ...event,
+        expectedTotal:
+          event.amountPerUnit !== null && event.quantity !== null
+            ? event.amountPerUnit * event.quantity
+            : null,
+      }))
       .sort((left, right) => String(left.eventDate || '').localeCompare(String(right.eventDate || '')));
-  }, [calendarLookaheadDays, payload?.calendar_upcoming, todayIso]);
+  }, [payload?.calendar_upcoming, todayIso, calendarMonth, quantityByTicker, assetIdByTicker]);
 
   const calendarSourceEvents = useMemo(() => {
     const combined = [
@@ -535,40 +553,6 @@ const DividendsPage = () => {
                 )}
               </section>
 
-              <section className="dividends-card">
-                <header className="dividends-card__header">
-                  <h2>{t('dividends.calendar', { defaultValue: 'Upcoming Payments' })}</h2>
-                  <SharedDropdown
-                    className="dividends-page__dropdown"
-                    size="sm"
-                    value={calendarLookaheadDays}
-                    onChange={setCalendarLookaheadDays}
-                    options={calendarLookaheadOptions}
-                    ariaLabel={t('dividends.lookahead', { defaultValue: 'Lookahead' })}
-                  />
-                </header>
-                {upcomingEvents.length === 0 ? (
-                  <p className="dividends-card__empty">{t('dividends.noUpcoming', { defaultValue: 'No upcoming dividend events.' })}</p>
-                ) : (
-                  <div className="dividends-list">
-                    {upcomingEvents.slice(0, 30).map((event) => (
-                      <article
-                        key={`${event.ticker || 'asset'}-${event.eventDate || 'date'}-${event.eventType || 'type'}-${JSON.stringify(event.details || '')}`}
-                        className="dividends-list__item"
-                      >
-                        <div className="dividends-list__row">
-                          <span className="dividends-list__ticker">{event.ticker || '-'}</span>
-                          <span className="dividends-list__date">
-                            {event.eventDate ? formatDate(event.eventDate, numberLocale) : '-'}
-                          </span>
-                        </div>
-                        <div className="dividends-list__type">{String(event.eventType || '-').replace(/_/g, ' ')}</div>
-                      </article>
-                    ))}
-                  </div>
-                )}
-              </section>
-
               <section className="dividends-card dividends-card--wide">
                 <header className="dividends-card__header">
                   <h2>{t('dividends.proventsCalendar', { defaultValue: 'Provents Calendar' })}</h2>
@@ -654,6 +638,47 @@ const DividendsPage = () => {
                     </article>
                   ))}
                 </div>
+              </section>
+
+              <section className="dividends-card dividends-card--wide">
+                <header className="dividends-card__header">
+                  <h2>{t('dividends.calendar', { defaultValue: 'Upcoming Payments' })}</h2>
+                </header>
+                {upcomingEvents.length === 0 ? (
+                  <p className="dividends-card__empty">{t('dividends.noUpcoming', { defaultValue: 'No upcoming dividend events.' })}</p>
+                ) : (
+                  <div className="dividends-list">
+                    {upcomingEvents.slice(0, 30).map((event) => (
+                      <article
+                        key={`${event.ticker || 'asset'}-${event.eventDate || 'date'}-${event.eventType || 'type'}-${JSON.stringify(event.details || '')}`}
+                        className="dividends-list__item"
+                      >
+                        <div className="dividends-list__row">
+                          <Link
+                            to={event.assetId
+                              ? `/assets/${encodeURIComponent(event.assetId)}?portfolioId=${encodeURIComponent(selectedPortfolio)}`
+                              : `/assets?portfolioId=${encodeURIComponent(selectedPortfolio)}&ticker=${encodeURIComponent(event.ticker || '')}`}
+                            className="dividends-list__ticker dividends-list__ticker--link"
+                          >
+                            {event.ticker || '-'}
+                          </Link>
+                          <div className="dividends-list__meta">
+                            <span className="dividends-list__date">
+                              {event.eventDate ? formatDate(event.eventDate, numberLocale) : '-'}
+                            </span>
+                            <span className="dividends-list__amount">
+                              {t('dividends.perUnit', { defaultValue: 'Per unit:' })} {event.amountPerUnit !== null ? formatCurrency(event.amountPerUnit, 'BRL', numberLocale) : '-'}
+                            </span>
+                            <span className="dividends-list__expected">
+                              {t('dividends.youReceive', { defaultValue: 'You receive:' })} {event.expectedTotal !== null ? formatCurrency(event.expectedTotal, 'BRL', numberLocale) : '-'}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="dividends-list__type">{String(event.eventType || '-').replace(/_/g, ' ')}</div>
+                      </article>
+                    ))}
+                  </div>
+                )}
               </section>
             </div>
           </>
