@@ -562,6 +562,7 @@ const AssetsPage = () => {
       {
         key: 'overview',
         title: t('assets.modal.sections.overview'),
+        columns: 2,
         fields: [
           { key: 'ticker', label: t('assets.modal.fields.ticker'), value: formatDetailValue(selectedAsset.ticker) },
           { key: 'name', label: t('assets.modal.fields.name'), value: formatDetailValue(selectedAsset.name) },
@@ -601,6 +602,7 @@ const AssetsPage = () => {
       {
         key: 'market',
         title: t('assets.modal.sections.market'),
+        columns: 2,
         fields: [
           {
             key: 'assetClass',

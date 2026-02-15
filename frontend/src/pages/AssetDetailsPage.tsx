@@ -618,7 +618,7 @@ const AssetDetailsPage = () => {
         {!loading && selectedAsset ? (
           <>
             <div className="asset-details-page__grid">
-              <section className="asset-details-page__card">
+              <section className="asset-details-page__card asset-details-page__card--two-cols">
                 <h2>{t('assets.modal.sections.overview')}</h2>
                 <dl>
                   {overviewFields.map((field) => (
@@ -630,7 +630,7 @@ const AssetDetailsPage = () => {
                 </dl>
               </section>
 
-              <section className="asset-details-page__card">
+              <section className="asset-details-page__card asset-details-page__card--two-cols">
                 <h2>{t('assets.modal.sections.market')}</h2>
                 <dl>
                   {marketFields.map((field) => (

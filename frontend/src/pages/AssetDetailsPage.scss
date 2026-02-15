@@ -84,6 +84,12 @@
     &--full {
       margin-bottom: $spacing-md;
     }
+
+    &--two-cols {
+      dl {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
   }
 }
 
@@ -100,6 +106,14 @@
 
     &__grid {
       grid-template-columns: 1fr;
+    }
+
+    &__card {
+      &--two-cols {
+        dl {
+          grid-template-columns: 1fr;
+        }
+      }
     }
   }
 }

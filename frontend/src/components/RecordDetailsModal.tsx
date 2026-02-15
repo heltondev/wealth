@@ -12,6 +12,7 @@ export interface RecordDetailsSection {
   title: string;
   fields: RecordDetailsField[];
   fullWidth?: boolean;
+  columns?: 1 | 2 | 3;
 }
 
 interface RecordDetailsModalProps {
@@ -72,7 +73,7 @@ const RecordDetailsModal = ({
           {sections.map((section) => (
             <section
               key={section.key}
-              className={`record-modal__section ${section.fullWidth ? 'record-modal__section--full' : ''}`}
+              className={`record-modal__section ${section.fullWidth ? 'record-modal__section--full' : ''} record-modal__section--cols-${section.columns || 1}`}
             >
               <h3>{section.title}</h3>
               <dl>

@@ -115,6 +115,18 @@
     &--full {
       grid-column: 1 / -1;
     }
+
+    &--cols-2 {
+      dl {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    &--cols-3 {
+      dl {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+    }
   }
 }
 
@@ -124,6 +136,15 @@
 
     &__grid {
       grid-template-columns: 1fr;
+    }
+
+    &__section {
+      &--cols-2,
+      &--cols-3 {
+        dl {
+          grid-template-columns: 1fr;
+        }
+      }
     }
   }
 }
