@@ -1,0 +1,43 @@
+@use '../styles/variables' as *;
+@use '../styles/mixins' as *;
+
+.editable-table {
+  &__wrapper {
+    overflow-x: auto;
+  }
+
+  &__table {
+    @include shared-table-base;
+
+    td {
+      vertical-align: middle;
+    }
+
+    td input,
+    td select {
+      width: 100%;
+      padding: $spacing-xs $spacing-sm;
+      border-radius: 8px;
+      border: 1px solid var(--glass-border);
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      font-size: 0.85rem;
+    }
+
+    td button {
+      padding: $spacing-xs $spacing-sm;
+      border-radius: 8px;
+      border: 1px solid var(--glass-border);
+      background: transparent;
+      color: var(--text-primary);
+      font-size: 0.8rem;
+    }
+  }
+
+  &__empty {
+    @include glass-card;
+    padding: $spacing-lg;
+    text-align: center;
+    color: var(--text-secondary);
+  }
+}

@@ -1,0 +1,104 @@
+@use '../styles/variables' as *;
+@use '../styles/mixins' as *;
+
+.form-modal-overlay {
+  @include modal-overlay(1200, rgba(2, 6, 23, 0.68), 6px);
+}
+
+.form-modal {
+  @include modal-surface(560px);
+  @include glass-card;
+  padding: $spacing-xl;
+  background: var(--bg-secondary);
+
+  &__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: $spacing-md;
+    margin-bottom: $spacing-lg;
+
+    h2 {
+      margin: 0;
+      font-size: 1.25rem;
+    }
+
+    p {
+      margin: $spacing-xs 0 0;
+      color: var(--text-secondary);
+      font-size: 0.85rem;
+    }
+  }
+
+  &__close {
+    border: 1px solid var(--glass-border);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    border-radius: 8px;
+    padding: $spacing-sm $spacing-md;
+    font-size: 0.85rem;
+    transition: all $transition-fast;
+
+    &:hover {
+      background: rgba(99, 102, 241, 0.16);
+      border-color: rgba(129, 140, 248, 0.45);
+    }
+  }
+
+  &__body {
+    display: grid;
+    gap: $spacing-md;
+  }
+
+  &__field {
+    display: grid;
+    gap: $spacing-xs;
+
+    label {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+    }
+
+    input,
+    select,
+    textarea {
+      width: 100%;
+      padding: $spacing-sm $spacing-md;
+      border-radius: 8px;
+      border: 1px solid var(--glass-border);
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      font-size: 0.9rem;
+    }
+  }
+
+  &__actions {
+    display: flex;
+    gap: $spacing-md;
+    justify-content: flex-end;
+    margin-top: $spacing-lg;
+  }
+
+  &__btn {
+    padding: $spacing-sm $spacing-lg;
+    border-radius: 8px;
+    font-weight: 500;
+    border: none;
+    font-size: 0.9rem;
+
+    &--cancel {
+      background: var(--glass-bg);
+      color: var(--text-secondary);
+      border: 1px solid var(--glass-border);
+    }
+
+    &--submit {
+      background: var(--primary);
+      color: #fff;
+
+      &:hover {
+        background: var(--primary-dark);
+      }
+    }
+  }
+}

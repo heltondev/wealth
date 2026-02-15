@@ -41,26 +41,7 @@
   }
 
   &__table {
-    width: 100%;
-    border-collapse: collapse;
-    @include glass-card;
-    overflow: hidden;
-
-    th,
-    td {
-      padding: $spacing-md;
-      text-align: left;
-      border-bottom: 1px solid var(--glass-border);
-      white-space: nowrap;
-    }
-
-    th {
-      font-size: 0.8rem;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      color: var(--text-secondary);
-      font-weight: 600;
-    }
+    @include shared-table-base;
   }
 
   &__sort-btn {

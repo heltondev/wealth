@@ -210,7 +210,15 @@
     "saveDropdowns": "Save Dropdowns",
     "dropdownValue": "Value",
     "dropdownOptionLabel": "Label",
-    "dropdownActions": "Actions"
+    "dropdownActions": "Actions",
+    "dropdownOptionsEmpty": "No options yet.",
+    "aliasTable": {
+      "name": "Name",
+      "ticker": "Ticker",
+      "source": "Source",
+      "searchPlaceholder": "Search alias by name, ticker or source",
+      "empty": "No aliases yet."
+    }
   },
   "common": {
     "loading": "Loading...",

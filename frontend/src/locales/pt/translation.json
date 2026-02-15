@@ -210,7 +210,15 @@
     "saveDropdowns": "Salvar Dropdowns",
     "dropdownValue": "Valor",
     "dropdownOptionLabel": "Rótulo",
-    "dropdownActions": "Ações"
+    "dropdownActions": "Ações",
+    "dropdownOptionsEmpty": "Nenhuma opção ainda.",
+    "aliasTable": {
+      "name": "Nome",
+      "ticker": "Ticker",
+      "source": "Fonte",
+      "searchPlaceholder": "Buscar apelido por nome, ticker ou fonte",
+      "empty": "Nenhum apelido ainda."
+    }
   },
   "common": {
     "loading": "Carregando...",

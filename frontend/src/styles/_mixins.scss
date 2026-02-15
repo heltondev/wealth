@@ -35,3 +35,46 @@
     padding: $spacing-xl;
   }
 }
+
+@mixin modal-overlay($z-index: 1200, $overlay-bg: rgba(2, 6, 23, 0.7), $blur: 8px) {
+  position: fixed;
+  inset: 0;
+  z-index: $z-index;
+  padding: $spacing-lg;
+  background: $overlay-bg;
+  backdrop-filter: blur($blur);
+  @include flex-center;
+}
+
+@mixin modal-surface($max-width: 920px) {
+  width: min($max-width, 100%);
+  max-height: 90vh;
+  overflow: auto;
+  border-radius: 18px;
+  border: 1px solid rgba(129, 140, 248, 0.35);
+  background: var(--bg-secondary);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+}
+
+@mixin shared-table-base {
+  width: 100%;
+  border-collapse: collapse;
+  @include glass-card;
+  overflow: hidden;
+
+  th,
+  td {
+    padding: $spacing-md;
+    text-align: left;
+    border-bottom: 1px solid var(--glass-border);
+    white-space: nowrap;
+  }
+
+  th {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-secondary);
+    font-weight: 600;
+  }
+}

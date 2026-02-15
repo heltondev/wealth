@@ -1,11 +1,14 @@
 import { useTranslation } from 'react-i18next';
 import { useEffect, useMemo, useState } from 'react';
 import Layout from '../components/Layout';
+import DataTable, { type DataTableColumn } from '../components/DataTable';
+import EditableTable, { type EditableTableColumn } from '../components/EditableTable';
 import {
   api,
   type UserSettings,
   type Alias,
   type DropdownConfigMap,
+  type DropdownOption,
 } from '../services/api';
 import {
   DEFAULT_DROPDOWN_CONFIG,
@@ -16,6 +19,19 @@ import { useToast } from '../context/ToastContext';
 import './SettingsPage.scss';
 
 type SettingsTab = 'profile' | 'aliases' | 'preferences' | 'dropdowns';
+const DEFAULT_ITEMS_PER_PAGE = 10;
+
+const toPageSizeOptions = (options: { value: string }[]): number[] => {
+  const values = new Set<number>();
+
+  for (const option of options) {
+    const numeric = Number(option.value);
+    if (!Number.isFinite(numeric) || numeric <= 0) continue;
+    values.add(Math.round(numeric));
+  }
+
+  return Array.from(values).sort((left, right) => left - right);
+};
 
 const SettingsPage = () => {
   const { t, i18n } = useTranslation();
@@ -32,6 +48,8 @@ const SettingsPage = () => {
     ticker: '',
     source: getDropdownOptions(DEFAULT_DROPDOWN_CONFIG, 'settings.aliases.source')[0]?.value || 'manual',
   });
+  const [aliasSearchTerm, setAliasSearchTerm] = useState('');
+  const [aliasItemsPerPage, setAliasItemsPerPage] = useState(DEFAULT_ITEMS_PER_PAGE);
   const [newDropdown, setNewDropdown] = useState({ key: '', label: '' });
 
   useEffect(() => {
@@ -87,6 +105,16 @@ const SettingsPage = () => {
       : getDropdownOptions(DEFAULT_DROPDOWN_CONFIG, 'settings.preferences.language');
   }, [dropdowns]);
 
+  const pageSizeOptions = useMemo(() => {
+    const configuredOptions = toPageSizeOptions(
+      getDropdownOptions(dropdowns, 'tables.pagination.itemsPerPage')
+    );
+    if (configuredOptions.length > 0) return configuredOptions;
+    return toPageSizeOptions(
+      getDropdownOptions(DEFAULT_DROPDOWN_CONFIG, 'tables.pagination.itemsPerPage')
+    );
+  }, [dropdowns]);
+
   useEffect(() => {
     if (preferredCurrencyOptions.length === 0) return;
 
@@ -105,6 +133,11 @@ const SettingsPage = () => {
       setAliasForm((previous) => ({ ...previous, source: aliasSourceOptions[0].value }));
     }
   }, [aliasForm.source, aliasSourceOptions]);
+
+  useEffect(() => {
+    if (pageSizeOptions.includes(aliasItemsPerPage)) return;
+    setAliasItemsPerPage(pageSizeOptions[0] || DEFAULT_ITEMS_PER_PAGE);
+  }, [aliasItemsPerPage, pageSizeOptions]);
 
   const handleSaveProfile = async () => {
     try {
@@ -234,6 +267,65 @@ const SettingsPage = () => {
   const activeLanguage = i18n.language?.startsWith('pt') ? 'pt' : 'en';
   const isSystemDropdown = (key: string) => Boolean(DEFAULT_DROPDOWN_CONFIG[key]);
 
+  const aliasColumns = useMemo<DataTableColumn<Alias>[]>(() => ([
+    {
+      key: 'normalizedName',
+      label: t('settings.aliasTable.name'),
+      sortable: true,
+      sortValue: (row) => row.normalizedName,
+      render: (row) => row.normalizedName,
+    },
+    {
+      key: 'ticker',
+      label: t('settings.aliasTable.ticker'),
+      sortable: true,
+      sortValue: (row) => row.ticker,
+      cellClassName: 'aliases-table__ticker',
+      render: (row) => row.ticker,
+    },
+    {
+      key: 'source',
+      label: t('settings.aliasTable.source'),
+      sortable: true,
+      sortValue: (row) => row.source,
+      render: (row) => row.source,
+    },
+  ]), [t]);
+
+  const optionColumnsFor = (dropdownKey: string): EditableTableColumn<DropdownOption>[] => ([
+    {
+      key: 'value',
+      label: t('settings.dropdownValue'),
+      render: (option, rowIndex) => (
+        <input
+          type="text"
+          value={option.value}
+          onChange={(event) => handleOptionChange(dropdownKey, rowIndex, 'value', event.target.value)}
+        />
+      ),
+    },
+    {
+      key: 'label',
+      label: t('settings.dropdownOptionLabel'),
+      render: (option, rowIndex) => (
+        <input
+          type="text"
+          value={option.label}
+          onChange={(event) => handleOptionChange(dropdownKey, rowIndex, 'label', event.target.value)}
+        />
+      ),
+    },
+    {
+      key: 'actions',
+      label: t('settings.dropdownActions'),
+      render: (_, rowIndex) => (
+        <button type="button" onClick={() => handleRemoveOption(dropdownKey, rowIndex)}>
+          {t('common.delete')}
+        </button>
+      ),
+    },
+  ]);
+
   return (
     <Layout>
       <div className="settings-page">
@@ -316,26 +408,33 @@ const SettingsPage = () => {
               <button type="submit">{t('common.create')}</button>
             </form>
 
-            {aliases.length > 0 && (
-              <table className="aliases-table">
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Ticker</th>
-                    <th>Source</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {aliases.map((alias, index) => (
-                    <tr key={index}>
-                      <td>{alias.normalizedName}</td>
-                      <td className="aliases-table__ticker">{alias.ticker}</td>
-                      <td>{alias.source}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
+            <DataTable
+              rows={aliases}
+              rowKey={(alias) => `${alias.normalizedName}-${alias.ticker}-${alias.source}`}
+              columns={aliasColumns}
+              searchLabel={t('common.search')}
+              searchPlaceholder={t('settings.aliasTable.searchPlaceholder')}
+              searchTerm={aliasSearchTerm}
+              onSearchTermChange={setAliasSearchTerm}
+              matchesSearch={(alias, normalizedSearch) =>
+                [alias.normalizedName, alias.ticker, alias.source]
+                  .join(' ')
+                  .toLowerCase()
+                  .includes(normalizedSearch)
+              }
+              itemsPerPage={aliasItemsPerPage}
+              onItemsPerPageChange={setAliasItemsPerPage}
+              pageSizeOptions={pageSizeOptions}
+              emptyLabel={t('settings.aliasTable.empty')}
+              labels={{
+                itemsPerPage: t('assets.pagination.itemsPerPage'),
+                prev: t('assets.pagination.prev'),
+                next: t('assets.pagination.next'),
+                page: (page, total) => t('assets.pagination.page', { page, total }),
+                showing: (start, end, total) => t('assets.pagination.showing', { start, end, total }),
+              }}
+              defaultSort={{ key: 'normalizedName', direction: 'asc' }}
+            />
           </div>
         )}
 
@@ -376,7 +475,9 @@ const SettingsPage = () => {
                 value={newDropdown.label}
                 onChange={(event) => setNewDropdown((previous) => ({ ...previous, label: event.target.value }))}
               />
-              <button type="submit">{t('settings.addDropdown')}</button>
+              <button type="submit" className="dropdowns-config__primary-btn">
+                {t('settings.addDropdown')}
+              </button>
             </form>
 
             {dropdownEntries.map(([key, config]) => (
@@ -389,48 +490,28 @@ const SettingsPage = () => {
                     onChange={(event) => handleDropdownLabelChange(key, event.target.value)}
                   />
                   {!isSystemDropdown(key) && (
-                    <button type="button" onClick={() => handleRemoveDropdown(key)}>
+                    <button
+                      type="button"
+                      className="dropdowns-config__danger-btn"
+                      onClick={() => handleRemoveDropdown(key)}
+                    >
                       {t('settings.removeDropdown')}
                     </button>
                   )}
                 </div>
 
-                <table className="dropdowns-config__table">
-                  <thead>
-                    <tr>
-                      <th>{t('settings.dropdownValue')}</th>
-                      <th>{t('settings.dropdownOptionLabel')}</th>
-                      <th>{t('settings.dropdownActions')}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {config.options.map((option, index) => (
-                      <tr key={`${key}-${index}`}>
-                        <td>
-                          <input
-                            type="text"
-                            value={option.value}
-                            onChange={(event) => handleOptionChange(key, index, 'value', event.target.value)}
-                          />
-                        </td>
-                        <td>
-                          <input
-                            type="text"
-                            value={option.label}
-                            onChange={(event) => handleOptionChange(key, index, 'label', event.target.value)}
-                          />
-                        </td>
-                        <td>
-                          <button type="button" onClick={() => handleRemoveOption(key, index)}>
-                            {t('common.delete')}
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <EditableTable
+                  rows={config.options}
+                  rowKey={(_, rowIndex) => `${key}-${rowIndex}`}
+                  columns={optionColumnsFor(key)}
+                  emptyLabel={t('settings.dropdownOptionsEmpty')}
+                />
 
-                <button type="button" onClick={() => handleAddOption(key)}>
+                <button
+                  type="button"
+                  className="dropdowns-config__add-option-btn"
+                  onClick={() => handleAddOption(key)}
+                >
                   {t('settings.addOption')}
                 </button>
               </section>

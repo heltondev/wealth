@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Layout from '../components/Layout';
 import DataTable, { type DataTableColumn, type DataTableFilter } from '../components/DataTable';
 import RecordDetailsModal, { type RecordDetailsSection } from '../components/RecordDetailsModal';
+import FormModal from '../components/FormModal';
 import {
   api,
   type Asset,
@@ -572,84 +573,73 @@ const AssetsPage = () => {
           onClose={() => setSelectedAsset(null)}
         />
 
-        {showModal && (
-          <div className="modal-overlay" onClick={() => setShowModal(false)}>
-            <div className="modal" onClick={(event) => event.stopPropagation()}>
-              <h2>{t('assets.addAsset')}</h2>
-              <form onSubmit={handleSubmit}>
-                <div className="modal__field">
-                  <label>{t('assets.form.ticker')}</label>
-                  <input
-                    type="text"
-                    value={form.ticker}
-                    onChange={(event) => setForm({ ...form, ticker: event.target.value })}
-                    required
-                  />
-                </div>
-                <div className="modal__field">
-                  <label>{t('assets.form.name')}</label>
-                  <input
-                    type="text"
-                    value={form.name}
-                    onChange={(event) => setForm({ ...form, name: event.target.value })}
-                    required
-                  />
-                </div>
-                <div className="modal__field">
-                  <label>{t('assets.form.class')}</label>
-                  <select
-                    value={form.assetClass}
-                    onChange={(event) => setForm({ ...form, assetClass: event.target.value })}
-                  >
-                    {assetClassOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {t(`assets.classes.${option.value}`, { defaultValue: option.label })}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="modal__field">
-                  <label>{t('assets.form.country')}</label>
-                  <select
-                    value={form.country}
-                    onChange={(event) => setForm({ ...form, country: event.target.value })}
-                  >
-                    {countryOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="modal__field">
-                  <label>{t('assets.form.currency')}</label>
-                  <select
-                    value={form.currency}
-                    onChange={(event) => setForm({ ...form, currency: event.target.value })}
-                  >
-                    {currencyOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="modal__actions">
-                  <button
-                    type="button"
-                    className="modal__btn modal__btn--cancel"
-                    onClick={() => setShowModal(false)}
-                  >
-                    {t('assets.form.cancel')}
-                  </button>
-                  <button type="submit" className="modal__btn modal__btn--submit">
-                    {t('assets.form.submit')}
-                  </button>
-                </div>
-              </form>
-            </div>
+        <FormModal
+          open={showModal}
+          title={t('assets.addAsset')}
+          closeLabel={t('assets.form.cancel')}
+          cancelLabel={t('assets.form.cancel')}
+          submitLabel={t('assets.form.submit')}
+          onClose={() => setShowModal(false)}
+          onSubmit={handleSubmit}
+        >
+          <div className="form-modal__field">
+            <label>{t('assets.form.ticker')}</label>
+            <input
+              type="text"
+              value={form.ticker}
+              onChange={(event) => setForm({ ...form, ticker: event.target.value })}
+              required
+            />
           </div>
-        )}
+          <div className="form-modal__field">
+            <label>{t('assets.form.name')}</label>
+            <input
+              type="text"
+              value={form.name}
+              onChange={(event) => setForm({ ...form, name: event.target.value })}
+              required
+            />
+          </div>
+          <div className="form-modal__field">
+            <label>{t('assets.form.class')}</label>
+            <select
+              value={form.assetClass}
+              onChange={(event) => setForm({ ...form, assetClass: event.target.value })}
+            >
+              {assetClassOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {t(`assets.classes.${option.value}`, { defaultValue: option.label })}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="form-modal__field">
+            <label>{t('assets.form.country')}</label>
+            <select
+              value={form.country}
+              onChange={(event) => setForm({ ...form, country: event.target.value })}
+            >
+              {countryOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="form-modal__field">
+            <label>{t('assets.form.currency')}</label>
+            <select
+              value={form.currency}
+              onChange={(event) => setForm({ ...form, currency: event.target.value })}
+            >
+              {currencyOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </FormModal>
       </div>
     </Layout>
   );
