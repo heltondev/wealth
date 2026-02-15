@@ -8,6 +8,8 @@ const {
 	DeleteCommand,
 	ScanCommand,
 } = require('@aws-sdk/lib-dynamodb');
+const { AssetMarketDataService } = require('../services/market-data');
+const { PortfolioPriceHistoryService } = require('../services/price-history');
 
 const ddbClient = new DynamoDBClient({
 	region: process.env.AWS_REGION || 'us-east-1',
@@ -16,6 +18,16 @@ const ddbClient = new DynamoDBClient({
 	}),
 });
 const dynamo = DynamoDBDocumentClient.from(ddbClient);
+const marketDataService = new AssetMarketDataService({
+	dynamo,
+	tableName: process.env.TABLE_NAME || 'wealth-main',
+	logger: console,
+});
+const priceHistoryService = new PortfolioPriceHistoryService({
+	dynamo,
+	tableName: process.env.TABLE_NAME || 'wealth-main',
+	logger: console,
+});
 
 const TABLE_NAME = process.env.TABLE_NAME || 'wealth-main';
 const CORS_ALLOWLIST = (process.env.CORS_ALLOWLIST || '')
@@ -818,6 +830,71 @@ async function handleImport(portfolioId, body) {
 	};
 }
 
+async function handleMarketDataRefresh(method, portfolioId, body) {
+	if (method !== 'POST') throw errorResponse(405, 'Method not allowed');
+	const { assetId } = parseBody(body);
+	return marketDataService.refreshPortfolioAssets(portfolioId, {
+		assetId: assetId || null,
+	});
+}
+
+async function handleScraperHealth(method) {
+	if (method !== 'GET') throw errorResponse(405, 'Method not allowed');
+	return marketDataService.runScraperHealthCheck();
+}
+
+async function handlePriceHistory(method, portfolioId, userId, body, query = {}) {
+	const chartType = query.chartType || query.chart_type || 'price_history';
+	const period = query.period || 'MAX';
+	const ticker = query.ticker;
+	const date = query.date;
+	const methodOption = query.method || 'fifo';
+
+	if (method === 'POST') {
+		const { assetId } = parseBody(body);
+		return priceHistoryService.fetchPortfolioPriceHistory(portfolioId, {
+			assetId: assetId || null,
+			incremental: true,
+		});
+	}
+
+	if (method !== 'GET') {
+		throw errorResponse(405, 'Method not allowed');
+	}
+
+	if (query.action === 'priceAtDate') {
+		if (!ticker || !date) {
+			throw errorResponse(400, 'ticker and date query params are required');
+		}
+		return priceHistoryService.getPriceAtDate(ticker, date, {
+			userId,
+			portfolioId,
+		});
+	}
+
+	if (query.action === 'averageCost') {
+		if (!ticker) throw errorResponse(400, 'ticker query param is required');
+		return priceHistoryService.getAverageCost(ticker, userId, {
+			portfolioId,
+			method: methodOption,
+		});
+	}
+
+	if (query.action === 'chart') {
+		if (!ticker) throw errorResponse(400, 'ticker query param is required');
+		return priceHistoryService.getChartData(ticker, userId, chartType, period, {
+			portfolioId,
+			method: methodOption,
+		});
+	}
+
+	// Default GET action: portfolio metrics.
+	return priceHistoryService.getPortfolioMetrics(userId, {
+		portfolioId,
+		method: methodOption,
+	});
+}
+
 // --- Main Handler ---
 
 exports.handler = async (event) => {
@@ -830,7 +907,13 @@ exports.handler = async (event) => {
 	};
 
 	try {
-		const { httpMethod, path, requestContext, body: requestBody } = event;
+		const {
+			httpMethod,
+			path,
+			requestContext,
+			body: requestBody,
+			queryStringParameters,
+		} = event;
 		const claims = requestContext?.authorizer?.claims || {};
 		const userId = claims?.sub || 'anonymous';
 		const appRole = resolveAppRole(claims);
@@ -869,13 +952,27 @@ exports.handler = async (event) => {
 					);
 				}
 			} else if (subResource === 'import') {
-				if (method === 'POST') {
+				if (httpMethod === 'POST') {
 					body = await handleImport(id, requestBody);
 				} else {
 					throw errorResponse(405, 'Method not allowed');
 				}
-			} else if (subResource === 'transactions') {
-				if (!subId) {
+				} else if (subResource === 'market-data') {
+					if (subId === 'refresh') {
+						body = await handleMarketDataRefresh(httpMethod, id, requestBody);
+					} else {
+						throw errorResponse(404, 'Market data route not found');
+					}
+				} else if (subResource === 'price-history') {
+					body = await handlePriceHistory(
+						httpMethod,
+						id,
+						userId,
+						requestBody,
+						queryStringParameters || {}
+					);
+				} else if (subResource === 'transactions') {
+					if (!subId) {
 					body = await handleTransactions(
 						httpMethod,
 						id,
@@ -893,11 +990,17 @@ exports.handler = async (event) => {
 				);
 			}
 		} else if (resourceBase === 'parsers') {
-			if (method === 'GET') {
+			if (httpMethod === 'GET') {
 				const { listParsers } = require('../parsers/index');
 				body = listParsers();
 			} else {
 				throw errorResponse(405, 'Method not allowed');
+			}
+		} else if (resourceBase === 'health') {
+			if (id === 'scrapers') {
+				body = await handleScraperHealth(httpMethod);
+			} else {
+				throw errorResponse(404, 'Health route not found');
 			}
 		} else if (resourceBase === 'settings') {
 			ensureAppAccess(appRole, 'EDITOR');
@@ -952,4 +1055,6 @@ exports._test = {
 	hasAppAccess,
 	resolveAppRole,
 	parseGroups,
+	marketDataService,
+	priceHistoryService,
 };

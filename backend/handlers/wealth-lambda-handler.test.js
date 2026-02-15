@@ -15,6 +15,8 @@ const {
 		hasAppAccess,
 		resolveAppRole,
 		parseGroups,
+		marketDataService,
+		priceHistoryService,
 	},
 } = require('./wealth-lambda-handler');
 
@@ -166,11 +168,12 @@ test('resolveAppRole defaults to ADMIN for v1', () => {
 
 // --- Integration tests for handler ---
 
-const makeEvent = (method, path, body = null, claims = null) => ({
+const makeEvent = (method, path, body = null, claims = null, queryStringParameters = null) => ({
 	httpMethod: method,
 	path,
 	headers: { origin: 'http://localhost:5173' },
 	body: body ? JSON.stringify(body) : null,
+	queryStringParameters,
 	requestContext: {
 		authorizer: {
 			claims: claims || {
@@ -278,4 +281,127 @@ test('handler skips stage prefix in path', async () => {
 	assert.equal(response.statusCode, 404);
 	const body = JSON.parse(response.body);
 	assert.match(body.error, /Settings route not found/);
+});
+
+test('handler POST /portfolios/{id}/market-data/refresh delegates to market data service', async () => {
+	const original = marketDataService.refreshPortfolioAssets;
+	marketDataService.refreshPortfolioAssets = async (portfolioId, options) => ({
+		portfolioId,
+		processed: 1,
+		updated: 1,
+		failed: 0,
+		options,
+	});
+
+	try {
+		const response = await handler(
+			makeEvent('POST', '/portfolios/test-portfolio/market-data/refresh', {
+				assetId: 'asset-123',
+			})
+		);
+		assert.equal(response.statusCode, 200);
+		const body = JSON.parse(response.body);
+		assert.equal(body.portfolioId, 'test-portfolio');
+		assert.equal(body.options.assetId, 'asset-123');
+	} finally {
+		marketDataService.refreshPortfolioAssets = original;
+	}
+});
+
+test('handler GET /health/scrapers delegates to market data service', async () => {
+	const original = marketDataService.runScraperHealthCheck;
+	marketDataService.runScraperHealthCheck = async () => ({
+		status: 'ok',
+		scrapers: [],
+	});
+
+	try {
+		const response = await handler(makeEvent('GET', '/health/scrapers'));
+		assert.equal(response.statusCode, 200);
+		const body = JSON.parse(response.body);
+		assert.equal(body.status, 'ok');
+		assert.deepEqual(body.scrapers, []);
+	} finally {
+		marketDataService.runScraperHealthCheck = original;
+	}
+});
+
+test('handler POST /portfolios/{id}/price-history delegates refresh to price history service', async () => {
+	const original = priceHistoryService.fetchPortfolioPriceHistory;
+	priceHistoryService.fetchPortfolioPriceHistory = async (portfolioId, options) => ({
+		portfolioId,
+		options,
+		processed: 1,
+		updated: 1,
+		failed: 0,
+	});
+
+	try {
+		const response = await handler(
+			makeEvent('POST', '/portfolios/test-portfolio/price-history', {
+				assetId: 'asset-abc',
+			})
+		);
+		assert.equal(response.statusCode, 200);
+		const body = JSON.parse(response.body);
+		assert.equal(body.portfolioId, 'test-portfolio');
+		assert.equal(body.options.assetId, 'asset-abc');
+	} finally {
+		priceHistoryService.fetchPortfolioPriceHistory = original;
+	}
+});
+
+test('handler GET /portfolios/{id}/price-history?action=metrics delegates portfolio metrics', async () => {
+	const original = priceHistoryService.getPortfolioMetrics;
+	priceHistoryService.getPortfolioMetrics = async (userId, options) => ({
+		userId,
+		portfolioId: options.portfolioId,
+		assets: [],
+		consolidated: { total_cost: 0, total_market_value: 0 },
+	});
+
+	try {
+		const response = await handler(
+			makeEvent(
+				'GET',
+				'/portfolios/test-portfolio/price-history',
+				null,
+				null,
+				{ action: 'metrics' }
+			)
+		);
+		assert.equal(response.statusCode, 200);
+		const body = JSON.parse(response.body);
+		assert.equal(body.portfolioId, 'test-portfolio');
+	} finally {
+		priceHistoryService.getPortfolioMetrics = original;
+	}
+});
+
+test('handler GET /portfolios/{id}/price-history?action=priceAtDate delegates date price lookup', async () => {
+	const original = priceHistoryService.getPriceAtDate;
+	priceHistoryService.getPriceAtDate = async (ticker, date, options) => ({
+		ticker,
+		requested_date: date,
+		portfolioId: options.portfolioId,
+		close: 10,
+	});
+
+	try {
+		const response = await handler(
+			makeEvent(
+				'GET',
+				'/portfolios/test-portfolio/price-history',
+				null,
+				null,
+				{ action: 'priceAtDate', ticker: 'AAPL', date: '2025-01-01' }
+			)
+		);
+		assert.equal(response.statusCode, 200);
+		const body = JSON.parse(response.body);
+		assert.equal(body.ticker, 'AAPL');
+		assert.equal(body.requested_date, '2025-01-01');
+	} finally {
+		priceHistoryService.getPriceAtDate = original;
+	}
 });

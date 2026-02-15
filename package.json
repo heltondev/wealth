@@ -24,7 +24,7 @@
     "import:b3": "node backend/scripts/import-b3.js",
     "import:b3:dry": "node backend/scripts/import-b3.js --dry-run",
     "test": "npm run test:backend",
-    "test:backend": "node --test backend/**/*.test.js",
+    "test:backend": "node --test $(find backend -type f -name '*.test.js')",
     "lint": "npm --prefix frontend run lint",
     "ci:check": "npm --prefix frontend run lint && npm --prefix frontend run build && npm run test:backend"
   },
