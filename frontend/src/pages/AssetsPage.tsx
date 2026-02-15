@@ -54,6 +54,7 @@ const DECIMAL_FACTOR = 10 ** DECIMAL_PRECISION;
 const DEFAULT_ITEMS_PER_PAGE = 10;
 const HISTORY_CHART_WIDTH = 860;
 const HISTORY_CHART_HEIGHT = 220;
+const PERCENT_DISPLAY_PRECISION = 2;
 
 const toPageSizeOptions = (options: { value: string }[]): number[] => {
   const values = new Set<number>();
@@ -427,6 +428,49 @@ const AssetsPage = () => {
     })}%`
   ), [numberLocale]);
 
+  const formatSignedPercent = useCallback((ratio: number) => {
+    const absolute = Math.abs(ratio * 100).toLocaleString(numberLocale, {
+      minimumFractionDigits: PERCENT_DISPLAY_PRECISION,
+      maximumFractionDigits: PERCENT_DISPLAY_PRECISION,
+    });
+    if (Math.abs(ratio) <= Number.EPSILON) return `${absolute}%`;
+    return `${ratio > 0 ? '+' : '-'}${absolute}%`;
+  }, [numberLocale]);
+
+  const resolveAssetCurrentPrice = useCallback((asset: AssetRow): number | null => {
+    const quantity = Number(asset.quantity);
+    const hasOpenPosition = Number.isFinite(quantity) && Math.abs(quantity) > Number.EPSILON;
+    const cachedCurrentPrice = currentQuotesByAssetId[asset.assetId];
+    const directCurrentPrice = Number(asset.currentPrice);
+
+    if (
+      typeof cachedCurrentPrice === 'number'
+      && Number.isFinite(cachedCurrentPrice)
+      && (!hasOpenPosition || Math.abs(cachedCurrentPrice) > Number.EPSILON)
+    ) {
+      return cachedCurrentPrice;
+    }
+
+    if (
+      Number.isFinite(directCurrentPrice)
+      && (!hasOpenPosition || Math.abs(directCurrentPrice) > Number.EPSILON)
+    ) {
+      return directCurrentPrice;
+    }
+
+    const directCurrentValue = Number(asset.currentValue);
+    if (
+      Number.isFinite(directCurrentValue)
+      && Number.isFinite(quantity)
+      && Math.abs(quantity) > Number.EPSILON
+      && (!hasOpenPosition || Math.abs(directCurrentValue) > Number.EPSILON)
+    ) {
+      return directCurrentValue / quantity;
+    }
+
+    return null;
+  }, [currentQuotesByAssetId]);
+
   const resolveAssetCurrentValue = useCallback((asset: AssetRow): number | null => {
     const metricCurrentValue = portfolioMarketValueByAssetId[asset.assetId];
     if (typeof metricCurrentValue === 'number' && Number.isFinite(metricCurrentValue)) {
@@ -484,6 +528,37 @@ const AssetsPage = () => {
     return values;
   }, [assetRows, resolveAssetCurrentValue]);
 
+  const priceVariationByAssetId = useMemo(() => {
+    const variations: Record<string, { ratio: number | null; trend: 'positive' | 'negative' | 'neutral' | 'unknown' }> = {};
+
+    for (const row of assetRows) {
+      const averageCost = resolveAssetAverageCost(row);
+      const currentPrice = resolveAssetCurrentPrice(row);
+
+      if (
+        averageCost === null
+        || currentPrice === null
+        || !Number.isFinite(averageCost)
+        || !Number.isFinite(currentPrice)
+        || Math.abs(averageCost) <= Number.EPSILON
+      ) {
+        variations[row.assetId] = { ratio: null, trend: 'unknown' };
+        continue;
+      }
+
+      const ratio = (currentPrice - averageCost) / Math.abs(averageCost);
+      const trend = Math.abs(ratio) <= Number.EPSILON
+        ? 'neutral'
+        : ratio > 0
+          ? 'positive'
+          : 'negative';
+
+      variations[row.assetId] = { ratio, trend };
+    }
+
+    return variations;
+  }, [assetRows, resolveAssetAverageCost, resolveAssetCurrentPrice]);
+
   const portfolioCurrentTotal = useMemo<number>(() => (
     Object.values(currentValueByAssetId).reduce<number>((sum, value) => (
       typeof value === 'number' && Number.isFinite(value) ? sum + value : sum
@@ -504,7 +579,14 @@ const AssetsPage = () => {
       sortable: true,
       sortValue: (asset) => asset.ticker,
       cellClassName: 'assets-page__cell--ticker',
-      render: (asset) => asset.ticker,
+      render: (asset) => {
+        const trend = priceVariationByAssetId[asset.assetId]?.trend || 'unknown';
+        return (
+          <span className={`assets-page__ticker assets-page__ticker--${trend}`}>
+            {asset.ticker}
+          </span>
+        );
+      },
     },
     {
       key: 'name',
@@ -536,6 +618,23 @@ const AssetsPage = () => {
         const averageCost = resolveAssetAverageCost(asset);
         if (averageCost === null) return t('assets.modal.noValue');
         return formatCurrency(averageCost, asset.currency || 'BRL', numberLocale);
+      },
+    },
+    {
+      key: 'priceVsAveragePct',
+      label: t('assets.modal.priceHistory.changePct', { defaultValue: 'Change %' }),
+      sortable: true,
+      sortValue: (asset) => priceVariationByAssetId[asset.assetId]?.ratio ?? Number.NEGATIVE_INFINITY,
+      cellClassName: 'assets-page__cell--numeric',
+      render: (asset) => {
+        const variation = priceVariationByAssetId[asset.assetId];
+        if (!variation || variation.ratio === null) return t('assets.modal.noValue');
+
+        return (
+          <span className={`assets-page__delta assets-page__delta--${variation.trend}`}>
+            {formatSignedPercent(variation.ratio)}
+          </span>
+        );
       },
     },
     {

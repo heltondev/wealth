@@ -44,7 +44,27 @@
   
   &__cell--ticker {
     font-weight: 600;
-    color: var(--primary-light);
+  }
+
+  &__ticker {
+    font-weight: 700;
+    letter-spacing: 0.2px;
+
+    &--positive {
+      color: #86efac;
+    }
+
+    &--negative {
+      color: #fca5a5;
+    }
+
+    &--neutral {
+      color: #cbd5e1;
+    }
+
+    &--unknown {
+      color: var(--primary-light);
+    }
   }
 
   &__cell--name {
@@ -59,6 +79,27 @@
   &__cell--weight {
     color: #bfdbfe;
     font-weight: 600;
+  }
+
+  &__delta {
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+
+    &--positive {
+      color: #86efac;
+    }
+
+    &--negative {
+      color: #fca5a5;
+    }
+
+    &--neutral {
+      color: #cbd5e1;
+    }
+
+    &--unknown {
+      color: var(--text-secondary);
+    }
   }
 
   &__name-ellipsis {
