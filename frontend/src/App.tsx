@@ -8,6 +8,7 @@ const DashboardPage = lazy(() => import('./pages/DashboardPage'));
 const AssetsPage = lazy(() => import('./pages/AssetsPage'));
 const AssetDetailsPage = lazy(() => import('./pages/AssetDetailsPage'));
 const TransactionsPage = lazy(() => import('./pages/TransactionsPage'));
+const DividendsPage = lazy(() => import('./pages/DividendsPage'));
 const DocumentsPage = lazy(() => import('./pages/DocumentsPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 
@@ -61,6 +62,16 @@ function App() {
             <Suspense fallback={routeFallback}>
               <ProtectedRoute allowedRoles={ALL_ROLES}>
                 <TransactionsPage />
+              </ProtectedRoute>
+            </Suspense>
+          }
+        />
+        <Route
+          path="/dividends"
+          element={
+            <Suspense fallback={routeFallback}>
+              <ProtectedRoute allowedRoles={ALL_ROLES}>
+                <DividendsPage />
               </ProtectedRoute>
             </Suspense>
           }

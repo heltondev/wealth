@@ -215,6 +215,7 @@ async function run() {
 	const collectedTransactions = [];
 	const allAliases = new Map(); // normalizedName → alias data
 	let hasDetailedNegotiationTrades = false;
+	let hasDetailedIncomeEvents = false;
 
 	// Track position snapshots per parser type to pick only the most recent
 	// Each entry: { file, assets: Map<ticker, asset> }
@@ -253,6 +254,13 @@ async function run() {
 		// that already exists in detailed negotiation files ("b3-negociacao").
 		for (const transaction of (parsed.transactions || [])) {
 			if (parser.id === 'b3-negociacao') hasDetailedNegotiationTrades = true;
+			const normalizedType = String(transaction.type || '').toLowerCase();
+			if (
+				parser.id === 'b3-movimentacao'
+				&& ['dividend', 'jcp', 'reimbursement'].includes(normalizedType)
+			) {
+				hasDetailedIncomeEvents = true;
+			}
 			collectedTransactions.push({
 				...transaction,
 				__parserId: parser.id,
@@ -286,10 +294,15 @@ async function run() {
 
 	const allTransactions = collectedTransactions
 		.filter((transaction) => {
-			if (!hasDetailedNegotiationTrades) return true;
 			if (transaction.__parserId !== 'b3-relatorio') return true;
 			const type = String(transaction.type || '').toLowerCase();
-			return type !== 'buy' && type !== 'sell' && type !== 'subscription';
+			if (hasDetailedNegotiationTrades && ['buy', 'sell', 'subscription'].includes(type)) {
+				return false;
+			}
+			if (hasDetailedIncomeEvents && ['dividend', 'jcp', 'reimbursement'].includes(type)) {
+				return false;
+			}
+			return true;
 		})
 		.map(({ __parserId, ...transaction }) => transaction);
 

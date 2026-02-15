@@ -106,6 +106,42 @@ export const DEFAULT_DROPDOWN_CONFIG: DropdownConfigMap = {
       { value: 'MAX', label: 'MAX' },
     ],
   },
+  'dividends.filters.periodMonths': {
+    label: 'Dividends / Analysis Period',
+    options: [
+      { value: '6', label: '6M' },
+      { value: '12', label: '12M' },
+      { value: '24', label: '24M' },
+      { value: '36', label: '36M' },
+    ],
+  },
+  'dividends.filters.method': {
+    label: 'Dividends / Cost Method',
+    options: [
+      { value: 'fifo', label: 'FIFO' },
+      { value: 'weighted_average', label: 'Weighted Avg' },
+    ],
+  },
+  'dividends.calendar.lookaheadDays': {
+    label: 'Dividends / Calendar Lookahead',
+    options: [
+      { value: '30', label: '30D' },
+      { value: '60', label: '60D' },
+      { value: '90', label: '90D' },
+      { value: '180', label: '180D' },
+      { value: '365', label: '1Y' },
+    ],
+  },
+  'dividends.alerts.lookaheadDays': {
+    label: 'Dividends / Alert Lookahead',
+    options: [
+      { value: '7', label: '7D' },
+      { value: '15', label: '15D' },
+      { value: '30', label: '30D' },
+      { value: '60', label: '60D' },
+      { value: '90', label: '90D' },
+    ],
+  },
 };
 
 export function sanitizeDropdownOptions(options: DropdownOption[]): DropdownOption[] {

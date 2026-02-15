@@ -557,64 +557,161 @@ class PlatformService {
 
 	async getDividendAnalytics(userId, options = {}) {
 		const portfolioId = await this.#resolvePortfolioId(userId, options.portfolioId);
+		const assets = await this.#listPortfolioAssets(portfolioId);
+		const activeAssets = assets.filter((asset) =>
+			String(asset.status || 'active').toLowerCase() === 'active'
+		);
+		const activeAssetIds = new Set(activeAssets.map((asset) => asset.assetId));
+		const activeAssetById = new Map(activeAssets.map((asset) => [asset.assetId, asset]));
+		const activeAssetByTicker = new Map(
+			activeAssets.map((asset) => [String(asset.ticker || '').toUpperCase(), asset])
+		);
+		const fxRates = await this.#getLatestFxMap();
 		const transactions = await this.#listPortfolioTransactions(portfolioId);
 		const metrics = await this.priceHistoryService.getPortfolioMetrics(userId, {
 			portfolioId,
 			method: options.method || 'fifo',
+			includeBenchmarkComparison: false,
 		});
 
-		const fromDate = options.fromDate ? normalizeDate(options.fromDate) : addDays(nowIso().slice(0, 10), -365);
-		const dividends = transactions.filter((tx) => {
+		const today = nowIso().slice(0, 10);
+		const normalizedFromDate = normalizeDate(options.fromDate);
+		const requestedPeriodMonths = Math.min(
+			Math.max(Math.round(numeric(options.periodMonths, 12)), 1),
+			120
+		);
+		const periodStartDate = (() => {
+			const baseDate = new Date(`${today}T00:00:00Z`);
+			if (Number.isNaN(baseDate.getTime())) return normalizedFromDate || addDays(today, -365);
+
+			if (normalizedFromDate) {
+				const from = new Date(`${normalizedFromDate}T00:00:00Z`);
+				if (!Number.isNaN(from.getTime())) {
+					from.setUTCDate(1);
+					return from.toISOString().slice(0, 10);
+				}
+			}
+
+			baseDate.setUTCDate(1);
+			baseDate.setUTCMonth(baseDate.getUTCMonth() - requestedPeriodMonths + 1);
+			return baseDate.toISOString().slice(0, 10);
+		})();
+		const dividendTransactions = transactions.filter((tx) => {
 			const txType = String(tx.type || '').toLowerCase();
 			const txDate = normalizeDate(tx.date);
-			return ['dividend', 'jcp'].includes(txType) && txDate && txDate >= fromDate;
+			return ['dividend', 'jcp'].includes(txType)
+				&& txDate
+				&& txDate >= periodStartDate
+				&& txDate <= today;
 		});
 
 		const monthly = {};
-		for (const tx of dividends) {
+		for (const tx of dividendTransactions) {
 			const key = monthKey(tx.date);
 			if (!key) continue;
-			monthly[key] = (monthly[key] || 0) + numeric(tx.amount, 0);
+			const asset =
+				activeAssetById.get(tx.assetId)
+				|| activeAssetByTicker.get(String(tx.ticker || '').toUpperCase())
+				|| {};
+			const currency = String(tx.currency || asset.currency || 'BRL').toUpperCase();
+			const fxRate = currency === 'BRL' ? 1 : numeric(fxRates[`${currency}/BRL`], 0);
+			const amount = numeric(tx.amount, 0);
+			const amountBrl = fxRate > 0 ? amount * fxRate : amount;
+			monthly[key] = (monthly[key] || 0) + amountBrl;
 		}
 
-		const monthlySeries = Object.entries(monthly)
-			.sort(([left], [right]) => left.localeCompare(right))
-			.map(([period, amount]) => ({ period, amount }));
-
-		const last12Months = monthlySeries.slice(-12);
-		const totalLast12 = last12Months.reduce((sum, item) => sum + item.amount, 0);
-		const projectedAnnual = totalLast12;
-		const projectedMonthly = projectedAnnual / 12;
-		const costTotal = numeric(metrics.consolidated.total_cost, 0);
-		const realizedYield = costTotal > 0 ? (totalLast12 / costTotal) * 100 : 0;
-
-		const assets = await this.#listPortfolioAssets(portfolioId);
-		const calendars = [];
-		for (const asset of assets) {
-			const events = await this.#queryAll({
-				TableName: this.tableName,
-				KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
-				ExpressionAttributeValues: {
-					':pk': `ASSET_EVENT#${asset.ticker}`,
-					':sk': 'DATE#',
-				},
-			});
-			for (const event of events) {
-				const lowerType = String(event.eventType || '').toLowerCase();
-				if (lowerType.includes('dividend') || lowerType.includes('provento') || lowerType.includes('jcp')) {
-					calendars.push(event);
-				}
+		const monthsInPeriod = (() => {
+			const start = new Date(`${periodStartDate.slice(0, 7)}-01T00:00:00Z`);
+			const end = new Date(`${today.slice(0, 7)}-01T00:00:00Z`);
+			if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) return [];
+			const range = [];
+			const cursor = new Date(start.getTime());
+			while (cursor <= end) {
+				const year = cursor.getUTCFullYear();
+				const month = String(cursor.getUTCMonth() + 1).padStart(2, '0');
+				range.push(`${year}-${month}`);
+				cursor.setUTCMonth(cursor.getUTCMonth() + 1);
 			}
+			return range;
+		})();
+
+		const monthlySeries = monthsInPeriod.map((period) => ({
+			period,
+			amount: numeric(monthly[period], 0),
+		}));
+		const totalInPeriod = monthlySeries.reduce((sum, item) => sum + numeric(item.amount, 0), 0);
+		const totalLast12 = monthlySeries
+			.slice(-12)
+			.reduce((sum, item) => sum + numeric(item.amount, 0), 0);
+		const averageMonthly = monthlySeries.length > 0 ? totalInPeriod / monthlySeries.length : 0;
+		const projectedMonthly = averageMonthly;
+		const projectedAnnual = averageMonthly * 12;
+		const activeMetrics = metrics.assets.filter((metric) => activeAssetIds.has(metric.assetId));
+		let costTotalBrl = 0;
+		let currentValueBrl = 0;
+		for (const metric of activeMetrics) {
+			const asset = activeAssetById.get(metric.assetId) || {};
+			const currency = String(metric.currency || asset.currency || 'BRL').toUpperCase();
+			const fxRate = currency === 'BRL' ? 1 : numeric(fxRates[`${currency}/BRL`], 0);
+			const metricMarketValue = toNumberOrNull(metric.market_value);
+			const metricCostTotal = toNumberOrNull(metric.cost_total);
+			const metricQuantity = toNumberOrNull(metric.quantity_current);
+			const metricCurrentPrice = toNumberOrNull(metric.current_price);
+			const snapshotCurrentValue = toNumberOrNull(asset.currentValue);
+			const snapshotCurrentPrice = toNumberOrNull(asset.currentPrice);
+			const fallbackPrice = metricCurrentPrice ?? snapshotCurrentPrice;
+			const derivedMarketValue =
+				(fallbackPrice !== null && metricQuantity !== null)
+					? fallbackPrice * metricQuantity
+					: null;
+			const marketValue = metricMarketValue ?? snapshotCurrentValue ?? derivedMarketValue ?? 0;
+			const costTotal = metricCostTotal ?? 0;
+			currentValueBrl += fxRate > 0 ? marketValue * fxRate : marketValue;
+			costTotalBrl += fxRate > 0 ? costTotal * fxRate : costTotal;
 		}
+		const realizedYield = costTotalBrl > 0 ? (totalInPeriod / costTotalBrl) * 100 : 0;
+		const currentDividendYield = currentValueBrl > 0 ? (totalInPeriod / currentValueBrl) * 100 : 0;
+
+		const calendarByTicker = await Promise.all(
+			activeAssets.map(async (asset) => {
+				const events = await this.#queryAll({
+					TableName: this.tableName,
+					KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
+					ExpressionAttributeValues: {
+						':pk': `ASSET_EVENT#${asset.ticker}`,
+						':sk': 'DATE#',
+					},
+				});
+				return events
+					.filter((event) => this.#isDividendEventType(event.eventType))
+					.map((event) => ({
+						...event,
+						eventDate: normalizeDate(event.eventDate || event.date) || normalizeDate(event.fetched_at) || null,
+					}));
+			})
+		);
+		const calendars = calendarByTicker
+			.flat()
+			.filter((event) => event.eventDate)
+			.sort((left, right) => String(left.eventDate || '').localeCompare(String(right.eventDate || '')));
+		const upcoming = calendars.filter((event) => String(event.eventDate || '') >= today);
 
 		return {
 			portfolioId,
 			monthly_dividends: monthlySeries,
 			total_last_12_months: totalLast12,
+			total_in_period: totalInPeriod,
+			average_monthly_income: averageMonthly,
+			annualized_income: projectedAnnual,
+			period_months: monthlySeries.length,
+			period_from: periodStartDate,
+			period_to: today,
 			projected_monthly_income: projectedMonthly,
 			projected_annual_income: projectedAnnual,
 			yield_on_cost_realized: realizedYield,
+			dividend_yield_current: currentDividendYield,
 			calendar: calendars,
+			calendar_upcoming: upcoming,
 			fetched_at: nowIso(),
 		};
 	}
@@ -1050,9 +1147,48 @@ class PlatformService {
 	async evaluateAlerts(userId, portfolioId, options = {}) {
 		const rulesResult = await this.getAlerts(userId, { limit: 0 });
 		const rules = rulesResult.rules.filter((rule) => rule.enabled !== false);
-		const dashboard = await this.getDashboard(userId, { portfolioId: portfolioId || options.portfolioId });
-		const risk = await this.getPortfolioRisk(userId, { portfolioId: portfolioId || options.portfolioId });
+		const hasConcentrationRule = rules.some((rule) => String(rule.type || '').toLowerCase() === 'concentration');
+		const hasRebalanceRule = rules.some((rule) => String(rule.type || '').toLowerCase() === 'rebalance_drift');
+		const [dashboard, risk] = await Promise.all([
+			hasRebalanceRule ? this.getDashboard(userId, { portfolioId: portfolioId || options.portfolioId }) : null,
+			hasConcentrationRule ? this.getPortfolioRisk(userId, { portfolioId: portfolioId || options.portfolioId }) : null,
+		]);
 		const triggered = [];
+		const existingDedupe = new Set(
+			rulesResult.events
+				.map((event) => `${event.ruleId || ''}::${event.dedupeKey || ''}`)
+				.filter((entry) => !entry.endsWith('::'))
+		);
+		const eventCacheByTicker = new Map();
+
+		const createAlertEvent = async (rule, type, message, dedupeKey = null, metadata = null) => {
+			if (dedupeKey) {
+				const dedupeRef = `${rule.ruleId || ''}::${dedupeKey}`;
+				if (existingDedupe.has(dedupeRef)) return null;
+				existingDedupe.add(dedupeRef);
+			}
+
+			const eventId = `alert-event-${hashId(`${rule.ruleId}:${nowIso()}:${Math.random()}`)}`;
+			const item = {
+				PK: `USER#${userId}`,
+				SK: `ALERT_EVENT#${nowIso()}#${eventId}`,
+				entityType: 'ALERT_EVENT',
+				eventId,
+				ruleId: rule.ruleId,
+				type,
+				message,
+				dedupeKey: dedupeKey || null,
+				metadata: metadata || null,
+				eventAt: nowIso(),
+				read: false,
+				data_source: 'internal_calc',
+				fetched_at: nowIso(),
+				is_scraped: false,
+			};
+			await this.dynamo.send(new PutCommand({ TableName: this.tableName, Item: item }));
+			triggered.push(item);
+			return item;
+		};
 
 		for (const rule of rules) {
 			try {
@@ -1062,7 +1198,7 @@ class PlatformService {
 
 				if (type === 'concentration') {
 					const threshold = numeric(rule.params?.thresholdPct, 15);
-					const top = risk.concentration.find((item) => item.weight_pct > threshold);
+					const top = (risk?.concentration || []).find((item) => item.weight_pct > threshold);
 					if (top) {
 						shouldTrigger = true;
 						message = `Concentration alert: ${top.ticker} at ${top.weight_pct.toFixed(2)}%`;
@@ -1088,7 +1224,7 @@ class PlatformService {
 
 				if (type === 'rebalance_drift') {
 					const threshold = numeric(rule.params?.thresholdPct, 5);
-					const worst = dashboard.allocation_by_class
+					const worst = (dashboard?.allocation_by_class || [])
 						.map((item) => ({ ...item, drift_pct: Math.abs(numeric(item.weight_pct, 0) - numeric(rule.params?.targetByClass?.[item.key], 0)) }))
 						.sort((left, right) => right.drift_pct - left.drift_pct)[0];
 					if (worst && worst.drift_pct > threshold) {
@@ -1097,24 +1233,66 @@ class PlatformService {
 					}
 				}
 
+				if (type === 'dividend_announcement') {
+					const resolvedPortfolioId = String(rule.portfolioId || portfolioId || options.portfolioId || '');
+					const tickerFilter = String(rule.params?.ticker || '').trim().toUpperCase();
+					const lookaheadDays = Math.min(Math.max(Math.round(numeric(rule.params?.lookaheadDays, 30)), 1), 365);
+					const today = nowIso().slice(0, 10);
+					const untilDate = addDays(today, lookaheadDays);
+
+					if (resolvedPortfolioId) {
+						const assets = await this.#listPortfolioAssets(resolvedPortfolioId);
+						const activeAssets = assets.filter((asset) =>
+							String(asset.status || 'active').toLowerCase() === 'active'
+						);
+						const trackedAssets = tickerFilter
+							? activeAssets.filter((asset) => String(asset.ticker || '').toUpperCase() === tickerFilter)
+							: activeAssets;
+
+						for (const asset of trackedAssets) {
+							const ticker = String(asset.ticker || '').toUpperCase();
+							if (!ticker) continue;
+
+							if (!eventCacheByTicker.has(ticker)) {
+								const rows = await this.#queryAll({
+									TableName: this.tableName,
+									KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
+									ExpressionAttributeValues: {
+										':pk': `ASSET_EVENT#${ticker}`,
+										':sk': 'DATE#',
+									},
+								});
+								eventCacheByTicker.set(ticker, rows);
+							}
+
+							const rows = eventCacheByTicker.get(ticker) || [];
+							for (const event of rows) {
+								if (!this.#isDividendEventType(event.eventType)) continue;
+								const eventDate = normalizeDate(event.eventDate || event.date);
+								if (!eventDate) continue;
+								if (eventDate < today || eventDate > untilDate) continue;
+								const eventType = String(event.eventType || 'dividend');
+								const dedupeKey = `dividend_announcement:${ticker}:${eventDate}:${eventType.toLowerCase()}`;
+								const eventMessage = `Dividend announcement: ${ticker} ${eventType} on ${eventDate}`;
+								await createAlertEvent(
+									rule,
+									type,
+									eventMessage,
+									dedupeKey,
+									{
+										ticker,
+										eventDate,
+										eventType,
+										eventTitle: event.eventTitle || null,
+									}
+								);
+							}
+						}
+					}
+				}
+
 				if (shouldTrigger) {
-					const eventId = `alert-event-${hashId(`${rule.ruleId}:${nowIso()}:${Math.random()}`)}`;
-					const item = {
-						PK: `USER#${userId}`,
-						SK: `ALERT_EVENT#${nowIso()}#${eventId}`,
-						entityType: 'ALERT_EVENT',
-						eventId,
-						ruleId: rule.ruleId,
-						type,
-						message,
-						eventAt: nowIso(),
-						read: false,
-						data_source: 'internal_calc',
-						fetched_at: nowIso(),
-						is_scraped: false,
-					};
-					await this.dynamo.send(new PutCommand({ TableName: this.tableName, Item: item }));
-					triggered.push(item);
+					await createAlertEvent(rule, type, message);
 				}
 			} catch (error) {
 				this.logger.error(
@@ -2008,6 +2186,15 @@ class PlatformService {
 			}
 		}
 		return events;
+	}
+
+	#isDividendEventType(value) {
+		const type = String(value || '').toLowerCase();
+		return type.includes('dividend')
+			|| type.includes('provento')
+			|| type.includes('jcp')
+			|| type.includes('juros')
+			|| type.includes('rendimento');
 	}
 
 	async #resolveAssetsForTickerOrPortfolio(ticker, portfolioId) {

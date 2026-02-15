@@ -23,6 +23,7 @@ const Layout = ({ children }: LayoutProps) => {
     { path: '/dashboard', label: t('nav.dashboard'), icon: '📊' },
     { path: '/assets', label: t('nav.assets'), icon: '💰' },
     { path: '/transactions', label: t('nav.transactions'), icon: '🧾' },
+    { path: '/dividends', label: t('nav.dividends'), icon: '💵' },
     { path: '/documents', label: t('nav.documents'), icon: '📄' },
     { path: '/settings', label: t('nav.settings'), icon: '⚙️' },
   ];

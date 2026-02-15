@@ -120,6 +120,50 @@ export interface DashboardResponse {
   fetched_at: string;
 }
 
+export interface DividendMonthlyItem {
+  period: string;
+  amount: number;
+}
+
+export interface DividendCalendarEvent {
+  ticker?: string;
+  eventType?: string;
+  eventTitle?: string;
+  eventDate?: string;
+  details?: unknown;
+  [key: string]: unknown;
+}
+
+export interface DividendsResponse {
+  portfolioId: string;
+  monthly_dividends: DividendMonthlyItem[];
+  total_last_12_months: number;
+  total_in_period?: number;
+  average_monthly_income?: number;
+  annualized_income?: number;
+  period_months?: number;
+  period_from?: string;
+  period_to?: string;
+  projected_monthly_income: number;
+  projected_annual_income: number;
+  yield_on_cost_realized: number;
+  dividend_yield_current?: number;
+  calendar: DividendCalendarEvent[];
+  calendar_upcoming?: DividendCalendarEvent[];
+  fetched_at: string;
+}
+
+export interface AlertEvent {
+  eventId: string;
+  ruleId?: string;
+  type: string;
+  message: string;
+  eventAt: string;
+  read?: boolean;
+  dedupeKey?: string | null;
+  metadata?: Record<string, unknown> | null;
+}
+
 export interface Goal {
   goalId: string;
   type: string;
@@ -235,12 +279,15 @@ export const api = {
     request<DashboardResponse>(
       `/portfolios/${portfolioId}/dashboard?period=${encodeURIComponent(period)}`
     ),
-  getDividends: (portfolioId: string, params?: { fromDate?: string; method?: string }) => {
+  getDividends: (portfolioId: string, params?: { fromDate?: string; method?: string; periodMonths?: number }) => {
     const query = new URLSearchParams();
     if (params?.fromDate) query.set('fromDate', params.fromDate);
     if (params?.method) query.set('method', params.method);
+    if (typeof params?.periodMonths === 'number' && Number.isFinite(params.periodMonths) && params.periodMonths > 0) {
+      query.set('periodMonths', String(Math.round(params.periodMonths)));
+    }
     const suffix = query.toString() ? `?${query.toString()}` : '';
-    return request(`/portfolios/${portfolioId}/dividends${suffix}`);
+    return request<DividendsResponse>(`/portfolios/${portfolioId}/dividends${suffix}`);
   },
   getTaxReport: (portfolioId: string, year: number) =>
     request(`/portfolios/${portfolioId}/tax?year=${encodeURIComponent(String(year))}`),
@@ -313,7 +360,7 @@ export const api = {
     request(`/users/me/goals/${goalId}/progress`),
 
   // Alerts
-  getAlerts: () => request<{ rules: AlertRule[]; events: unknown[] }>('/users/me/alerts'),
+  getAlerts: () => request<{ rules: AlertRule[]; events: AlertEvent[] }>('/users/me/alerts'),
   createAlertRule: (rule: Partial<AlertRule>) =>
     request<AlertRule>('/users/me/alerts', { method: 'POST', body: JSON.stringify(rule) }),
   updateAlertRule: (ruleId: string, rule: Partial<AlertRule>) =>

@@ -919,6 +919,7 @@ async function handleDividends(method, portfolioId, userId, query = {}) {
 		portfolioId,
 		method: query.method || 'fifo',
 		fromDate: query.fromDate || query.from_date || null,
+		periodMonths: query.periodMonths || query.period_months || null,
 	});
 }
 
