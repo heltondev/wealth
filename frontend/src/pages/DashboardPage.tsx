@@ -59,6 +59,13 @@ const resolveTrend = (value: number): Trend => {
   return value > 0 ? 'positive' : 'negative';
 };
 
+const toTitleLabel = (value: string): string => value
+  .replace(/_/g, ' ')
+  .split(' ')
+  .filter(Boolean)
+  .map((token) => token.charAt(0).toUpperCase() + token.slice(1))
+  .join(' ');
+
 const DashboardPage = () => {
   const { t, i18n } = useTranslation();
   const { portfolios, selectedPortfolio, setSelectedPortfolio } = usePortfolioData();
@@ -147,7 +154,7 @@ const DashboardPage = () => {
 
   const sectorAllocation = useMemo(() => normalizeAllocation(
     dashboard?.allocation_by_sector,
-    (key) => key.replace(/_/g, ' ')
+    (key) => toTitleLabel(key)
   ), [dashboard?.allocation_by_sector]);
 
   const evolutionData = useMemo(() => {
