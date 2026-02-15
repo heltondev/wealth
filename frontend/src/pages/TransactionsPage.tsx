@@ -501,8 +501,6 @@ const TransactionsPage = () => {
           subtitle={t('transactions.modal.subtitle')}
           closeLabel={t('transactions.modal.close')}
           sections={transactionDetailsSections}
-          rawTitle={t('transactions.modal.sections.raw')}
-          rawData={selectedTransaction}
           onClose={() => setSelectedTransaction(null)}
         />
       </div>

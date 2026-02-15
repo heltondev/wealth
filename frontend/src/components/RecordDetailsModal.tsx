@@ -21,8 +21,6 @@ interface RecordDetailsModalProps {
   closeLabel: string;
   sections: RecordDetailsSection[];
   extraContent?: React.ReactNode;
-  rawTitle: string;
-  rawData: unknown;
   onClose: () => void;
 }
 
@@ -33,8 +31,6 @@ const RecordDetailsModal = ({
   closeLabel,
   sections,
   extraContent,
-  rawTitle,
-  rawData,
   onClose,
 }: RecordDetailsModalProps) => {
   useEffect(() => {
@@ -90,13 +86,6 @@ const RecordDetailsModal = ({
               {extraContent}
             </section>
           ) : null}
-
-          <section className="record-modal__section record-modal__section--full">
-            <details className="record-modal__raw">
-              <summary>{rawTitle}</summary>
-              <pre>{JSON.stringify(rawData, null, 2)}</pre>
-            </details>
-          </section>
         </div>
       </div>
     </div>

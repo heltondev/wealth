@@ -113,7 +113,31 @@
     font-size: 0.9rem;
   }
 
+  &__history-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: $spacing-sm;
+
+    span {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--glass-border);
+      background: rgba(15, 23, 42, 0.55);
+      color: var(--text-secondary);
+      font-size: 0.75rem;
+      letter-spacing: 0.2px;
+
+      strong {
+        color: var(--text-primary);
+      }
+    }
+  }
+
   &__history-chart {
+    position: relative;
     border: 1px solid var(--glass-border);
     border-radius: 12px;
     background: rgba(2, 6, 23, 0.45);
@@ -126,17 +150,36 @@
     }
   }
 
+  &__history-grid {
+    stroke: rgba(148, 163, 184, 0.2);
+    stroke-width: 1;
+    stroke-dasharray: 4 4;
+  }
+
+  &__history-area {
+    pointer-events: none;
+  }
+
   &__history-line {
     fill: none;
-    stroke: rgba(129, 140, 248, 0.9);
-    stroke-width: 2.5;
+    stroke: rgba(129, 140, 248, 0.95);
+    stroke-width: 2.8;
     stroke-linecap: round;
     stroke-linejoin: round;
+    filter: drop-shadow(0 0 7px rgba(99, 102, 241, 0.35));
   }
 
   &__history-point {
     stroke: rgba(2, 6, 23, 0.95);
     stroke-width: 1.5;
+    cursor: pointer;
+    transition: r $transition-fast, filter $transition-fast;
+
+    &:hover,
+    &:focus {
+      filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.2));
+      outline: none;
+    }
 
     &--buy {
       fill: #22c55e;
@@ -144,6 +187,54 @@
 
     &--sell {
       fill: #ef4444;
+    }
+  }
+
+  &__history-tooltip {
+    position: absolute;
+    min-width: 220px;
+    max-width: 320px;
+    z-index: 2;
+    padding: 10px 12px;
+    border-radius: 12px;
+    border: 1px solid rgba(129, 140, 248, 0.38);
+    background:
+      linear-gradient(160deg, rgba(30, 41, 59, 0.97), rgba(15, 23, 42, 0.95));
+    box-shadow: 0 12px 26px rgba(2, 6, 23, 0.6);
+    backdrop-filter: blur(6px);
+  }
+
+  &__history-tooltip-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: $spacing-sm;
+    margin-bottom: 8px;
+
+    strong {
+      font-size: 0.78rem;
+      color: #e2e8f0;
+    }
+  }
+
+  &__history-tooltip-grid {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 4px 10px;
+    align-items: baseline;
+    font-size: 0.74rem;
+
+    span {
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 0.2px;
+    }
+
+    strong {
+      color: #f8fafc;
+      justify-self: end;
+      text-align: right;
+      font-size: 0.78rem;
     }
   }
 
@@ -163,6 +254,30 @@
 
     span:last-child {
       text-align: right;
+    }
+  }
+
+  &__history-meta {
+    margin-top: 6px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+
+    span {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      padding: 3px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--glass-border);
+      background: rgba(15, 23, 42, 0.38);
+    }
+
+    strong {
+      color: var(--text-primary);
+      font-variant-numeric: tabular-nums;
     }
   }
 

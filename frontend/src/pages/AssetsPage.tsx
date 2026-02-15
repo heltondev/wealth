@@ -31,6 +31,11 @@ type AssetTradeHistoryRow = {
   currency: string;
   source: string | null;
 };
+type AssetTradeHistoryPoint = AssetTradeHistoryRow & {
+  x: number;
+  y: number;
+  index: number;
+};
 
 const COUNTRY_FLAG_MAP: Record<string, string> = {
   BR: '🇧🇷',
@@ -96,6 +101,8 @@ const AssetsPage = () => {
   const [itemsPerPage, setItemsPerPage] = useState(DEFAULT_ITEMS_PER_PAGE);
   const [selectedAsset, setSelectedAsset] = useState<AssetRow | null>(null);
   const [currentQuotesByAssetId, setCurrentQuotesByAssetId] = useState<Record<string, number | null>>({});
+  const [averageCostByAssetId, setAverageCostByAssetId] = useState<Record<string, number | null>>({});
+  const [selectedHistoryPoint, setSelectedHistoryPoint] = useState<AssetTradeHistoryPoint | null>(null);
   const [dropdownConfig, setDropdownConfig] = useState<DropdownConfigMap>(() =>
     normalizeDropdownConfig(DEFAULT_DROPDOWN_CONFIG)
   );
@@ -144,6 +151,8 @@ const AssetsPage = () => {
 
   useEffect(() => {
     setCurrentQuotesByAssetId({});
+    setAverageCostByAssetId({});
+    setSelectedHistoryPoint(null);
   }, [selectedPortfolio]);
 
   const assetClassOptions = useMemo(() => {
@@ -514,6 +523,22 @@ const AssetsPage = () => {
       const directCurrentValue = Number(selectedAsset.currentValue);
       return Number.isFinite(directCurrentValue) ? directCurrentValue : null;
     })();
+    const resolvedAverageCost = (() => {
+      const cachedAverageCost = averageCostByAssetId[selectedAsset.assetId];
+      if (typeof cachedAverageCost === 'number' && Number.isFinite(cachedAverageCost)) {
+        return cachedAverageCost;
+      }
+
+      const quantity = Number(selectedAsset.quantity);
+      const investedAmount = Number(selectedAsset.investedAmount);
+      if (!Number.isFinite(quantity) || !Number.isFinite(investedAmount)) return null;
+      if (Math.abs(quantity) <= Number.EPSILON) return null;
+      return investedAmount / quantity;
+    })();
+    const quoteVsAverage = (() => {
+      if (resolvedCurrentPrice === null || resolvedAverageCost === null) return null;
+      return resolvedCurrentPrice - resolvedAverageCost;
+    })();
     const balanceMinusInvested = (() => {
       if (resolvedCurrentValue === null) return null;
       const investedAmount = Number(selectedAsset.investedAmount);
@@ -542,6 +567,13 @@ const AssetsPage = () => {
             key: 'investedAmount',
             label: t('assets.modal.fields.investedAmount'),
             value: formatCurrency(selectedAsset.investedAmount, selectedAsset.currency || 'BRL', numberLocale),
+          },
+          {
+            key: 'averagePrice',
+            label: t('assets.modal.fields.averagePrice'),
+            value: resolvedAverageCost !== null
+              ? formatCurrency(resolvedAverageCost, selectedAsset.currency || 'BRL', numberLocale)
+              : formatDetailValue(resolvedAverageCost),
           },
           {
             key: 'currentPrice',
@@ -591,6 +623,14 @@ const AssetsPage = () => {
             value: formatDetailValue(selectedAsset.currency),
           },
           {
+            key: 'quoteVsAverage',
+            label: t('assets.modal.fields.quoteVsAverage'),
+            value:
+              quoteVsAverage !== null
+                ? formatSignedCurrency(quoteVsAverage, selectedAsset.currency || 'BRL')
+                : formatDetailValue(quoteVsAverage),
+          },
+          {
             key: 'investedMinusCurrent',
             label: t('assets.modal.fields.investedMinusCurrent'),
             value:
@@ -613,7 +653,11 @@ const AssetsPage = () => {
         ],
       },
     ];
-  }, [currentQuotesByAssetId, formatAssetQuantity, formatCountryDetail, formatDetailValue, formatSignedCurrency, numberLocale, selectedAsset, t]);
+  }, [averageCostByAssetId, currentQuotesByAssetId, formatAssetQuantity, formatCountryDetail, formatDetailValue, formatSignedCurrency, numberLocale, selectedAsset, t]);
+
+  useEffect(() => {
+    setSelectedHistoryPoint(null);
+  }, [selectedAsset?.assetId]);
 
   const assetTradeHistoryRows = useMemo<AssetTradeHistoryRow[]>(() => {
     if (!selectedAsset) return [];
@@ -642,45 +686,76 @@ const AssetsPage = () => {
   }, [selectedAsset, shouldIgnoreConsolidatedTrade, transactions]);
 
   const assetTradeHistoryChart = useMemo(() => {
-    const points = assetTradeHistoryRows.filter((row) => Number.isFinite(row.price));
-    if (!points.length) return null;
+    const rows = assetTradeHistoryRows.filter((row) => Number.isFinite(row.price));
+    if (!rows.length) return null;
 
-    const chartPadding = { top: 14, right: 20, bottom: 24, left: 20 };
+    const chartPadding = { top: 16, right: 20, bottom: 28, left: 20 };
     const chartWidth = HISTORY_CHART_WIDTH - chartPadding.left - chartPadding.right;
     const chartHeight = HISTORY_CHART_HEIGHT - chartPadding.top - chartPadding.bottom;
-    const prices = points.map((point) => point.price);
+    const prices = rows.map((point) => point.price);
     const minPrice = Math.min(...prices);
     const maxPrice = Math.max(...prices);
     const spread = Math.max(maxPrice - minPrice, 1);
     const paddedMin = minPrice - spread * 0.08;
     const paddedMax = maxPrice + spread * 0.08;
+    const yBase = chartPadding.top + chartHeight;
 
     const xFor = (index: number) =>
-      points.length === 1
+      rows.length === 1
         ? chartPadding.left + chartWidth / 2
-        : chartPadding.left + (index / (points.length - 1)) * chartWidth;
+        : chartPadding.left + (index / (rows.length - 1)) * chartWidth;
     const yFor = (price: number) =>
       chartPadding.top + (1 - (price - paddedMin) / (paddedMax - paddedMin)) * chartHeight;
 
+    const points: AssetTradeHistoryPoint[] = rows.map((point, index) => ({
+      ...point,
+      x: xFor(index),
+      y: yFor(point.price),
+      index,
+    }));
+
     const polyline = points
       .map((point, index) => {
-        const x = xFor(index).toFixed(2);
-        const y = yFor(point.price).toFixed(2);
+        const x = point.x.toFixed(2);
+        const y = point.y.toFixed(2);
         return `${index === 0 ? 'M' : 'L'} ${x} ${y}`;
       })
       .join(' ');
+    const areaPath = `${polyline} L ${points[points.length - 1].x.toFixed(2)} ${yBase.toFixed(2)} L ${points[0].x.toFixed(2)} ${yBase.toFixed(2)} Z`;
 
     return {
-      points: points.map((point, index) => ({
-        ...point,
-        x: xFor(index),
-        y: yFor(point.price),
-      })),
+      points,
       polyline,
-      firstDate: points[0].date,
-      lastDate: points[points.length - 1].date,
+      areaPath,
+      firstDate: rows[0].date,
+      lastDate: rows[rows.length - 1].date,
+      firstPrice: rows[0].price,
+      lastPrice: rows[rows.length - 1].price,
+      midPrice: (paddedMin + paddedMax) / 2,
       minPrice: paddedMin,
       maxPrice: paddedMax,
+      padding: chartPadding,
+      yBase,
+    };
+  }, [assetTradeHistoryRows]);
+
+  const assetTradeHistoryStats = useMemo(() => {
+    const buys = assetTradeHistoryRows.filter((row) => row.type === 'buy');
+    const sells = assetTradeHistoryRows.filter((row) => row.type === 'sell');
+
+    const weightedAveragePrice = (rows: AssetTradeHistoryRow[]) => {
+      const totalQuantity = rows.reduce((sum, row) => sum + row.quantity, 0);
+      if (Math.abs(totalQuantity) <= Number.EPSILON) return null;
+      const totalAmount = rows.reduce((sum, row) => sum + (row.price * row.quantity), 0);
+      return totalAmount / totalQuantity;
+    };
+
+    return {
+      trades: assetTradeHistoryRows.length,
+      buys: buys.length,
+      sells: sells.length,
+      avgBuyPrice: weightedAveragePrice(buys),
+      avgSellPrice: weightedAveragePrice(sells),
     };
   }, [assetTradeHistoryRows]);
 
@@ -688,6 +763,17 @@ const AssetsPage = () => {
     if (!selectedAsset) return null;
 
     const chartGradientId = `asset-history-gradient-${selectedAsset.assetId.replace(/[^a-zA-Z0-9_-]/g, '')}`;
+    const tooltipStyle = (() => {
+      if (!selectedHistoryPoint) return null;
+      const isRightSide = selectedHistoryPoint.x > HISTORY_CHART_WIDTH * 0.68;
+      const isNearTop = selectedHistoryPoint.y < HISTORY_CHART_HEIGHT * 0.25;
+
+      return {
+        left: `${(selectedHistoryPoint.x / HISTORY_CHART_WIDTH) * 100}%`,
+        top: `${(selectedHistoryPoint.y / HISTORY_CHART_HEIGHT) * 100}%`,
+        transform: `translate(${isRightSide ? '-100%' : '0'}, ${isNearTop ? '12px' : 'calc(-100% - 12px)'})`,
+      };
+    })();
 
     return (
       <div className="assets-page__history">
@@ -697,24 +783,83 @@ const AssetsPage = () => {
           <p className="assets-page__history-empty">{t('assets.modal.history.empty')}</p>
         ) : (
           <>
+            <div className="assets-page__history-stats">
+              <span>{t('assets.modal.history.totalTrades')}: <strong>{assetTradeHistoryStats.trades}</strong></span>
+              <span>{t('assets.modal.history.buys')}: <strong>{assetTradeHistoryStats.buys}</strong></span>
+              <span>{t('assets.modal.history.sells')}: <strong>{assetTradeHistoryStats.sells}</strong></span>
+              <span>
+                {t('assets.modal.history.avgBuyPrice')}: <strong>
+                  {assetTradeHistoryStats.avgBuyPrice !== null
+                    ? formatCurrency(assetTradeHistoryStats.avgBuyPrice, selectedAsset.currency || 'BRL', numberLocale)
+                    : '-'}
+                </strong>
+              </span>
+              <span>
+                {t('assets.modal.history.avgSellPrice')}: <strong>
+                  {assetTradeHistoryStats.avgSellPrice !== null
+                    ? formatCurrency(assetTradeHistoryStats.avgSellPrice, selectedAsset.currency || 'BRL', numberLocale)
+                    : '-'}
+                </strong>
+              </span>
+            </div>
+
             <div className="assets-page__history-chart">
-              <svg viewBox={`0 0 ${HISTORY_CHART_WIDTH} ${HISTORY_CHART_HEIGHT}`} role="img" aria-label={t('assets.modal.history.chart')}>
+              <svg
+                viewBox={`0 0 ${HISTORY_CHART_WIDTH} ${HISTORY_CHART_HEIGHT}`}
+                role="img"
+                aria-label={t('assets.modal.history.chart')}
+                onClick={() => setSelectedHistoryPoint(null)}
+              >
                 <defs>
                   <linearGradient id={chartGradientId} x1="0%" y1="0%" x2="0%" y2="100%">
-                    <stop offset="0%" stopColor="rgba(99, 102, 241, 0.5)" />
-                    <stop offset="100%" stopColor="rgba(99, 102, 241, 0.06)" />
+                    <stop offset="0%" stopColor="rgba(99, 102, 241, 0.42)" />
+                    <stop offset="100%" stopColor="rgba(99, 102, 241, 0.02)" />
                   </linearGradient>
                 </defs>
                 {assetTradeHistoryChart ? (
                   <>
+                    <line
+                      className="assets-page__history-grid"
+                      x1={assetTradeHistoryChart.padding.left}
+                      x2={HISTORY_CHART_WIDTH - assetTradeHistoryChart.padding.right}
+                      y1={assetTradeHistoryChart.padding.top}
+                      y2={assetTradeHistoryChart.padding.top}
+                    />
+                    <line
+                      className="assets-page__history-grid"
+                      x1={assetTradeHistoryChart.padding.left}
+                      x2={HISTORY_CHART_WIDTH - assetTradeHistoryChart.padding.right}
+                      y1={assetTradeHistoryChart.padding.top + ((assetTradeHistoryChart.yBase - assetTradeHistoryChart.padding.top) / 2)}
+                      y2={assetTradeHistoryChart.padding.top + ((assetTradeHistoryChart.yBase - assetTradeHistoryChart.padding.top) / 2)}
+                    />
+                    <line
+                      className="assets-page__history-grid"
+                      x1={assetTradeHistoryChart.padding.left}
+                      x2={HISTORY_CHART_WIDTH - assetTradeHistoryChart.padding.right}
+                      y1={assetTradeHistoryChart.yBase}
+                      y2={assetTradeHistoryChart.yBase}
+                    />
+                    <path className="assets-page__history-area" d={assetTradeHistoryChart.areaPath} fill={`url(#${chartGradientId})`} />
                     <path className="assets-page__history-line" d={assetTradeHistoryChart.polyline} />
                     {assetTradeHistoryChart.points.map((point) => (
                       <circle
-                        key={`${point.transId}-${point.date}-${point.price}`}
+                        key={`${point.transId}-${point.date}-${point.price}-${point.index}`}
                         className={`assets-page__history-point assets-page__history-point--${point.type}`}
                         cx={point.x}
                         cy={point.y}
-                        r={4}
+                        r={selectedHistoryPoint?.transId === point.transId && selectedHistoryPoint?.index === point.index ? 6 : 4}
+                        role="button"
+                        tabIndex={0}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setSelectedHistoryPoint(point);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            setSelectedHistoryPoint(point);
+                          }
+                        }}
                       >
                         <title>
                           {`${formatDate(point.date, numberLocale)} | ${t(`transactions.types.${point.type}`, { defaultValue: point.type })} | ${formatCurrency(point.price, point.currency, numberLocale)}`}
@@ -724,12 +869,39 @@ const AssetsPage = () => {
                   </>
                 ) : null}
               </svg>
+              {selectedHistoryPoint && tooltipStyle ? (
+                <div className="assets-page__history-tooltip" style={tooltipStyle}>
+                  <div className="assets-page__history-tooltip-header">
+                    <span className={`assets-page__history-type assets-page__history-type--${selectedHistoryPoint.type}`}>
+                      {t(`transactions.types.${selectedHistoryPoint.type}`, { defaultValue: selectedHistoryPoint.type })}
+                    </span>
+                    <strong>{formatDate(selectedHistoryPoint.date, numberLocale)}</strong>
+                  </div>
+                  <div className="assets-page__history-tooltip-grid">
+                    <span>{t('assets.modal.history.quantity')}</span>
+                    <strong>{formatAssetQuantity(selectedHistoryPoint.quantity)}</strong>
+                    <span>{t('assets.modal.history.price')}</span>
+                    <strong>{formatCurrency(selectedHistoryPoint.price, selectedHistoryPoint.currency, numberLocale)}</strong>
+                    <span>{t('assets.modal.history.amount')}</span>
+                    <strong>{formatCurrency(selectedHistoryPoint.amount, selectedHistoryPoint.currency, numberLocale)}</strong>
+                    <span>{t('assets.modal.history.source')}</span>
+                    <strong>{selectedHistoryPoint.source || '-'}</strong>
+                  </div>
+                </div>
+              ) : null}
               {assetTradeHistoryChart ? (
                 <div className="assets-page__history-scale">
                   <span>{formatDate(assetTradeHistoryChart.firstDate, numberLocale)}</span>
                   <span>{formatCurrency(assetTradeHistoryChart.minPrice, selectedAsset.currency || 'BRL', numberLocale)}</span>
                   <span>{formatCurrency(assetTradeHistoryChart.maxPrice, selectedAsset.currency || 'BRL', numberLocale)}</span>
                   <span>{formatDate(assetTradeHistoryChart.lastDate, numberLocale)}</span>
+                </div>
+              ) : null}
+              {assetTradeHistoryChart ? (
+                <div className="assets-page__history-meta">
+                  <span>{t('assets.modal.history.lastPrice')}: <strong>{formatCurrency(assetTradeHistoryChart.lastPrice, selectedAsset.currency || 'BRL', numberLocale)}</strong></span>
+                  <span>{t('assets.modal.history.minPrice')}: <strong>{formatCurrency(assetTradeHistoryChart.minPrice, selectedAsset.currency || 'BRL', numberLocale)}</strong></span>
+                  <span>{t('assets.modal.history.maxPrice')}: <strong>{formatCurrency(assetTradeHistoryChart.maxPrice, selectedAsset.currency || 'BRL', numberLocale)}</strong></span>
                 </div>
               ) : null}
             </div>
@@ -768,7 +940,35 @@ const AssetsPage = () => {
         )}
       </div>
     );
-  }, [assetTradeHistoryChart, assetTradeHistoryRows, formatAssetQuantity, numberLocale, selectedAsset, t]);
+  }, [assetTradeHistoryChart, assetTradeHistoryRows, assetTradeHistoryStats, formatAssetQuantity, numberLocale, selectedAsset, selectedHistoryPoint, t]);
+
+  useEffect(() => {
+    if (!selectedAsset || !selectedPortfolio) return;
+
+    if (Object.prototype.hasOwnProperty.call(averageCostByAssetId, selectedAsset.assetId)) return;
+
+    let cancelled = false;
+    api.getAverageCost(selectedPortfolio, selectedAsset.ticker)
+      .then((payload) => {
+        if (cancelled) return;
+        const averageCost = Number((payload as { average_cost?: unknown }).average_cost);
+        setAverageCostByAssetId((previous) => ({
+          ...previous,
+          [selectedAsset.assetId]: Number.isFinite(averageCost) ? averageCost : null,
+        }));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setAverageCostByAssetId((previous) => ({
+          ...previous,
+          [selectedAsset.assetId]: null,
+        }));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [averageCostByAssetId, selectedAsset, selectedPortfolio]);
 
   useEffect(() => {
     if (!selectedAsset || !selectedPortfolio) return;
@@ -883,8 +1083,6 @@ const AssetsPage = () => {
           closeLabel={t('assets.modal.close')}
           sections={assetDetailsSections}
           extraContent={assetDetailsExtraContent}
-          rawTitle={t('assets.modal.sections.raw')}
-          rawData={selectedAsset}
           onClose={() => setSelectedAsset(null)}
         />
 
