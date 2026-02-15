@@ -45,6 +45,12 @@ const SPLIT_DEDUP_WINDOW_DAYS = Number(
 	process.env.PRICE_HISTORY_SPLIT_DEDUP_WINDOW_DAYS || 14
 );
 
+// Cooldown for failed price history fetches (default: 6 hours).
+const FETCH_COOLDOWN_MS = Number(
+	process.env.PRICE_HISTORY_FETCH_COOLDOWN_MS || 6 * 60 * 60 * 1000
+);
+const fetchCooldownCache = new Map();
+
 const normalizeDate = (value) => {
 	if (!value) return null;
 	const input = String(value).trim();
@@ -418,6 +424,42 @@ class PortfolioPriceHistoryService {
 			});
 	}
 
+	/**
+	 * Returns existing price rows for an asset, attempting a single fetch
+	 * if none exist and the ticker is not in cooldown from a recent failed fetch.
+	 */
+	async #ensurePriceRows(portfolioId, asset) {
+		let rows = await this.#listAssetPriceRows(portfolioId, asset.assetId);
+		if (rows.length) return rows;
+
+		const cooldownKey = `${portfolioId}:${asset.assetId}`;
+		const lastAttempt = fetchCooldownCache.get(cooldownKey);
+		if (lastAttempt && (Date.now() - lastAttempt) < FETCH_COOLDOWN_MS) {
+			return rows;
+		}
+
+		fetchCooldownCache.set(cooldownKey, Date.now());
+		try {
+			await this.fetchPriceHistory(asset.ticker, resolveAssetMarket(asset), {
+				portfolioId,
+				assetId: asset.assetId,
+				assetClass: asset.assetClass,
+				country: asset.country,
+				currency: asset.currency,
+				persist: true,
+				incremental: false,
+			});
+			rows = await this.#listAssetPriceRows(portfolioId, asset.assetId);
+		} catch (err) {
+			this.logger.error?.({
+				event: 'ensure_price_rows_failed',
+				ticker: asset.ticker,
+				error: err?.message || String(err),
+			}) || this.logger.log?.(`ensure_price_rows_failed: ${asset.ticker} ${err?.message}`);
+		}
+		return rows;
+	}
+
 	async fetchPriceHistory(ticker, market, context = {}) {
 		const normalizedTicker = String(ticker || '').toUpperCase();
 		const normalizedMarket = String(market || 'US').toUpperCase();
@@ -601,19 +643,7 @@ class PortfolioPriceHistoryService {
 			options.portfolioId
 		);
 
-		let rows = await this.#listAssetPriceRows(portfolioId, asset.assetId);
-		if (!rows.length) {
-			await this.fetchPriceHistory(asset.ticker, resolveAssetMarket(asset), {
-				portfolioId,
-				assetId: asset.assetId,
-				assetClass: asset.assetClass,
-				country: asset.country,
-				currency: asset.currency,
-				persist: true,
-				incremental: false,
-			});
-			rows = await this.#listAssetPriceRows(portfolioId, asset.assetId);
-		}
+		const rows = await this.#ensurePriceRows(portfolioId, asset);
 
 		const priceRow = findPriceAtOrBeforeDate(rows, targetDate);
 		return {
@@ -633,19 +663,7 @@ class PortfolioPriceHistoryService {
 			userId,
 			options.portfolioId
 		);
-		let priceRows = await this.#listAssetPriceRows(portfolioId, asset.assetId);
-		if (!priceRows.length) {
-			await this.fetchPriceHistory(asset.ticker, resolveAssetMarket(asset), {
-				portfolioId,
-				assetId: asset.assetId,
-				assetClass: asset.assetClass,
-				country: asset.country,
-				currency: asset.currency,
-				persist: true,
-				incremental: false,
-			});
-			priceRows = await this.#listAssetPriceRows(portfolioId, asset.assetId);
-		}
+		const priceRows = await this.#ensurePriceRows(portfolioId, asset);
 
 		const transactions = await this.#listAssetTransactions(
 			portfolioId,
@@ -695,19 +713,7 @@ class PortfolioPriceHistoryService {
 				return normalizeTicker(tx.ticker) === normalizeTicker(asset.ticker);
 			});
 
-			let priceRows = await this.#listAssetPriceRows(portfolioId, asset.assetId);
-			if (!priceRows.length) {
-				await this.fetchPriceHistory(asset.ticker, resolveAssetMarket(asset), {
-					portfolioId,
-					assetId: asset.assetId,
-					assetClass: asset.assetClass,
-					country: asset.country,
-					currency: asset.currency,
-					persist: true,
-					incremental: false,
-				});
-				priceRows = await this.#listAssetPriceRows(portfolioId, asset.assetId);
-				}
+			const priceRows = await this.#ensurePriceRows(portfolioId, asset);
 				const splitEvents = buildSplitEventsFromPriceRows(priceRows);
 				const holdingsResolution = resolveHoldingsWithSplitHeuristic(
 					assetTransactions,
@@ -817,19 +823,7 @@ class PortfolioPriceHistoryService {
 		const normalizedPeriod = String(period || 'MAX').toUpperCase();
 		const market = resolveAssetMarket(asset);
 
-		let priceRows = await this.#listAssetPriceRows(portfolioId, asset.assetId);
-		if (!priceRows.length) {
-			await this.fetchPriceHistory(asset.ticker, market, {
-				portfolioId,
-				assetId: asset.assetId,
-				assetClass: asset.assetClass,
-				country: asset.country,
-				currency: asset.currency,
-				persist: true,
-				incremental: false,
-			});
-			priceRows = await this.#listAssetPriceRows(portfolioId, asset.assetId);
-		}
+		const priceRows = await this.#ensurePriceRows(portfolioId, asset);
 		const transactions = await this.#listAssetTransactions(portfolioId, asset.assetId);
 		const filteredRows = this.#filterRowsByPeriod(priceRows, normalizedPeriod);
 		const enrichedTransactions = enrichTransactionsWithPrices(

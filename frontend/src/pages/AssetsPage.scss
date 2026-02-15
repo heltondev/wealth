@@ -317,6 +317,8 @@
     stroke: rgba(2, 6, 23, 0.95);
     stroke-width: 1.2;
     opacity: 0.95;
+    cursor: pointer;
+    transition: transform $transition-fast, filter $transition-fast;
 
     &--buy {
       fill: #22c55e;
@@ -324,6 +326,14 @@
 
     &--sell {
       fill: #ef4444;
+    }
+
+    &--selected,
+    &:hover,
+    &:focus {
+      filter: drop-shadow(0 0 9px rgba(248, 250, 252, 0.35));
+      transform: scale(1.05);
+      outline: none;
     }
   }
 

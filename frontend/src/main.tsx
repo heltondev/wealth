@@ -6,6 +6,7 @@ import './i18n';
 import { ThemeProvider } from './context/ThemeContext';
 import { ToastProvider } from './context/ToastContext';
 import { AuthProvider } from './context/AuthContext';
+import { PortfolioDataProvider } from './context/PortfolioDataContext';
 
 // Amplify config stub - will be configured when AWS is set up
 // import { Amplify } from 'aws-amplify';
@@ -16,7 +17,9 @@ createRoot(document.getElementById('root')!).render(
     <ThemeProvider>
       <ToastProvider>
         <AuthProvider>
-          <App />
+          <PortfolioDataProvider>
+            <App />
+          </PortfolioDataProvider>
         </AuthProvider>
       </ToastProvider>
     </ThemeProvider>

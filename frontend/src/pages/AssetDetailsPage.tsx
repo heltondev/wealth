@@ -4,6 +4,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router';
 import Layout from '../components/Layout';
 import ExpandableText from '../components/ExpandableText';
 import { api, type Asset, type Transaction } from '../services/api';
+import { usePortfolioData } from '../context/PortfolioDataContext';
 import { formatCurrency, formatDate } from '../utils/formatters';
 import './AssetsPage.scss';
 import './AssetDetailsPage.scss';
@@ -37,14 +38,7 @@ type AssetPriceSeriesPoint = {
   close: number | null;
 };
 
-type AssetPriceSeriesMarker = {
-  date: string;
-  display_date: string | undefined;
-  type: 'buy' | 'sell';
-  quantity: number;
-  unit_price: number;
-  close_at_date: number | null;
-};
+type ChartPeriodPreset = 'MAX' | '5A' | '2A' | '1A' | '6M' | '3M' | '1M' | 'CUSTOM';
 
 const COUNTRY_FLAG_MAP: Record<string, string> = {
   BR: '🇧🇷',
@@ -62,6 +56,27 @@ const DECIMAL_PRECISION = 2;
 const DECIMAL_FACTOR = 10 ** DECIMAL_PRECISION;
 const HISTORY_CHART_WIDTH = 860;
 const HISTORY_CHART_HEIGHT = 220;
+const CHART_PERIOD_DAYS: Partial<Record<ChartPeriodPreset, number>> = {
+  '1M': 30,
+  '3M': 90,
+  '6M': 180,
+  '1A': 365,
+  '2A': 730,
+  '5A': 1825,
+};
+
+const toIsoDate = (value: string) => {
+  const parsed = new Date(`${value}T00:00:00Z`);
+  if (!Number.isFinite(parsed.getTime())) return null;
+  return parsed.toISOString().slice(0, 10);
+};
+
+const addDaysToIsoDate = (date: string, days: number): string => {
+  const parsed = new Date(`${date}T00:00:00Z`);
+  if (!Number.isFinite(parsed.getTime())) return date;
+  parsed.setUTCDate(parsed.getUTCDate() + days);
+  return parsed.toISOString().slice(0, 10);
+};
 
 const normalizeText = (value: unknown): string =>
   (value || '')
@@ -87,18 +102,26 @@ const AssetDetailsPage = () => {
   const [searchParams] = useSearchParams();
   const portfolioIdFromQuery = searchParams.get('portfolioId')?.trim() || '';
 
-  const [loading, setLoading] = useState(true);
-  const [portfolioId, setPortfolioId] = useState('');
-  const [assets, setAssets] = useState<Asset[]>([]);
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const {
+    portfolios,
+    selectedPortfolio,
+    setSelectedPortfolio,
+    assets,
+    transactions,
+    loading,
+    metrics,
+  } = usePortfolioData();
+  const portfolioId = selectedPortfolio;
+  const portfolioMarketValueByAssetId = useMemo(() => metrics?.marketValues || {}, [metrics]);
   const [currentQuote, setCurrentQuote] = useState<number | null>(null);
   const [averageCost, setAverageCost] = useState<number | null>(null);
-  const [portfolioMarketValueByAssetId, setPortfolioMarketValueByAssetId] = useState<Record<string, number | null>>({});
-  const [selectedHistoryPoint, setSelectedHistoryPoint] = useState<AssetTradeHistoryPoint | null>(null);
   const [marketSeries, setMarketSeries] = useState<AssetPriceSeriesPoint[]>([]);
-  const [marketMarkers, setMarketMarkers] = useState<AssetPriceSeriesMarker[]>([]);
   const [marketSeriesLoading, setMarketSeriesLoading] = useState(false);
   const [hoveredMarketPointIndex, setHoveredMarketPointIndex] = useState<number | null>(null);
+  const [selectedTradePoint, setSelectedTradePoint] = useState<AssetTradeHistoryPoint | null>(null);
+  const [chartPeriod, setChartPeriod] = useState<ChartPeriodPreset>('MAX');
+  const [customRangeStart, setCustomRangeStart] = useState('');
+  const [customRangeEnd, setCustomRangeEnd] = useState('');
 
   const numberLocale = i18n.language?.startsWith('pt') ? 'pt-BR' : 'en-US';
 
@@ -142,52 +165,15 @@ const AssetDetailsPage = () => {
   const formatCountryDetail = useCallback((country: string) =>
     `${COUNTRY_FLAG_MAP[country] || '🏳️'} ${COUNTRY_NAME_MAP[country] || country}`, []);
 
+  // Sync portfolio selection from URL query if present.
   useEffect(() => {
-    let cancelled = false;
-
-    const load = async () => {
-      setLoading(true);
-      try {
-        let resolvedPortfolioId = portfolioIdFromQuery;
-        if (!resolvedPortfolioId) {
-          const portfolioItems = await api.getPortfolios();
-          resolvedPortfolioId = portfolioItems[0]?.portfolioId || '';
-        }
-
-        if (cancelled) return;
-
-        setPortfolioId(resolvedPortfolioId);
-
-        if (!resolvedPortfolioId || !assetId) {
-          setAssets([]);
-          setTransactions([]);
-          return;
-        }
-
-        const [assetItems, transactionItems] = await Promise.all([
-          api.getAssets(resolvedPortfolioId),
-          api.getTransactions(resolvedPortfolioId),
-        ]);
-
-        if (cancelled) return;
-
-        setAssets(assetItems);
-        setTransactions(transactionItems);
-      } catch {
-        if (cancelled) return;
-        setAssets([]);
-        setTransactions([]);
-      } finally {
-        if (!cancelled) setLoading(false);
+    if (portfolioIdFromQuery && portfolios.length > 0) {
+      const match = portfolios.find((item) => item.portfolioId === portfolioIdFromQuery);
+      if (match && match.portfolioId !== selectedPortfolio) {
+        setSelectedPortfolio(match.portfolioId);
       }
-    };
-
-    void load();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [assetId, portfolioIdFromQuery]);
+    }
+  }, [portfolioIdFromQuery, portfolios, selectedPortfolio, setSelectedPortfolio]);
 
   const hasPrimaryTradeByAssetId = useMemo(() => {
     const set = new Set<string>();
@@ -334,39 +320,57 @@ const AssetDetailsPage = () => {
     });
   }, [assetInvestedAmountById, assetQuantitiesById, assetSourcesById, assets]);
 
-  const resolveRowCurrentValue = useCallback((row: AssetRow): number => {
+  const resolveRowCurrentValue = useCallback((row: AssetRow): number | null => {
     const metricCurrentValue = portfolioMarketValueByAssetId[row.assetId];
     if (typeof metricCurrentValue === 'number' && Number.isFinite(metricCurrentValue)) {
       return metricCurrentValue;
     }
 
-    const directCurrentValue = Number(row.currentValue);
-    if (Number.isFinite(directCurrentValue)) return directCurrentValue;
-    const directCurrentPrice = Number(row.currentPrice);
     const quantity = Number(row.quantity);
-    if (!Number.isFinite(directCurrentPrice) || !Number.isFinite(quantity)) return 0;
-    return directCurrentPrice * quantity;
+    const hasOpenPosition = Number.isFinite(quantity) && Math.abs(quantity) > Number.EPSILON;
+    const directCurrentPrice = Number(row.currentPrice);
+    if (
+      Number.isFinite(directCurrentPrice)
+      && Number.isFinite(quantity)
+      && (!hasOpenPosition || Math.abs(directCurrentPrice) > Number.EPSILON)
+    ) {
+      return directCurrentPrice * quantity;
+    }
+
+    const directCurrentValue = Number(row.currentValue);
+    if (
+      Number.isFinite(directCurrentValue)
+      && (!hasOpenPosition || Math.abs(directCurrentValue) > Number.EPSILON)
+    ) {
+      return directCurrentValue;
+    }
+
+    return null;
   }, [portfolioMarketValueByAssetId]);
 
   const currentValueByAssetId = useMemo(() => {
-    const values: Record<string, number> = {};
+    const values: Record<string, number | null> = {};
     for (const row of assetRows) {
       values[row.assetId] = resolveRowCurrentValue(row);
     }
     return values;
   }, [assetRows, resolveRowCurrentValue]);
 
-  const portfolioCurrentTotal = useMemo(() => (
-    Object.values(currentValueByAssetId).reduce((sum, value) => sum + value, 0)
+  const portfolioCurrentTotal = useMemo<number>(() => (
+    Object.values(currentValueByAssetId).reduce<number>((sum, value) => (
+      typeof value === 'number' && Number.isFinite(value) ? sum + value : sum
+    ), 0)
   ), [currentValueByAssetId]);
 
   useEffect(() => {
     setCurrentQuote(null);
     setAverageCost(null);
-    setSelectedHistoryPoint(null);
     setMarketSeries([]);
-    setMarketMarkers([]);
     setHoveredMarketPointIndex(null);
+    setSelectedTradePoint(null);
+    setChartPeriod('MAX');
+    setCustomRangeStart('');
+    setCustomRangeEnd('');
   }, [selectedAsset?.assetId]);
 
   useEffect(() => {
@@ -406,42 +410,11 @@ const AssetDetailsPage = () => {
   }, [portfolioId, selectedAsset]);
 
   useEffect(() => {
-    if (!portfolioId) return;
-    let cancelled = false;
-
-    api.getPortfolioMetrics(portfolioId)
-      .then((payload) => {
-        if (cancelled) return;
-        const metrics = Array.isArray((payload as { assets?: unknown[] }).assets)
-          ? (payload as { assets: unknown[] }).assets
-          : [];
-
-        const nextMarketValues: Record<string, number | null> = {};
-        for (const item of metrics) {
-          const metric = item as Record<string, unknown>;
-          const assetId = String(metric.assetId || '');
-          if (!assetId) continue;
-          const marketValue = Number(metric.market_value);
-          nextMarketValues[assetId] = Number.isFinite(marketValue) ? marketValue : null;
-        }
-        setPortfolioMarketValueByAssetId(nextMarketValues);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setPortfolioMarketValueByAssetId({});
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [portfolioId, assets.length, transactions.length]);
-
-  useEffect(() => {
     if (!selectedAsset || !portfolioId) return;
     let cancelled = false;
     setMarketSeriesLoading(true);
 
-    api.getPriceChart(portfolioId, selectedAsset.ticker, 'price_history', '1A')
+    api.getPriceChart(portfolioId, selectedAsset.ticker, 'price_history', 'MAX')
       .then((payload) => {
         if (cancelled) return;
 
@@ -459,35 +432,11 @@ const AssetDetailsPage = () => {
             .filter((point) => point.date))
           : [];
 
-        const normalizedMarkers = Array.isArray((payload as { markers?: unknown[] }).markers)
-          ? ((payload as { markers: unknown[] }).markers
-            .map((item) => {
-              const marker = item as Record<string, unknown>;
-              const type = String(marker.type || '').toLowerCase();
-              if (type !== 'buy' && type !== 'sell') return null;
-              const quantity = Number(marker.quantity);
-              const unitPrice = Number(marker.unit_price);
-              const closeAtDate = Number(marker.close_at_date);
-
-              return {
-                date: String(marker.date || ''),
-                display_date: marker.display_date ? String(marker.display_date) : undefined,
-                type: type as 'buy' | 'sell',
-                quantity: Number.isFinite(quantity) ? quantity : 0,
-                unit_price: Number.isFinite(unitPrice) ? unitPrice : 0,
-                close_at_date: Number.isFinite(closeAtDate) ? closeAtDate : null,
-              } satisfies AssetPriceSeriesMarker;
-            })
-            .filter((marker): marker is AssetPriceSeriesMarker => Boolean(marker && marker.date)))
-          : [];
-
         setMarketSeries(normalizedSeries);
-        setMarketMarkers(normalizedMarkers);
       })
       .catch(() => {
         if (cancelled) return;
         setMarketSeries([]);
-        setMarketMarkers([]);
       })
       .finally(() => {
         if (cancelled) return;
@@ -510,12 +459,19 @@ const AssetDetailsPage = () => {
 
   const resolvedAverageCost = useMemo(() => {
     if (typeof averageCost === 'number' && Number.isFinite(averageCost)) return averageCost;
+    if (selectedAsset) {
+      const cached = metrics?.averageCosts?.[selectedAsset.assetId];
+      if (typeof cached === 'number' && Number.isFinite(cached)) return cached;
+    }
     return fallbackAverageCost;
-  }, [averageCost, fallbackAverageCost]);
+  }, [averageCost, fallbackAverageCost, metrics, selectedAsset]);
 
   const resolvedCurrentPrice = useMemo(() => {
     if (!selectedAsset) return null;
     if (typeof currentQuote === 'number' && Number.isFinite(currentQuote)) return currentQuote;
+
+    const cachedQuote = metrics?.currentQuotes?.[selectedAsset.assetId];
+    if (typeof cachedQuote === 'number' && Number.isFinite(cachedQuote)) return cachedQuote;
 
     const directCurrentPrice = Number(selectedAsset.currentPrice);
     if (Number.isFinite(directCurrentPrice)) return directCurrentPrice;
@@ -525,7 +481,7 @@ const AssetDetailsPage = () => {
     if (!Number.isFinite(directCurrentValue) || !Number.isFinite(quantity)) return null;
     if (Math.abs(quantity) <= Number.EPSILON) return null;
     return directCurrentValue / quantity;
-  }, [currentQuote, selectedAsset]);
+  }, [currentQuote, metrics, selectedAsset]);
 
   const resolvedCurrentValue = useMemo(() => {
     if (!selectedAsset) return null;
@@ -564,14 +520,17 @@ const AssetDetailsPage = () => {
   const selectedAssetWeightMetrics = useMemo(() => {
     if (!selectedAsset) return null;
 
-    const storedSelectedCurrentValue = currentValueByAssetId[selectedAsset.assetId] || 0;
+    const storedSelectedCurrentValue = currentValueByAssetId[selectedAsset.assetId] ?? 0;
     const selectedCurrentValue = resolvedCurrentValue ?? storedSelectedCurrentValue;
     const adjustedPortfolioTotal = portfolioCurrentTotal - storedSelectedCurrentValue + selectedCurrentValue;
     const portfolioWeight = adjustedPortfolioTotal > 0 ? selectedCurrentValue / adjustedPortfolioTotal : 0;
 
     const storedClassTotal = assetRows
       .filter((row) => row.assetClass === selectedAsset.assetClass)
-      .reduce((sum, row) => sum + (currentValueByAssetId[row.assetId] || 0), 0);
+      .reduce((sum, row) => {
+        const value = currentValueByAssetId[row.assetId];
+        return typeof value === 'number' && Number.isFinite(value) ? sum + value : sum;
+      }, 0);
     const adjustedClassTotal = storedClassTotal - storedSelectedCurrentValue + selectedCurrentValue;
     const classWeight = adjustedClassTotal > 0 ? selectedCurrentValue / adjustedClassTotal : 0;
 
@@ -609,6 +568,190 @@ const AssetDetailsPage = () => {
       .filter((row) => row.date && Number.isFinite(row.price))
       .sort((left, right) => new Date(left.date).getTime() - new Date(right.date).getTime());
   }, [selectedAsset, shouldIgnoreConsolidatedTrade, transactions]);
+
+  const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const firstTradeDate = useMemo(() => (
+    assetTradeHistoryRows[0]?.date || null
+  ), [assetTradeHistoryRows]);
+  const firstSeriesDate = useMemo(() => {
+    const sorted = [...marketSeries]
+      .filter((row) => row.date)
+      .sort((left, right) => new Date(left.date).getTime() - new Date(right.date).getTime());
+    return sorted[0]?.date || null;
+  }, [marketSeries]);
+  const minSelectableStartDate = firstTradeDate || firstSeriesDate;
+
+  useEffect(() => {
+    if (!minSelectableStartDate) {
+      setCustomRangeStart('');
+      setCustomRangeEnd(todayIso);
+      return;
+    }
+
+    setCustomRangeStart((previous) => {
+      const normalizedPrevious = toIsoDate(previous);
+      if (!normalizedPrevious) return minSelectableStartDate;
+      if (normalizedPrevious < minSelectableStartDate) return minSelectableStartDate;
+      if (normalizedPrevious > todayIso) return todayIso;
+      return normalizedPrevious;
+    });
+
+    setCustomRangeEnd((previous) => {
+      const normalizedPrevious = toIsoDate(previous);
+      if (!normalizedPrevious) return todayIso;
+      if (normalizedPrevious < minSelectableStartDate) return minSelectableStartDate;
+      if (normalizedPrevious > todayIso) return todayIso;
+      return normalizedPrevious;
+    });
+  }, [minSelectableStartDate, todayIso]);
+
+  const effectiveChartRange = useMemo(() => {
+    const minStart = minSelectableStartDate ? toIsoDate(minSelectableStartDate) : null;
+    const maxEnd = toIsoDate(todayIso) || todayIso;
+
+    if (chartPeriod === 'CUSTOM') {
+      let start = toIsoDate(customRangeStart) || minStart;
+      let end = toIsoDate(customRangeEnd) || maxEnd;
+
+      if (minStart && start && start < minStart) start = minStart;
+      if (end > maxEnd) end = maxEnd;
+      if (start && start > end) start = end;
+
+      return { start, end };
+    }
+
+    if (chartPeriod === 'MAX') {
+      return { start: null, end: maxEnd };
+    }
+
+    const days = CHART_PERIOD_DAYS[chartPeriod];
+    if (!Number.isFinite(days)) {
+      return { start: null, end: maxEnd };
+    }
+
+    let start = addDaysToIsoDate(maxEnd, -Number(days));
+    if (minStart && start < minStart) {
+      start = minStart;
+    }
+
+    return { start, end: maxEnd };
+  }, [chartPeriod, customRangeEnd, customRangeStart, minSelectableStartDate, todayIso]);
+
+  const marketSeriesInRange = useMemo(() => (
+    marketSeries
+      .filter((row) => {
+        if (!row.date) return false;
+        if (effectiveChartRange.start && row.date < effectiveChartRange.start) return false;
+        if (effectiveChartRange.end && row.date > effectiveChartRange.end) return false;
+        return true;
+      })
+      .sort((left, right) => new Date(left.date).getTime() - new Date(right.date).getTime())
+  ), [effectiveChartRange.end, effectiveChartRange.start, marketSeries]);
+
+  const marketPriceChart = useMemo(() => {
+    const pointsInput = marketSeriesInRange
+      .filter((row) => row.date && Number.isFinite(row.close))
+      .sort((left, right) => new Date(left.date).getTime() - new Date(right.date).getTime());
+    if (!pointsInput.length) return null;
+
+    const chartPadding = { top: 16, right: 20, bottom: 28, left: 20 };
+    const chartWidth = HISTORY_CHART_WIDTH - chartPadding.left - chartPadding.right;
+    const chartHeight = HISTORY_CHART_HEIGHT - chartPadding.top - chartPadding.bottom;
+    const closes = pointsInput.map((row) => Number(row.close));
+    const minClose = Math.min(...closes);
+    const maxClose = Math.max(...closes);
+    const spread = Math.max(maxClose - minClose, 0.01);
+    const paddedMin = minClose - spread * 0.08;
+    const paddedMax = maxClose + spread * 0.08;
+    const yBase = chartPadding.top + chartHeight;
+
+    const xFor = (index: number) => (
+      pointsInput.length === 1
+        ? chartPadding.left + chartWidth / 2
+        : chartPadding.left + (index / (pointsInput.length - 1)) * chartWidth
+    );
+    const yFor = (close: number) => (
+      chartPadding.top + (1 - (close - paddedMin) / (paddedMax - paddedMin)) * chartHeight
+    );
+
+    const points = pointsInput.map((row, index) => {
+      const close = Number(row.close);
+      const previousClose = index > 0 ? Number(pointsInput[index - 1].close) : null;
+      const change = previousClose !== null ? close - previousClose : null;
+      const changePct =
+        previousClose !== null && Math.abs(previousClose) > Number.EPSILON
+          ? (change! / previousClose) * 100
+          : null;
+      return {
+        date: row.date,
+        displayDate: row.display_date || row.date,
+        close,
+        change,
+        changePct,
+        index,
+        x: xFor(index),
+        y: yFor(close),
+      };
+    });
+
+    const polyline = points
+      .map((point, index) => {
+        const x = point.x.toFixed(2);
+        const y = point.y.toFixed(2);
+        return `${index === 0 ? 'M' : 'L'} ${x} ${y}`;
+      })
+      .join(' ');
+    const areaPath = `${polyline} L ${points[points.length - 1].x.toFixed(2)} ${yBase.toFixed(2)} L ${points[0].x.toFixed(2)} ${yBase.toFixed(2)} Z`;
+
+    return {
+      points,
+      polyline,
+      areaPath,
+      firstDate: points[0].date,
+      lastDate: points[points.length - 1].date,
+      lastClose: points[points.length - 1].close,
+      minClose: paddedMin,
+      maxClose: paddedMax,
+      padding: chartPadding,
+      yBase,
+    };
+  }, [marketSeriesInRange]);
+
+  const hoveredMarketPoint = useMemo(() => {
+    if (!marketPriceChart || hoveredMarketPointIndex === null) return null;
+    return marketPriceChart.points[hoveredMarketPointIndex] || null;
+  }, [hoveredMarketPointIndex, marketPriceChart]);
+
+  const hoveredMarketTooltipStyle = useMemo(() => {
+    if (!hoveredMarketPoint) return null;
+    const isRightSide = hoveredMarketPoint.x > HISTORY_CHART_WIDTH * 0.68;
+    const isNearTop = hoveredMarketPoint.y < HISTORY_CHART_HEIGHT * 0.25;
+    return {
+      left: `${(hoveredMarketPoint.x / HISTORY_CHART_WIDTH) * 100}%`,
+      top: `${(hoveredMarketPoint.y / HISTORY_CHART_HEIGHT) * 100}%`,
+      transform: `translate(${isRightSide ? '-100%' : '0'}, ${isNearTop ? '12px' : 'calc(-100% - 12px)'})`,
+    };
+  }, [hoveredMarketPoint]);
+
+  const assetTradeHistoryStats = useMemo(() => {
+    const buys = assetTradeHistoryRows.filter((row) => row.type === 'buy');
+    const sells = assetTradeHistoryRows.filter((row) => row.type === 'sell');
+
+    const weightedAveragePrice = (rows: AssetTradeHistoryRow[]) => {
+      const totalQuantity = rows.reduce((sum, row) => sum + row.quantity, 0);
+      if (Math.abs(totalQuantity) <= Number.EPSILON) return null;
+      const totalAmount = rows.reduce((sum, row) => sum + (row.price * row.quantity), 0);
+      return totalAmount / totalQuantity;
+    };
+
+    return {
+      trades: assetTradeHistoryRows.length,
+      buys: buys.length,
+      sells: sells.length,
+      avgBuyPrice: weightedAveragePrice(buys),
+      avgSellPrice: weightedAveragePrice(sells),
+    };
+  }, [assetTradeHistoryRows]);
 
   const assetTradeHistoryChart = useMemo(() => {
     const rows = assetTradeHistoryRows.filter((row) => Number.isFinite(row.price));
@@ -662,140 +805,16 @@ const AssetDetailsPage = () => {
     };
   }, [assetTradeHistoryRows]);
 
-  const marketPriceChart = useMemo(() => {
-    const pointsInput = marketSeries
-      .filter((row) => row.date && Number.isFinite(row.close))
-      .sort((left, right) => new Date(left.date).getTime() - new Date(right.date).getTime());
-    if (!pointsInput.length) return null;
-
-    const chartPadding = { top: 16, right: 20, bottom: 28, left: 20 };
-    const chartWidth = HISTORY_CHART_WIDTH - chartPadding.left - chartPadding.right;
-    const chartHeight = HISTORY_CHART_HEIGHT - chartPadding.top - chartPadding.bottom;
-    const closes = pointsInput.map((row) => Number(row.close));
-    const minClose = Math.min(...closes);
-    const maxClose = Math.max(...closes);
-    const spread = Math.max(maxClose - minClose, 0.01);
-    const paddedMin = minClose - spread * 0.08;
-    const paddedMax = maxClose + spread * 0.08;
-    const yBase = chartPadding.top + chartHeight;
-
-    const xFor = (index: number) => (
-      pointsInput.length === 1
-        ? chartPadding.left + chartWidth / 2
-        : chartPadding.left + (index / (pointsInput.length - 1)) * chartWidth
-    );
-    const yFor = (close: number) => (
-      chartPadding.top + (1 - (close - paddedMin) / (paddedMax - paddedMin)) * chartHeight
-    );
-
-    const points = pointsInput.map((row, index) => {
-      const close = Number(row.close);
-      const previousClose = index > 0 ? Number(pointsInput[index - 1].close) : null;
-      const change = previousClose !== null ? close - previousClose : null;
-      const changePct =
-        previousClose !== null && Math.abs(previousClose) > Number.EPSILON
-          ? (change! / previousClose) * 100
-          : null;
-      return {
-        date: row.date,
-        displayDate: row.display_date || row.date,
-        close,
-        change,
-        changePct,
-        index,
-        x: xFor(index),
-        y: yFor(close),
-      };
-    });
-
-    const pointsByDate = new Map<string, typeof points[number]>();
-    for (const point of points) {
-      if (!pointsByDate.has(point.date)) pointsByDate.set(point.date, point);
-    }
-
-    const markerPoints = marketMarkers
-      .map((marker) => {
-        const target = pointsByDate.get(marker.date);
-        if (!target) return null;
-        return {
-          ...marker,
-          x: target.x,
-          y: target.y,
-        };
-      })
-      .filter((marker): marker is NonNullable<typeof marker> => Boolean(marker));
-
-    const polyline = points
-      .map((point, index) => {
-        const x = point.x.toFixed(2);
-        const y = point.y.toFixed(2);
-        return `${index === 0 ? 'M' : 'L'} ${x} ${y}`;
-      })
-      .join(' ');
-    const areaPath = `${polyline} L ${points[points.length - 1].x.toFixed(2)} ${yBase.toFixed(2)} L ${points[0].x.toFixed(2)} ${yBase.toFixed(2)} Z`;
-
+  const selectedTradeTooltipStyle = useMemo(() => {
+    if (!selectedTradePoint) return null;
+    const isRightSide = selectedTradePoint.x > HISTORY_CHART_WIDTH * 0.68;
+    const isNearTop = selectedTradePoint.y < HISTORY_CHART_HEIGHT * 0.25;
     return {
-      points,
-      markerPoints,
-      polyline,
-      areaPath,
-      firstDate: points[0].date,
-      lastDate: points[points.length - 1].date,
-      lastClose: points[points.length - 1].close,
-      minClose: paddedMin,
-      maxClose: paddedMax,
-      padding: chartPadding,
-      yBase,
-    };
-  }, [marketMarkers, marketSeries]);
-
-  const hoveredMarketPoint = useMemo(() => {
-    if (!marketPriceChart || hoveredMarketPointIndex === null) return null;
-    return marketPriceChart.points[hoveredMarketPointIndex] || null;
-  }, [hoveredMarketPointIndex, marketPriceChart]);
-
-  const hoveredMarketTooltipStyle = useMemo(() => {
-    if (!hoveredMarketPoint) return null;
-    const isRightSide = hoveredMarketPoint.x > HISTORY_CHART_WIDTH * 0.68;
-    const isNearTop = hoveredMarketPoint.y < HISTORY_CHART_HEIGHT * 0.25;
-    return {
-      left: `${(hoveredMarketPoint.x / HISTORY_CHART_WIDTH) * 100}%`,
-      top: `${(hoveredMarketPoint.y / HISTORY_CHART_HEIGHT) * 100}%`,
+      left: `${(selectedTradePoint.x / HISTORY_CHART_WIDTH) * 100}%`,
+      top: `${(selectedTradePoint.y / HISTORY_CHART_HEIGHT) * 100}%`,
       transform: `translate(${isRightSide ? '-100%' : '0'}, ${isNearTop ? '12px' : 'calc(-100% - 12px)'})`,
     };
-  }, [hoveredMarketPoint]);
-
-  const assetTradeHistoryStats = useMemo(() => {
-    const buys = assetTradeHistoryRows.filter((row) => row.type === 'buy');
-    const sells = assetTradeHistoryRows.filter((row) => row.type === 'sell');
-
-    const weightedAveragePrice = (rows: AssetTradeHistoryRow[]) => {
-      const totalQuantity = rows.reduce((sum, row) => sum + row.quantity, 0);
-      if (Math.abs(totalQuantity) <= Number.EPSILON) return null;
-      const totalAmount = rows.reduce((sum, row) => sum + (row.price * row.quantity), 0);
-      return totalAmount / totalQuantity;
-    };
-
-    return {
-      trades: assetTradeHistoryRows.length,
-      buys: buys.length,
-      sells: sells.length,
-      avgBuyPrice: weightedAveragePrice(buys),
-      avgSellPrice: weightedAveragePrice(sells),
-    };
-  }, [assetTradeHistoryRows]);
-
-  const tooltipStyle = useMemo(() => {
-    if (!selectedHistoryPoint) return null;
-    const isRightSide = selectedHistoryPoint.x > HISTORY_CHART_WIDTH * 0.68;
-    const isNearTop = selectedHistoryPoint.y < HISTORY_CHART_HEIGHT * 0.25;
-
-    return {
-      left: `${(selectedHistoryPoint.x / HISTORY_CHART_WIDTH) * 100}%`,
-      top: `${(selectedHistoryPoint.y / HISTORY_CHART_HEIGHT) * 100}%`,
-      transform: `translate(${isRightSide ? '-100%' : '0'}, ${isNearTop ? '12px' : 'calc(-100% - 12px)'})`,
-    };
-  }, [selectedHistoryPoint]);
+  }, [selectedTradePoint]);
 
   const overviewFields = useMemo(() => {
     if (!selectedAsset) return [];
@@ -1027,6 +1046,87 @@ const AssetDetailsPage = () => {
             <section className="asset-details-page__card asset-details-page__card--full">
               <div className="assets-page__history">
                 <h3>{t('assets.modal.priceHistory.title')}</h3>
+                <div className="asset-details-page__chart-controls">
+                  <label htmlFor="asset-period-select">
+                    {t('assets.modal.priceHistory.periodLabel', { defaultValue: 'Period' })}
+                  </label>
+                  <select
+                    id="asset-period-select"
+                    className="asset-details-page__chart-select"
+                    value={chartPeriod}
+                    onChange={(event) => {
+                      setChartPeriod(event.target.value as ChartPeriodPreset);
+                      setHoveredMarketPointIndex(null);
+                    }}
+                  >
+                    <option value="MAX">{t('assets.modal.priceHistory.period.max', { defaultValue: 'MAX' })}</option>
+                    <option value="5A">{t('assets.modal.priceHistory.period.5a', { defaultValue: '5Y' })}</option>
+                    <option value="2A">{t('assets.modal.priceHistory.period.2a', { defaultValue: '2Y' })}</option>
+                    <option value="1A">{t('assets.modal.priceHistory.period.1a', { defaultValue: '1Y' })}</option>
+                    <option value="6M">{t('assets.modal.priceHistory.period.6m', { defaultValue: '6M' })}</option>
+                    <option value="3M">{t('assets.modal.priceHistory.period.3m', { defaultValue: '3M' })}</option>
+                    <option value="1M">{t('assets.modal.priceHistory.period.1m', { defaultValue: '1M' })}</option>
+                    <option value="CUSTOM">{t('assets.modal.priceHistory.period.custom', { defaultValue: 'Custom' })}</option>
+                  </select>
+                  {chartPeriod === 'CUSTOM' ? (
+                    <div className="asset-details-page__chart-range">
+                      <label htmlFor="asset-range-start">
+                        {t('assets.modal.priceHistory.startDate', { defaultValue: 'From' })}
+                      </label>
+                      <input
+                        id="asset-range-start"
+                        type="date"
+                        value={customRangeStart}
+                        min={minSelectableStartDate || undefined}
+                        max={todayIso}
+                        onChange={(event) => {
+                          const normalized = toIsoDate(event.target.value) || '';
+                          if (!normalized) {
+                            setCustomRangeStart('');
+                            return;
+                          }
+                          let nextStart = normalized;
+                          if (minSelectableStartDate && nextStart < minSelectableStartDate) {
+                            nextStart = minSelectableStartDate;
+                          }
+                          if (nextStart > todayIso) nextStart = todayIso;
+                          setCustomRangeStart(nextStart);
+                          if (customRangeEnd && customRangeEnd < nextStart) {
+                            setCustomRangeEnd(nextStart);
+                          }
+                        }}
+                      />
+
+                      <label htmlFor="asset-range-end">
+                        {t('assets.modal.priceHistory.endDate', { defaultValue: 'To' })}
+                      </label>
+                      <input
+                        id="asset-range-end"
+                        type="date"
+                        value={customRangeEnd}
+                        min={customRangeStart || minSelectableStartDate || undefined}
+                        max={todayIso}
+                        onChange={(event) => {
+                          const normalized = toIsoDate(event.target.value) || '';
+                          if (!normalized) {
+                            setCustomRangeEnd('');
+                            return;
+                          }
+                          let nextEnd = normalized;
+                          if (nextEnd > todayIso) nextEnd = todayIso;
+                          if (customRangeStart && nextEnd < customRangeStart) {
+                            nextEnd = customRangeStart;
+                          }
+                          if (minSelectableStartDate && nextEnd < minSelectableStartDate) {
+                            nextEnd = minSelectableStartDate;
+                          }
+                          setCustomRangeEnd(nextEnd);
+                        }}
+                      />
+                    </div>
+                  ) : null}
+                </div>
+
                 {marketSeriesLoading ? (
                   <p className="assets-page__history-empty">{t('assets.modal.priceHistory.loading')}</p>
                 ) : null}
@@ -1086,19 +1186,6 @@ const AssetDetailsPage = () => {
                       />
                       <path className="assets-page__market-area" d={marketPriceChart.areaPath} fill="url(#asset-market-history-gradient)" />
                       <path className="assets-page__market-line" d={marketPriceChart.polyline} />
-                      {marketPriceChart.markerPoints.map((marker, index) => (
-                        <circle
-                          key={`${marker.type}-${marker.date}-${index}`}
-                          className={`assets-page__market-marker assets-page__market-marker--${marker.type}`}
-                          cx={marker.x}
-                          cy={marker.y}
-                          r={3.6}
-                        >
-                          <title>
-                            {`${formatDate(marker.display_date || marker.date, numberLocale)} | ${t(`transactions.types.${marker.type}`, { defaultValue: marker.type })} | ${formatCurrency(marker.unit_price, selectedAsset.currency || 'BRL', numberLocale)}`}
-                          </title>
-                        </circle>
-                      ))}
                       {hoveredMarketPoint ? (
                         <circle
                           className="assets-page__market-hover-point"
@@ -1144,7 +1231,6 @@ const AssetDetailsPage = () => {
                 ) : null}
 
                 <h3>{t('assets.modal.history.title')}</h3>
-
                 {assetTradeHistoryRows.length === 0 ? (
                   <p className="assets-page__history-empty">{t('assets.modal.history.empty')}</p>
                 ) : (
@@ -1174,10 +1260,10 @@ const AssetDetailsPage = () => {
                         viewBox={`0 0 ${HISTORY_CHART_WIDTH} ${HISTORY_CHART_HEIGHT}`}
                         role="img"
                         aria-label={t('assets.modal.history.chart')}
-                        onClick={() => setSelectedHistoryPoint(null)}
+                        onClick={() => setSelectedTradePoint(null)}
                       >
                         <defs>
-                          <linearGradient id="asset-page-history-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                          <linearGradient id="asset-trade-history-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
                             <stop offset="0%" stopColor="rgba(99, 102, 241, 0.42)" />
                             <stop offset="100%" stopColor="rgba(99, 102, 241, 0.02)" />
                           </linearGradient>
@@ -1205,7 +1291,7 @@ const AssetDetailsPage = () => {
                               y1={assetTradeHistoryChart.yBase}
                               y2={assetTradeHistoryChart.yBase}
                             />
-                            <path className="assets-page__history-area" d={assetTradeHistoryChart.areaPath} fill="url(#asset-page-history-gradient)" />
+                            <path className="assets-page__history-area" d={assetTradeHistoryChart.areaPath} fill="url(#asset-trade-history-gradient)" />
                             <path className="assets-page__history-line" d={assetTradeHistoryChart.polyline} />
                             {assetTradeHistoryChart.points.map((point) => (
                               <circle
@@ -1213,17 +1299,17 @@ const AssetDetailsPage = () => {
                                 className={`assets-page__history-point assets-page__history-point--${point.type}`}
                                 cx={point.x}
                                 cy={point.y}
-                                r={selectedHistoryPoint?.transId === point.transId && selectedHistoryPoint?.index === point.index ? 6 : 4}
+                                r={selectedTradePoint?.transId === point.transId && selectedTradePoint?.index === point.index ? 6 : 4}
                                 role="button"
                                 tabIndex={0}
                                 onClick={(event) => {
                                   event.stopPropagation();
-                                  setSelectedHistoryPoint(point);
+                                  setSelectedTradePoint(point);
                                 }}
                                 onKeyDown={(event) => {
                                   if (event.key === 'Enter' || event.key === ' ') {
                                     event.preventDefault();
-                                    setSelectedHistoryPoint(point);
+                                    setSelectedTradePoint(point);
                                   }
                                 }}
                               >
@@ -1235,23 +1321,23 @@ const AssetDetailsPage = () => {
                           </>
                         ) : null}
                       </svg>
-                      {selectedHistoryPoint && tooltipStyle ? (
-                        <div className="assets-page__history-tooltip" style={tooltipStyle}>
+                      {selectedTradePoint && selectedTradeTooltipStyle ? (
+                        <div className="assets-page__history-tooltip" style={selectedTradeTooltipStyle}>
                           <div className="assets-page__history-tooltip-header">
-                            <span className={`assets-page__history-type assets-page__history-type--${selectedHistoryPoint.type}`}>
-                              {t(`transactions.types.${selectedHistoryPoint.type}`, { defaultValue: selectedHistoryPoint.type })}
+                            <span className={`assets-page__history-type assets-page__history-type--${selectedTradePoint.type}`}>
+                              {t(`transactions.types.${selectedTradePoint.type}`, { defaultValue: selectedTradePoint.type })}
                             </span>
-                            <strong>{formatDate(selectedHistoryPoint.date, numberLocale)}</strong>
+                            <strong>{formatDate(selectedTradePoint.date, numberLocale)}</strong>
                           </div>
                           <div className="assets-page__history-tooltip-grid">
                             <span>{t('assets.modal.history.quantity')}</span>
-                            <strong>{formatAssetQuantity(selectedHistoryPoint.quantity)}</strong>
+                            <strong>{formatAssetQuantity(selectedTradePoint.quantity)}</strong>
                             <span>{t('assets.modal.history.price')}</span>
-                            <strong>{formatCurrency(selectedHistoryPoint.price, selectedHistoryPoint.currency, numberLocale)}</strong>
+                            <strong>{formatCurrency(selectedTradePoint.price, selectedTradePoint.currency, numberLocale)}</strong>
                             <span>{t('assets.modal.history.amount')}</span>
-                            <strong>{formatCurrency(selectedHistoryPoint.amount, selectedHistoryPoint.currency, numberLocale)}</strong>
+                            <strong>{formatCurrency(selectedTradePoint.amount, selectedTradePoint.currency, numberLocale)}</strong>
                             <span>{t('assets.modal.history.source')}</span>
-                            <strong>{selectedHistoryPoint.source || '-'}</strong>
+                            <strong>{selectedTradePoint.source || '-'}</strong>
                           </div>
                         </div>
                       ) : null}
