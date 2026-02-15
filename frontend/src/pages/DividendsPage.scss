@@ -202,62 +202,164 @@
   }
 }
 
-.dividends-alerts {
-  &__form {
+.provents-calendar {
+  &__controls {
     display: flex;
     gap: $spacing-xs;
-    flex-wrap: wrap;
     align-items: center;
-    margin-bottom: $spacing-sm;
+    flex-wrap: wrap;
 
     .dividends-page__dropdown {
-      min-width: 92px;
+      min-width: 132px;
     }
   }
 
-  &__rules,
-  &__events {
-    h3 {
-      margin: 0 0 0.4rem;
-      font-size: 0.9rem;
-      color: var(--text-primary);
+  &__legend {
+    display: flex;
+    align-items: center;
+    gap: $spacing-xs;
+    flex-wrap: wrap;
+  }
+
+  &__legend-item {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: opacity 120ms ease, transform 120ms ease;
+
+    &:hover {
+      transform: translateY(-1px);
     }
 
-    ul {
-      list-style: none;
-      margin: 0;
-      padding: 0;
-      display: flex;
-      flex-direction: column;
-      gap: 0.35rem;
-      max-height: 180px;
-      overflow: auto;
+    &--inactive {
+      opacity: 0.35;
+      filter: saturate(0.3);
     }
 
-    li {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: $spacing-sm;
-      border: 1px solid var(--glass-border);
-      border-radius: 8px;
-      padding: 0.45rem 0.6rem;
-      background: rgba(15, 23, 42, 0.25);
-      color: var(--text-secondary);
-      font-size: 0.84rem;
+    &--paid {
+      background: rgba(16, 185, 129, 0.18);
+      border-color: rgba(52, 211, 153, 0.42);
+      color: #6ee7b7;
     }
 
-    button {
-      @include button-base(0.74rem, 0.25rem, 0.45rem);
-      background: rgba(252, 165, 165, 0.12);
-      color: #fca5a5;
-      border: 1px solid rgba(252, 165, 165, 0.45);
+    &--provisioned {
+      background: rgba(59, 130, 246, 0.16);
+      border-color: rgba(96, 165, 250, 0.38);
+      color: #93c5fd;
+    }
+  }
+
+  &__weekdays {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 0.4rem;
+    margin-top: 0.2rem;
+  }
+
+  &__weekday {
+    text-align: left;
+    color: var(--text-secondary);
+    font-size: 0.74rem;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    font-weight: 600;
+    padding: 0 0.3rem;
+  }
+
+  &__grid {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 0.4rem;
+  }
+
+  &__cell {
+    min-height: 128px;
+    border: 1px solid var(--glass-border);
+    border-radius: 10px;
+    background: rgba(15, 23, 42, 0.18);
+    padding: 0.45rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    overflow: hidden;
+
+    &--placeholder {
+      opacity: 0.24;
+      min-height: 88px;
+    }
+  }
+
+  &__cell-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  &__cell-day {
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: var(--text-primary);
+  }
+
+  &__cell-events {
+    display: flex;
+    flex-direction: column;
+    gap: 0.24rem;
+  }
+
+  &__event {
+    border-radius: 6px;
+    border: 1px solid transparent;
+    padding: 0.2rem 0.34rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    line-height: 1.15;
+
+    &--paid {
+      background: rgba(16, 185, 129, 0.2);
+      border-color: rgba(52, 211, 153, 0.38);
     }
 
-    time {
-      color: var(--text-secondary);
-      font-size: 0.75rem;
-      white-space: nowrap;
+    &--provisioned {
+      background: rgba(59, 130, 246, 0.2);
+      border-color: rgba(96, 165, 250, 0.34);
+    }
+  }
+
+  &__event-ticker {
+    color: var(--text-primary);
+    font-size: 0.72rem;
+    font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  &__event-amount {
+    color: var(--text-secondary);
+    font-size: 0.68rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  &__more {
+    @include button-base(0.68rem, 0.16rem, 0.4rem);
+    color: var(--text-secondary);
+    font-weight: 700;
+    width: fit-content;
+    background: rgba(148, 163, 184, 0.12);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+  }
+
+  @media (max-width: $breakpoint-tablet) {
+    &__weekdays,
+    &__grid {
+      min-width: 680px;
     }
   }
 }

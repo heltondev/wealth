@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Bar,
@@ -12,8 +12,6 @@ import {
 import Layout from '../components/Layout';
 import {
   api,
-  type AlertEvent,
-  type AlertRule,
   type DividendsResponse,
   type DropdownConfigMap,
 } from '../services/api';
@@ -24,7 +22,6 @@ import {
 } from '../config/dropdowns';
 import SharedDropdown from '../components/SharedDropdown';
 import { usePortfolioData } from '../context/PortfolioDataContext';
-import { useToast } from '../context/ToastContext';
 import { formatCurrency, formatDate } from '../utils/formatters';
 import './DividendsPage.scss';
 
@@ -74,6 +71,16 @@ const addDaysToIso = (isoDate: string, days: number) => {
   return date.toISOString().slice(0, 10);
 };
 
+const getLocalIsoDate = () => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const getLocalMonth = () => getLocalIsoDate().slice(0, 7);
+
 const normalizeIsoDate = (value: unknown): string | null => {
   if (!value) return null;
   const text = String(value).trim();
@@ -83,25 +90,55 @@ const normalizeIsoDate = (value: unknown): string | null => {
   return parsed.toISOString().slice(0, 10);
 };
 
+type ProventStatus = 'paid' | 'provisioned';
+
+type ProventCalendarItem = {
+  ticker: string;
+  eventType: string;
+  eventDate: string;
+  amount: number | null;
+  status: ProventStatus;
+};
+
+const toRecord = (value: unknown): Record<string, unknown> => (
+  value && typeof value === 'object' ? (value as Record<string, unknown>) : {}
+);
+
+const toAmount = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
+const formatMonthLabel = (month: string, locale: string) => {
+  const [yearRaw, monthRaw] = String(month).split('-');
+  const year = Number(yearRaw);
+  const monthIndex = Number(monthRaw) - 1;
+  if (!Number.isFinite(year) || !Number.isFinite(monthIndex) || monthIndex < 0 || monthIndex > 11) {
+    return month;
+  }
+  const parsed = new Date(Date.UTC(year, monthIndex, 1, 12, 0, 0));
+  return parsed.toLocaleDateString(locale, { month: 'long', year: 'numeric', timeZone: 'UTC' });
+};
+
 const DividendsPage = () => {
   const { t, i18n } = useTranslation();
   const { portfolios, selectedPortfolio, setSelectedPortfolio } = usePortfolioData();
-  const { showToast } = useToast();
   const [dropdownConfig, setDropdownConfig] = useState<DropdownConfigMap>(() =>
     normalizeDropdownConfig(DEFAULT_DROPDOWN_CONFIG)
   );
   const [periodMonths, setPeriodMonths] = useState('12');
   const [method, setMethod] = useState('fifo');
   const [calendarLookaheadDays, setCalendarLookaheadDays] = useState('90');
-  const [alertLookaheadDays, setAlertLookaheadDays] = useState('30');
-  const [alertTicker, setAlertTicker] = useState('');
+  const [calendarMonth, setCalendarMonth] = useState(getLocalMonth());
+  const [visibleStatuses, setVisibleStatuses] = useState<Record<ProventStatus, boolean>>({
+    paid: true,
+    provisioned: true,
+  });
+  const [expandedDates, setExpandedDates] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [payload, setPayload] = useState<DividendsResponse | null>(null);
-  const [alertRules, setAlertRules] = useState<AlertRule[]>([]);
-  const [alertEvents, setAlertEvents] = useState<AlertEvent[]>([]);
-  const [savingRule, setSavingRule] = useState(false);
-  const [evaluatingAlerts, setEvaluatingAlerts] = useState(false);
   const numberLocale = i18n.language?.startsWith('pt') ? 'pt-BR' : 'en-US';
   const portfolioOptions = useMemo(
     () =>
@@ -143,13 +180,6 @@ const DividendsPage = () => {
     return normalizeNumericOptions(source, '90');
   }, [dropdownConfig]);
 
-  const alertLookaheadOptions = useMemo(() => {
-    const configured = getDropdownOptions(dropdownConfig, 'dividends.alerts.lookaheadDays');
-    const fallback = getDropdownOptions(DEFAULT_DROPDOWN_CONFIG, 'dividends.alerts.lookaheadDays');
-    const source = configured.length > 0 ? configured : fallback;
-    return normalizeNumericOptions(source, '30');
-  }, [dropdownConfig]);
-
   useEffect(() => {
     if (!periodOptions.some((option) => option.value === periodMonths)) {
       setPeriodMonths(periodOptions[0]?.value || '12');
@@ -167,22 +197,6 @@ const DividendsPage = () => {
       setCalendarLookaheadDays(calendarLookaheadOptions[0]?.value || '90');
     }
   }, [calendarLookaheadDays, calendarLookaheadOptions]);
-
-  useEffect(() => {
-    if (!alertLookaheadOptions.some((option) => option.value === alertLookaheadDays)) {
-      setAlertLookaheadDays(alertLookaheadOptions[0]?.value || '30');
-    }
-  }, [alertLookaheadDays, alertLookaheadOptions]);
-
-  const refreshAlerts = useCallback(async () => {
-    const data = await api.getAlerts();
-    setAlertRules(data.rules || []);
-    setAlertEvents(data.events || []);
-  }, []);
-
-  useEffect(() => {
-    refreshAlerts().catch(() => {});
-  }, [refreshAlerts]);
 
   const fromDate = useMemo(() => {
     const months = Number(periodMonths);
@@ -234,13 +248,20 @@ const DividendsPage = () => {
     }))
   ), [payload?.monthly_dividends]);
 
+  const serverTodayIso = useMemo(
+    () => normalizeIsoDate(payload?.period_to || payload?.fetched_at),
+    [payload?.fetched_at, payload?.period_to]
+  );
+  const todayIso = useMemo(() => {
+    const local = getLocalIsoDate();
+    if (!serverTodayIso) return local;
+    return serverTodayIso > local ? serverTodayIso : local;
+  }, [serverTodayIso]);
+
   const upcomingEvents = useMemo(() => {
-    const source = (payload?.calendar_upcoming && payload.calendar_upcoming.length > 0)
-      ? payload.calendar_upcoming
-      : (payload?.calendar || []);
+    const source = payload?.calendar_upcoming || [];
     const lookaheadDays = Number(calendarLookaheadDays);
-    const today = new Date().toISOString().slice(0, 10);
-    const untilDate = addDaysToIso(today, Number.isFinite(lookaheadDays) ? Math.round(lookaheadDays) : 90);
+    const untilDate = addDaysToIso(todayIso, Number.isFinite(lookaheadDays) ? Math.round(lookaheadDays) : 90);
     return source
       .map((event) => ({
         ...event,
@@ -248,74 +269,154 @@ const DividendsPage = () => {
         eventType: String(event.eventType || '').replace(/_/g, ' '),
         eventDate: normalizeIsoDate(event.eventDate || event.date || event.fetched_at),
       }))
-      .filter((event) => event.eventDate && event.eventDate >= today && event.eventDate <= untilDate)
+      .filter((event) => event.eventDate && event.eventDate >= todayIso && event.eventDate <= untilDate)
       .sort((left, right) => String(left.eventDate || '').localeCompare(String(right.eventDate || '')));
-  }, [calendarLookaheadDays, payload?.calendar, payload?.calendar_upcoming]);
+  }, [calendarLookaheadDays, payload?.calendar_upcoming, todayIso]);
 
-  const dividendRules = useMemo(() => alertRules
-    .filter((rule) => String(rule.type || '').toLowerCase() === 'dividend_announcement')
-    .filter((rule) => !selectedPortfolio || !rule.portfolioId || rule.portfolioId === selectedPortfolio)
-  , [alertRules, selectedPortfolio]);
+  const calendarSourceEvents = useMemo(() => {
+    const combined = [
+      ...(payload?.calendar || []),
+      ...(payload?.calendar_upcoming || []),
+    ];
+    const deduped = new Map<string, typeof combined[number]>();
+    for (const event of combined) {
+      const eventDate = normalizeIsoDate(event.eventDate || event.date || event.fetched_at);
+      if (!eventDate) continue;
+      const key = [
+        String(event.ticker || '').toUpperCase(),
+        String(event.eventType || '').toLowerCase(),
+        eventDate,
+      ].join('|');
+      deduped.set(key, event);
+    }
+    return Array.from(deduped.values());
+  }, [payload?.calendar, payload?.calendar_upcoming]);
 
-  const dividendEvents = useMemo(() => alertEvents
-    .filter((event) => String(event.type || '').toLowerCase() === 'dividend_announcement')
-    .slice(0, 10), [alertEvents]);
+  const calendarEvents = useMemo<ProventCalendarItem[]>(() => (
+    calendarSourceEvents
+      .map((event) => {
+        const eventDate = normalizeIsoDate(event.eventDate || event.date || event.fetched_at);
+        if (!eventDate) return null;
+        const details = toRecord(event.details);
+        const amount = toAmount(details.value);
+        const status: ProventStatus = eventDate < todayIso ? 'paid' : 'provisioned';
+        return {
+          ticker: String(event.ticker || '').toUpperCase(),
+          eventType: String(event.eventType || '').replace(/_/g, ' '),
+          eventDate,
+          amount,
+          status,
+        };
+      })
+      .filter((event): event is ProventCalendarItem => Boolean(event))
+      .sort((left, right) => (
+        String(left.eventDate).localeCompare(String(right.eventDate))
+        || String(left.ticker).localeCompare(String(right.ticker))
+      ))
+  ), [calendarSourceEvents, todayIso]);
+
+  const calendarMonthOptions = useMemo(() => {
+    const months = new Set(calendarEvents.map((event) => event.eventDate.slice(0, 7)));
+    months.add(todayIso.slice(0, 7));
+    return Array.from(months)
+      .sort()
+      .map((month) => ({
+        value: month,
+        label: formatMonthLabel(month, numberLocale),
+      }));
+  }, [calendarEvents, numberLocale, todayIso]);
+
+  useEffect(() => {
+    setCalendarMonth(todayIso.slice(0, 7));
+  }, [selectedPortfolio, todayIso]);
+
+  useEffect(() => {
+    if (!calendarMonthOptions.some((option) => option.value === calendarMonth)) {
+      const currentMonth = todayIso.slice(0, 7);
+      const fallback = calendarMonthOptions.find((option) => option.value === currentMonth)?.value
+        || calendarMonthOptions[calendarMonthOptions.length - 1]?.value
+        || currentMonth;
+      setCalendarMonth(fallback);
+    }
+  }, [calendarMonth, calendarMonthOptions, todayIso]);
+
+  const calendarMonthEvents = useMemo(() => (
+    calendarEvents.filter((event) => (
+      event.eventDate.startsWith(`${calendarMonth}-`)
+      && Boolean(visibleStatuses[event.status])
+    ))
+  ), [calendarEvents, calendarMonth, visibleStatuses]);
+
+  useEffect(() => {
+    setExpandedDates({});
+  }, [calendarMonth, selectedPortfolio]);
+
+  const calendarEventsByDate = useMemo(() => {
+    const grouped = new Map<string, ProventCalendarItem[]>();
+    for (const event of calendarMonthEvents) {
+      if (!grouped.has(event.eventDate)) grouped.set(event.eventDate, []);
+      grouped.get(event.eventDate)?.push(event);
+    }
+    return grouped;
+  }, [calendarMonthEvents]);
+
+  const weekdayLabels = useMemo(() => {
+    const sunday = new Date(Date.UTC(2023, 0, 1, 12, 0, 0));
+    return Array.from({ length: 7 }, (_, index) => {
+      const date = new Date(sunday.getTime() + (index * 86400000));
+      return date.toLocaleDateString(numberLocale, { weekday: 'short', timeZone: 'UTC' });
+    });
+  }, [numberLocale]);
+
+  const calendarCells = useMemo(() => {
+    const [yearRaw, monthRaw] = calendarMonth.split('-');
+    const year = Number(yearRaw);
+    const month = Number(monthRaw);
+    if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) return [];
+
+    const firstDay = new Date(Date.UTC(year, month - 1, 1));
+    const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    const leadDays = firstDay.getUTCDay();
+    const cells: Array<{ date: string | null; day: number | null; events: ProventCalendarItem[] }> = [];
+
+    for (let index = 0; index < leadDays; index += 1) {
+      cells.push({ date: null, day: null, events: [] });
+    }
+
+    for (let day = 1; day <= daysInMonth; day += 1) {
+      const date = `${calendarMonth}-${String(day).padStart(2, '0')}`;
+      cells.push({
+        date,
+        day,
+        events: calendarEventsByDate.get(date) || [],
+      });
+    }
+
+    while (cells.length % 7 !== 0) {
+      cells.push({ date: null, day: null, events: [] });
+    }
+
+    return cells;
+  }, [calendarEventsByDate, calendarMonth]);
+
   const totalInPeriod = Number(payload?.total_in_period ?? payload?.total_last_12_months ?? 0);
   const averageMonthlyIncome = Number(payload?.average_monthly_income ?? payload?.projected_monthly_income ?? 0);
   const annualizedIncome = Number(payload?.annualized_income ?? payload?.projected_annual_income ?? (averageMonthlyIncome * 12));
   const yieldOnCostPeriod = Number(payload?.yield_on_cost_realized ?? 0);
   const currentDividendYieldPeriod = Number(payload?.dividend_yield_current ?? 0);
 
-  const handleCreateRule = async () => {
-    if (!selectedPortfolio) return;
-    setSavingRule(true);
-    try {
-      const normalizedTicker = alertTicker.trim().toUpperCase();
-      const lookahead = Number(alertLookaheadDays);
-      await api.createAlertRule({
-        type: 'dividend_announcement',
-        enabled: true,
-        portfolioId: selectedPortfolio,
-        params: {
-          ticker: normalizedTicker || null,
-          lookaheadDays: Number.isFinite(lookahead) ? Math.round(lookahead) : 30,
-        },
-        description: normalizedTicker
-          ? `Dividend announcement alert for ${normalizedTicker}`
-          : 'Dividend announcement alert for all assets',
-      });
-      setAlertTicker('');
-      await refreshAlerts();
-      showToast(t('dividends.alerts.created', { defaultValue: 'Alert created.' }), 'success');
-    } catch {
-      showToast(t('dividends.alerts.createError', { defaultValue: 'Failed to create alert.' }), 'error');
-    } finally {
-      setSavingRule(false);
-    }
+  const toggleStatus = (status: ProventStatus) => {
+    setVisibleStatuses((previous) => ({
+      ...previous,
+      [status]: !previous[status],
+    }));
   };
 
-  const handleDeleteRule = async (ruleId: string) => {
-    try {
-      await api.deleteAlertRule(ruleId);
-      await refreshAlerts();
-      showToast(t('dividends.alerts.deleted', { defaultValue: 'Alert removed.' }), 'success');
-    } catch {
-      showToast(t('dividends.alerts.deleteError', { defaultValue: 'Failed to remove alert.' }), 'error');
-    }
-  };
-
-  const handleEvaluateAlerts = async () => {
-    if (!selectedPortfolio) return;
-    setEvaluatingAlerts(true);
-    try {
-      await api.evaluateAlerts(selectedPortfolio);
-      await refreshAlerts();
-      showToast(t('dividends.alerts.evaluated', { defaultValue: 'Alerts evaluated.' }), 'success');
-    } catch {
-      showToast(t('dividends.alerts.evaluateError', { defaultValue: 'Failed to evaluate alerts.' }), 'error');
-    } finally {
-      setEvaluatingAlerts(false);
-    }
+  const toggleDateExpansion = (date: string) => {
+    setExpandedDates((previous) => ({
+      ...previous,
+      [date]: !previous[date],
+    }));
   };
 
   return (
@@ -468,76 +569,90 @@ const DividendsPage = () => {
                 )}
               </section>
 
-              <section className="dividends-card">
+              <section className="dividends-card dividends-card--wide">
                 <header className="dividends-card__header">
-                  <h2>{t('dividends.alerts.title', { defaultValue: 'Dividend Alerts' })}</h2>
+                  <h2>{t('dividends.proventsCalendar', { defaultValue: 'Provents Calendar' })}</h2>
+                  <div className="provents-calendar__controls">
+                    <SharedDropdown
+                      className="dividends-page__dropdown"
+                      size="sm"
+                      value={calendarMonth}
+                      onChange={setCalendarMonth}
+                      options={calendarMonthOptions}
+                      ariaLabel={t('dividends.calendarMonth', { defaultValue: 'Month' })}
+                    />
+                  </div>
                 </header>
 
-                <div className="dividends-alerts__form">
-                  <input
-                    className="dividends-page__input"
-                    type="text"
-                    value={alertTicker}
-                    placeholder={t('dividends.alerts.tickerPlaceholder', { defaultValue: 'Ticker (optional)' })}
-                    onChange={(event) => setAlertTicker(event.target.value.toUpperCase())}
-                  />
-                  <SharedDropdown
-                    className="dividends-page__dropdown"
-                    value={alertLookaheadDays}
-                    onChange={setAlertLookaheadDays}
-                    options={alertLookaheadOptions}
-                    ariaLabel={t('dividends.alerts.lookaheadLabel', { defaultValue: 'Lookahead' })}
-                  />
+                <div className="provents-calendar__legend">
                   <button
                     type="button"
-                    className="dividends-page__button"
-                    disabled={savingRule || !selectedPortfolio}
-                    onClick={handleCreateRule}
+                    className={`provents-calendar__legend-item provents-calendar__legend-item--paid ${visibleStatuses.paid ? '' : 'provents-calendar__legend-item--inactive'}`.trim()}
+                    onClick={() => toggleStatus('paid')}
                   >
-                    {t('dividends.alerts.create', { defaultValue: 'Create Alert' })}
+                    {t('dividends.calendarStatus.paid', { defaultValue: 'Paid' })}
                   </button>
                   <button
                     type="button"
-                    className="dividends-page__button dividends-page__button--secondary"
-                    disabled={evaluatingAlerts || !selectedPortfolio}
-                    onClick={handleEvaluateAlerts}
+                    className={`provents-calendar__legend-item provents-calendar__legend-item--provisioned ${visibleStatuses.provisioned ? '' : 'provents-calendar__legend-item--inactive'}`.trim()}
+                    onClick={() => toggleStatus('provisioned')}
                   >
-                    {t('dividends.alerts.evaluateNow', { defaultValue: 'Evaluate Now' })}
+                    {t('dividends.calendarStatus.provisioned', { defaultValue: 'Provisioned' })}
                   </button>
                 </div>
 
-                <div className="dividends-alerts__rules">
-                  <h3>{t('dividends.alerts.activeRules', { defaultValue: 'Active Rules' })}</h3>
-                  {dividendRules.length === 0 ? (
-                    <p className="dividends-card__empty">{t('dividends.alerts.noRules', { defaultValue: 'No dividend alert rules.' })}</p>
-                  ) : (
-                    <ul>
-                      {dividendRules.map((rule) => (
-                        <li key={rule.ruleId}>
-                          <span>{rule.description || rule.ruleId}</span>
-                          <button type="button" onClick={() => handleDeleteRule(rule.ruleId)}>
-                            {t('common.delete')}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
+                {calendarMonthEvents.length === 0 && (
+                  <p className="dividends-card__empty">{t('dividends.noCalendarEvents', { defaultValue: 'No provents in selected month.' })}</p>
+                )}
+
+                <div className="provents-calendar__weekdays">
+                  {weekdayLabels.map((label) => (
+                    <span key={label} className="provents-calendar__weekday">{label}</span>
+                  ))}
                 </div>
 
-                <div className="dividends-alerts__events">
-                  <h3>{t('dividends.alerts.recentEvents', { defaultValue: 'Recent Events' })}</h3>
-                  {dividendEvents.length === 0 ? (
-                    <p className="dividends-card__empty">{t('dividends.alerts.noEvents', { defaultValue: 'No triggered dividend alerts.' })}</p>
-                  ) : (
-                    <ul>
-                      {dividendEvents.map((event) => (
-                        <li key={event.eventId}>
-                          <span>{event.message}</span>
-                          <time>{formatDate(event.eventAt, numberLocale)}</time>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
+                <div className="provents-calendar__grid">
+                  {calendarCells.map((cell, index) => (
+                    <article
+                      key={`${cell.date || 'empty'}-${index}`}
+                      className={`provents-calendar__cell ${cell.date ? '' : 'provents-calendar__cell--placeholder'}`.trim()}
+                    >
+                      {cell.day ? (
+                        <>
+                          <header className="provents-calendar__cell-header">
+                            <span className="provents-calendar__cell-day">{cell.day}</span>
+                          </header>
+                          <div className="provents-calendar__cell-events">
+                            {(cell.date && expandedDates[cell.date] ? cell.events : cell.events.slice(0, 3)).map((entry, eventIndex) => (
+                              <div
+                                key={`${cell.date}-${entry.ticker}-${entry.eventType}-${eventIndex}`}
+                                className={`provents-calendar__event provents-calendar__event--${entry.status}`}
+                                title={`${entry.ticker} ${entry.eventType}`}
+                              >
+                                <span className="provents-calendar__event-ticker">{entry.ticker}</span>
+                                {entry.amount !== null && (
+                                  <span className="provents-calendar__event-amount">
+                                    {formatCurrency(entry.amount, 'BRL', numberLocale)}
+                                  </span>
+                                )}
+                              </div>
+                            ))}
+                            {cell.events.length > 3 && (
+                              <button
+                                type="button"
+                                className="provents-calendar__more"
+                                onClick={() => cell.date && toggleDateExpansion(cell.date)}
+                              >
+                                {cell.date && expandedDates[cell.date]
+                                  ? t('common.showLess', { defaultValue: 'Show less' })
+                                  : `+${cell.events.length - 3}`}
+                              </button>
+                            )}
+                          </div>
+                        </>
+                      ) : null}
+                    </article>
+                  ))}
                 </div>
               </section>
             </div>

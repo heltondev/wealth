@@ -294,19 +294,37 @@ class PlatformService {
 
 	async fetchCorporateEvents(ticker, options = {}) {
 		const assets = await this.#resolveAssetsForTickerOrPortfolio(ticker, options.portfolioId);
+		const activeAssets = assets.filter((asset) =>
+			String(asset.status || 'active').toLowerCase() === 'active'
+		);
+		const prioritizeFiiForPortfolio = !ticker && Boolean(options.portfolioId);
 		const persistedEvents = [];
 
-		for (const asset of assets) {
+		for (const asset of activeAssets) {
 			try {
-				const market = resolveAssetMarket(asset);
-				const payload = await this.marketDataService.fetchAssetData(asset.ticker, market, asset);
-				const calendar =
-					payload?.raw?.final_payload?.calendar ||
-					payload?.raw?.primary_payload?.calendar ||
-					payload?.raw?.final_payload?.info?.calendarEvents ||
-					null;
+				const isBrazilianFii =
+					String(asset.assetClass || '').toLowerCase() === 'fii'
+					&& String(asset.country || 'BR').toUpperCase() === 'BR';
+				if (prioritizeFiiForPortfolio && !isBrazilianFii) continue;
+				let normalizedEvents = [];
 
-				const normalizedEvents = this.#normalizeCalendarEvents(asset.ticker, calendar, payload.data_source);
+				if (isBrazilianFii) {
+					const statusInvestEvents = await this.#fetchStatusInvestDividendEvents(asset.ticker, 'fii');
+					const fundsExplorerEvents = await this.#fetchFundsExplorerDividendEvents(asset.ticker);
+					normalizedEvents = this.#mergeDividendEvents(statusInvestEvents, fundsExplorerEvents);
+				}
+
+				if (normalizedEvents.length === 0 && !isBrazilianFii) {
+					const market = resolveAssetMarket(asset);
+					const payload = await this.marketDataService.fetchAssetData(asset.ticker, market, asset);
+					const calendar =
+						payload?.raw?.final_payload?.calendar ||
+						payload?.raw?.primary_payload?.calendar ||
+						payload?.raw?.final_payload?.info?.calendarEvents ||
+						null;
+					normalizedEvents = this.#normalizeCalendarEvents(asset.ticker, calendar, payload.data_source);
+				}
+
 				for (const event of normalizedEvents) {
 					await this.dynamo.send(
 						new PutCommand({
@@ -323,7 +341,7 @@ class PlatformService {
 								details: event.details,
 								data_source: event.data_source,
 								fetched_at: nowIso(),
-								is_scraped: false,
+								is_scraped: Boolean(event.is_scraped),
 								updatedAt: nowIso(),
 							},
 						})
@@ -344,12 +362,12 @@ class PlatformService {
 
 		await this.#recordJobRun('corporate-events', {
 			status: 'success',
-			tickers: assets.map((asset) => asset.ticker),
+			tickers: activeAssets.map((asset) => asset.ticker),
 			persisted: persistedEvents.length,
 		});
 
 		return {
-			tickers: assets.map((asset) => asset.ticker),
+			tickers: activeAssets.map((asset) => asset.ticker),
 			persisted: persistedEvents.length,
 			events: persistedEvents,
 			fetched_at: nowIso(),
@@ -566,6 +584,17 @@ class PlatformService {
 		const activeAssetByTicker = new Map(
 			activeAssets.map((asset) => [String(asset.ticker || '').toUpperCase(), asset])
 		);
+		const activeIncomeTickers = new Set(
+			activeAssets
+				.filter((asset) => {
+					const quantity = toNumberOrNull(asset.quantity);
+					const currentValue = toNumberOrNull(asset.currentValue);
+					if (quantity === null && currentValue === null) return true;
+					return (quantity ?? 0) > 0 || (currentValue ?? 0) > 0;
+				})
+				.map((asset) => String(asset.ticker || '').toUpperCase())
+				.filter(Boolean)
+		);
 		const fxRates = await this.#getLatestFxMap();
 		const transactions = await this.#listPortfolioTransactions(portfolioId);
 		const metrics = await this.priceHistoryService.getPortfolioMetrics(userId, {
@@ -673,12 +702,12 @@ class PlatformService {
 		const currentDividendYield = currentValueBrl > 0 ? (totalInPeriod / currentValueBrl) * 100 : 0;
 
 		const calendarByTicker = await Promise.all(
-			activeAssets.map(async (asset) => {
+			Array.from(activeIncomeTickers).map(async (ticker) => {
 				const events = await this.#queryAll({
 					TableName: this.tableName,
 					KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
 					ExpressionAttributeValues: {
-						':pk': `ASSET_EVENT#${asset.ticker}`,
+						':pk': `ASSET_EVENT#${ticker}`,
 						':sk': 'DATE#',
 					},
 				});
@@ -686,13 +715,17 @@ class PlatformService {
 					.filter((event) => this.#isDividendEventType(event.eventType))
 					.map((event) => ({
 						...event,
+						ticker: String(event.ticker || ticker).toUpperCase(),
 						eventDate: normalizeDate(event.eventDate || event.date) || normalizeDate(event.fetched_at) || null,
 					}));
 			})
 		);
 		const calendars = calendarByTicker
 			.flat()
-			.filter((event) => event.eventDate)
+			.filter((event) =>
+				event.eventDate
+				&& activeIncomeTickers.has(String(event.ticker || '').toUpperCase())
+			)
 			.sort((left, right) => String(left.eventDate || '').localeCompare(String(right.eventDate || '')));
 		const upcoming = calendars.filter((event) => String(event.eventDate || '') >= today);
 
@@ -2151,25 +2184,299 @@ class PlatformService {
 		return map;
 	}
 
+	async #fetchStatusInvestDividendEvents(ticker, assetClass = 'fii') {
+		const rawTicker = String(ticker || '').toLowerCase().replace(/\.sa$/i, '');
+		const slug = rawTicker.replace(/[^a-z0-9]/g, '');
+		if (!slug) return [];
+
+		const category = String(assetClass || '').toLowerCase() === 'fii' ? 'fundos-imobiliarios' : 'acoes';
+		const sourceUrl = `https://statusinvest.com.br/${category}/${slug}`;
+		const timeoutMs = Number(process.env.MARKET_DATA_STATUSINVEST_TIMEOUT_MS || 9000);
+		let response;
+		try {
+			response = await withRetry(
+				() =>
+					fetchWithTimeout(sourceUrl, {
+						timeoutMs,
+						headers: { Accept: 'text/html,*/*' },
+					}),
+				{ retries: 0, baseDelayMs: 400, factor: 2 }
+			);
+		} catch {
+			return [];
+		}
+		if (!response?.ok) return [];
+
+		const html = await response.text();
+		const parsed = this.#extractStatusInvestDividendRows(html);
+		const normalizedTicker = String(ticker || '').toUpperCase();
+		return parsed.map((row) => ({
+			eventId: hashId(`${normalizedTicker}:statusinvest:${row.eventDate}:${row.type || ''}:${row.value ?? ''}`),
+			title: `${row.type || 'Dividend'} - ${normalizedTicker}`,
+			eventType: row.eventType,
+			date: row.eventDate,
+			details: {
+				ticker: normalizedTicker,
+				exDate: row.exDate || null,
+				paymentDate: row.eventDate,
+				value: row.value ?? null,
+				valueText: row.valueText || null,
+				rawType: row.type || null,
+				url: sourceUrl,
+			},
+			data_source: 'statusinvest_proventos',
+			is_scraped: true,
+		}));
+	}
+
+	async #fetchFundsExplorerDividendEvents(ticker) {
+		const normalizedTicker = String(ticker || '').toUpperCase().replace(/\.SA$/i, '');
+		const slug = normalizedTicker.toLowerCase().replace(/[^a-z0-9]/g, '');
+		if (!slug) return [];
+
+		const sourceUrl = `https://www.fundsexplorer.com.br/funds/${slug}`;
+		const timeoutMs = Number(process.env.MARKET_DATA_FUNDSEXPLORER_TIMEOUT_MS || 9000);
+		let response;
+		try {
+			response = await withRetry(
+				() =>
+					fetchWithTimeout(sourceUrl, {
+						timeoutMs,
+						headers: {
+							Accept: 'text/html,*/*',
+							'User-Agent': 'Mozilla/5.0 (compatible; WealthBot/1.0)',
+						},
+					}),
+				{ retries: 0, baseDelayMs: 400, factor: 2 }
+			);
+		} catch {
+			return [];
+		}
+		if (!response?.ok) return [];
+
+		const html = await response.text();
+		const meta = this.#extractFundsExplorerMeta(html);
+		if (!meta) return [];
+
+		const paymentDate = normalizeDate(meta.pr_datapagamento || meta.ur_data_pagamento);
+		const baseDate = normalizeDate(meta.pr_database || meta.ur_data_base);
+		const value = toNumberOrNull(meta.pr_valor ?? meta.ur_valor);
+		if (!paymentDate && !baseDate) return [];
+
+		const events = [];
+		const pushEvent = (eventType, eventDate, details = {}) => {
+			if (!eventDate) return;
+			events.push({
+				eventId: hashId(`${normalizedTicker}:fundsexplorer:${eventType}:${eventDate}:${value ?? ''}`),
+				title: `${eventType.replace(/_/g, ' ')} - ${normalizedTicker}`,
+				eventType,
+				date: eventDate,
+				details: {
+					ticker: normalizedTicker,
+					value,
+					url: sourceUrl,
+					...details,
+				},
+				data_source: 'fundsexplorer_fii',
+				is_scraped: true,
+			});
+		};
+
+		pushEvent('dividend_payment', paymentDate, {
+			exDate: baseDate || null,
+			paymentDate: paymentDate || null,
+		});
+		if (baseDate && baseDate !== paymentDate) {
+			pushEvent('dividend_base_date', baseDate, {
+				exDate: baseDate,
+				paymentDate: paymentDate || null,
+			});
+		}
+
+		return events.sort((left, right) => String(left.date || '').localeCompare(String(right.date || '')));
+	}
+
+	#extractFundsExplorerMeta(html) {
+		const content = String(html || '');
+		if (!content) return null;
+		const match = content.match(/var\s+dataLayer_content\s*=\s*(\{[\s\S]*?\});/);
+		if (!match) return null;
+
+		try {
+			const parsed = JSON.parse(match[1]);
+			return parsed?.pagePostTerms?.meta || null;
+		} catch {
+			return null;
+		}
+	}
+
+	#mergeDividendEvents(primaryEvents, secondaryEvents) {
+		const primary = Array.isArray(primaryEvents) ? primaryEvents : [];
+		const secondary = Array.isArray(secondaryEvents) ? secondaryEvents : [];
+		if (primary.length === 0) return secondary;
+		if (secondary.length === 0) return primary;
+
+		const merged = primary.map((event) => ({
+			...event,
+			details: event?.details && typeof event.details === 'object'
+				? { ...event.details }
+				: event.details,
+		}));
+		const eventByDate = new Map();
+		for (const event of merged) {
+			const key = normalizeDate(event?.date || event?.eventDate);
+			if (key && !eventByDate.has(key)) eventByDate.set(key, event);
+		}
+
+		for (const extra of secondary) {
+			const key = normalizeDate(extra?.date || extra?.eventDate);
+			if (!key) continue;
+			const target = eventByDate.get(key);
+			if (!target) {
+				merged.push(extra);
+				eventByDate.set(key, extra);
+				continue;
+			}
+
+			const targetDetails =
+				target?.details && typeof target.details === 'object'
+					? target.details
+					: {};
+			const extraDetails =
+				extra?.details && typeof extra.details === 'object'
+					? extra.details
+					: {};
+			const targetValue = toNumberOrNull(targetDetails.value);
+			const extraValue = toNumberOrNull(extraDetails.value);
+			if ((targetValue === null || Math.abs(targetValue) === 0) && extraValue !== null && Math.abs(extraValue) > 0) {
+				targetDetails.value = extraValue;
+				if (extraDetails.valueText && !targetDetails.valueText) {
+					targetDetails.valueText = extraDetails.valueText;
+				}
+				targetDetails.value_source = extra.data_source || target.data_source;
+			}
+			if (!targetDetails.exDate && extraDetails.exDate) targetDetails.exDate = extraDetails.exDate;
+			if (!targetDetails.paymentDate && extraDetails.paymentDate) targetDetails.paymentDate = extraDetails.paymentDate;
+			target.details = targetDetails;
+		}
+
+		return merged.sort((left, right) => String(left.date || '').localeCompare(String(right.date || '')));
+	}
+
+	#extractStatusInvestDividendRows(html) {
+		const content = String(html || '');
+		if (!content) return [];
+		const rows = content.match(/<tr[\s\S]*?<\/tr>/gi) || [];
+		const parsed = [];
+
+		for (const row of rows) {
+			const cells = [];
+			const cellRegex = /<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi;
+			let match;
+			while ((match = cellRegex.exec(row)) !== null) {
+				const text = this.#htmlToPlainText(match[1]);
+				if (text) cells.push(text);
+			}
+			if (cells.length < 3) continue;
+
+			const dateMatches = cells
+				.map((cell) => cell.match(/\b\d{2}\/\d{2}\/\d{4}\b/)?.[0] || null)
+				.filter(Boolean);
+			if (dateMatches.length < 2) continue;
+
+			const exDate = normalizeDate(dateMatches[0]);
+			const eventDate = normalizeDate(dateMatches[1]) || exDate;
+			if (!eventDate) continue;
+
+			const valueText =
+				cells.find(
+					(cell) =>
+						(/[R$]|\d+[.,]\d+/.test(cell))
+						&& !/\b\d{2}\/\d{2}\/\d{4}\b/.test(cell)
+				) || null;
+			const value = valueText
+				? toNumberOrNull(
+					String(valueText)
+						.replace(/[^\d,.-]/g, '')
+						.replace(/\./g, '')
+						.replace(',', '.')
+				)
+				: null;
+			const type = cells[0] || 'Dividend';
+			const normalizedType = String(type).toLowerCase();
+			const eventType =
+				normalizedType.includes('jcp') || normalizedType.includes('juros')
+					? 'jcp'
+					: 'dividend';
+
+			if (!valueText && !/divid|rend|juro|provent|amort/i.test(cells.join(' '))) continue;
+
+			parsed.push({
+				type,
+				eventType,
+				exDate,
+				eventDate,
+				value,
+				valueText,
+			});
+		}
+
+		const dedupe = new Map();
+		for (const row of parsed) {
+			const key = `${row.eventType}:${row.eventDate}:${row.value ?? ''}:${row.type || ''}`;
+			if (!dedupe.has(key)) dedupe.set(key, row);
+		}
+		return Array.from(dedupe.values()).sort((left, right) =>
+			String(left.eventDate || '').localeCompare(String(right.eventDate || ''))
+		);
+	}
+
+	#htmlToPlainText(value) {
+		return String(value || '')
+			.replace(/<[^>]*>/g, ' ')
+			.replace(/&nbsp;/gi, ' ')
+			.replace(/&#160;/g, ' ')
+			.replace(/&amp;/gi, '&')
+			.replace(/&quot;/gi, '"')
+			.replace(/&#39;/g, '\'')
+			.replace(/&apos;/gi, '\'')
+			.replace(/&lt;/gi, '<')
+			.replace(/&gt;/gi, '>')
+			.replace(/\s+/g, ' ')
+			.trim();
+	}
+
 	#normalizeCalendarEvents(ticker, calendar, source) {
 		if (!calendar) return [];
 		const events = [];
-		const pushEvent = (type, rawValue) => {
-			if (rawValue === undefined || rawValue === null || rawValue === '') return;
-			const rawDate = normalizeDate(rawValue) || nowIso().slice(0, 10);
+		const pushEvent = (type, rawDateLike, details = null) => {
+			if (rawDateLike === undefined || rawDateLike === null || rawDateLike === '') return;
+			const rawDate = normalizeDate(rawDateLike) || nowIso().slice(0, 10);
 			events.push({
-				eventId: hashId(`${ticker}:${type}:${rawDate}:${JSON.stringify(rawValue)}`),
+				eventId: hashId(`${ticker}:${type}:${rawDate}:${JSON.stringify(details ?? rawDateLike)}`),
 				title: `${type} - ${ticker}`,
 				eventType: type,
 				date: rawDate,
-				details: rawValue,
+				details: details ?? rawDateLike,
 				data_source: source || 'yahoo_quote_api',
+				is_scraped: false,
 			});
 		};
 
 		if (Array.isArray(calendar)) {
 			for (const entry of calendar) {
-				pushEvent('calendar', entry?.date || entry?.eventDate || JSON.stringify(entry));
+				const eventType =
+					entry?.eventType
+					|| entry?.type
+					|| entry?.title
+					|| 'calendar';
+				const eventDate =
+					entry?.date
+					|| entry?.eventDate
+					|| entry?.paymentDate
+					|| entry?.exDate
+					|| JSON.stringify(entry);
+				pushEvent(eventType, eventDate, entry);
 			}
 			return events;
 		}
@@ -2177,11 +2484,28 @@ class PlatformService {
 		if (typeof calendar === 'object') {
 			for (const [key, value] of Object.entries(calendar)) {
 				if (Array.isArray(value)) {
-					for (const row of value) pushEvent(key, row?.date || row?.value || JSON.stringify(row));
+					for (const row of value) {
+						const rowDate =
+							row?.date
+							|| row?.eventDate
+							|| row?.paymentDate
+							|| row?.exDate
+							|| row?.value
+							|| JSON.stringify(row);
+						pushEvent(key, rowDate, row);
+					}
 				} else if (typeof value === 'object') {
-					for (const nested of Object.values(value)) pushEvent(key, nested);
+					for (const nested of Object.values(value)) {
+						const nestedDate =
+							nested?.date
+							|| nested?.eventDate
+							|| nested?.paymentDate
+							|| nested?.exDate
+							|| nested;
+						pushEvent(key, nestedDate, nested);
+					}
 				} else {
-					pushEvent(key, value);
+					pushEvent(key, value, value);
 				}
 			}
 		}
