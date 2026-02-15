@@ -448,6 +448,11 @@ const AssetsPage = () => {
             label: t('assets.modal.fields.investedAmount'),
             value: formatCurrency(selectedAsset.investedAmount, selectedAsset.currency || 'BRL', numberLocale),
           },
+          {
+            key: 'source',
+            label: t('assets.modal.fields.source'),
+            value: formatDetailValue(selectedAsset.source),
+          },
         ],
       },
       {
@@ -465,11 +470,6 @@ const AssetsPage = () => {
             value: t(`assets.statuses.${selectedAsset.status?.toLowerCase() || 'unknown'}`, {
               defaultValue: selectedAsset.status || t('assets.statuses.unknown'),
             }),
-          },
-          {
-            key: 'source',
-            label: t('assets.modal.fields.source'),
-            value: formatDetailValue(selectedAsset.source),
           },
           {
             key: 'country',
