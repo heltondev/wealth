@@ -23,6 +23,13 @@
     @include form-select-base(var(--bg-secondary), 0.9rem);
     width: auto;
     min-width: 180px;
+
+    &--small {
+      min-width: 100px;
+      font-size: 0.8rem;
+      padding-top: 0.35rem;
+      padding-bottom: 0.35rem;
+    }
   }
 
   &__loading,
@@ -114,11 +121,29 @@
 
   &__header {
     margin-bottom: $spacing-sm;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: $spacing-sm;
 
     h2 {
       font-size: 1rem;
       color: var(--text-primary);
       margin: 0;
+    }
+  }
+
+  &__controls {
+    display: inline-flex;
+    align-items: center;
+    gap: $spacing-xs;
+
+    label {
+      color: var(--text-secondary);
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
     }
   }
 

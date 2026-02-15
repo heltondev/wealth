@@ -705,6 +705,7 @@ class PortfolioPriceHistoryService {
 		const assets = await this.#listPortfolioAssets(portfolioId);
 		const transactions = await this.#listPortfolioTransactions(portfolioId);
 		const method = options.method || COST_METHODS.FIFO;
+		const includeBenchmarkComparison = options.includeBenchmarkComparison !== false;
 
 		const metrics = [];
 		for (const asset of assets) {
@@ -756,11 +757,13 @@ class PortfolioPriceHistoryService {
 					? (totalDividends / holdings.totalBuysCost) * 100
 					: null;
 
-			const benchmarkComparison = await this.#buildBenchmarkComparison(
-				resolveAssetMarket(asset),
-				priceRows,
-				holdings.firstBuyDate
-			);
+			const benchmarkComparison = includeBenchmarkComparison
+				? await this.#buildBenchmarkComparison(
+					resolveAssetMarket(asset),
+					priceRows,
+					holdings.firstBuyDate
+				)
+				: null;
 
 			metrics.push({
 				assetId: asset.assetId,

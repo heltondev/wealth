@@ -29,8 +29,11 @@ const PERIOD_TO_DAYS = {
 	'3M': 90,
 	'6M': 180,
 	'1A': 365,
+	'1Y': 365,
 	'2A': 730,
+	'2Y': 730,
 	'5A': 1825,
+	'5Y': 1825,
 	MAX: null,
 };
 
@@ -429,16 +432,31 @@ class PlatformService {
 		const metrics = await this.priceHistoryService.getPortfolioMetrics(userId, {
 			portfolioId,
 			method: options.method || 'fifo',
+			includeBenchmarkComparison: false,
 		});
 		const fxRates = await this.#getLatestFxMap();
 		const assetById = new Map(activeAssets.map((asset) => [asset.assetId, asset]));
 		const activeMetrics = metrics.assets.filter((metric) => assetById.has(metric.assetId));
+		const periodKey = String(options.period || 'MAX').toUpperCase();
+		const evolutionDays = Object.prototype.hasOwnProperty.call(PERIOD_TO_DAYS, periodKey)
+			? PERIOD_TO_DAYS[periodKey]
+			: PERIOD_TO_DAYS.MAX;
+
+		const detailEntries = await Promise.all(
+			activeMetrics.map(async (metric) => {
+				const detail = await this.#getLatestAssetDetail(portfolioId, metric.assetId);
+				return [metric.assetId, detail];
+			})
+		);
+		const detailByAssetId = new Map(detailEntries);
 
 		let totalBrl = 0;
 		let totalCostBrl = 0;
 		const allocationByClass = {};
 		const allocationByCurrency = {};
 		const allocationBySector = {};
+		const fxRateByAssetId = {};
+		const fallbackBrlByAssetId = {};
 
 		for (const metric of activeMetrics) {
 			const asset = assetById.get(metric.assetId) || {};
@@ -472,12 +490,14 @@ class PlatformService {
 			const costTotalBrl = fxRate > 0 ? costTotal * fxRate : 0;
 			totalBrl += marketValueBrl;
 			totalCostBrl += costTotalBrl;
+			fxRateByAssetId[metric.assetId] = fxRate > 0 ? fxRate : 1;
+			fallbackBrlByAssetId[metric.assetId] = marketValueBrl;
 
 			const assetClass = String(asset.assetClass || 'unknown').toLowerCase();
 			allocationByClass[assetClass] = (allocationByClass[assetClass] || 0) + marketValueBrl;
 			allocationByCurrency[currency] = (allocationByCurrency[currency] || 0) + marketValueBrl;
 
-			const detail = await this.#getLatestAssetDetail(portfolioId, metric.assetId);
+			const detail = detailByAssetId.get(metric.assetId) || null;
 			const sector =
 				detail?.fundamentals?.sector ||
 				detail?.raw?.final_payload?.info?.sector ||
@@ -490,7 +510,29 @@ class PlatformService {
 			allocationBySector[sector] = (allocationBySector[sector] || 0) + marketValueBrl;
 		}
 
-		const historySeries = await this.#buildPortfolioValueSeries(portfolioId, activeMetrics, 365);
+		const historySeries = await this.#buildPortfolioValueSeries(
+			portfolioId,
+			activeMetrics,
+			evolutionDays,
+			{
+				fxRateByAssetId,
+				fallbackBrlByAssetId,
+			}
+		);
+		const today = nowIso().slice(0, 10);
+		if (historySeries.length) {
+			const lastPoint = historySeries[historySeries.length - 1];
+			if (lastPoint.date === today) {
+				historySeries[historySeries.length - 1] = {
+					...lastPoint,
+					value: totalBrl,
+				};
+			} else {
+				historySeries.push({ date: today, value: totalBrl });
+			}
+		} else {
+			historySeries.push({ date: today, value: totalBrl });
+		}
 		const absoluteReturn = totalBrl - totalCostBrl;
 		const percentReturn =
 			totalCostBrl > Number.EPSILON
@@ -506,6 +548,7 @@ class PlatformService {
 			allocation_by_currency: this.#toAllocationArray(allocationByCurrency, totalBrl),
 			allocation_by_sector: this.#toAllocationArray(allocationBySector, totalBrl),
 			evolution: historySeries,
+			evolution_period: periodKey,
 			return_absolute: absoluteReturn,
 			return_percent: percentReturn,
 			fetched_at: nowIso(),
@@ -2175,20 +2218,33 @@ class PlatformService {
 		return output;
 	}
 
-	async #buildPortfolioValueSeries(portfolioId, metricsAssets, days = 365) {
-		const rowsByAsset = {};
-		const quantityByAsset = {};
-		for (const asset of metricsAssets) {
-			const rows = await this.#listAssetPriceRows(portfolioId, asset.assetId);
-			rowsByAsset[asset.assetId] = rows;
-			quantityByAsset[asset.assetId] = numeric(asset.quantity_current, 0);
-		}
+	async #buildPortfolioValueSeries(portfolioId, metricsAssets, days = 365, options = {}) {
+		const assetsSeries = await Promise.all(
+			metricsAssets.map(async (asset) => {
+				const rows = await this.#listAssetPriceRows(portfolioId, asset.assetId);
+				return {
+					assetId: asset.assetId,
+					rows,
+					quantity: numeric(asset.quantity_current, 0),
+					fxRate: numeric(options.fxRateByAssetId?.[asset.assetId], 1),
+					fallbackBrl: numeric(options.fallbackBrlByAssetId?.[asset.assetId], 0),
+				};
+			})
+		);
 
 		const allDates = new Set();
-		for (const rows of Object.values(rowsByAsset)) {
-			for (const row of rows) allDates.add(row.date);
+		for (const assetSeries of assetsSeries) {
+			for (const row of assetSeries.rows) allDates.add(row.date);
 		}
 		let dates = Array.from(allDates).sort();
+		if (!dates.length) {
+			const today = nowIso().slice(0, 10);
+			const totalFallback = assetsSeries.reduce(
+				(sum, assetSeries) => sum + numeric(assetSeries.fallbackBrl, 0),
+				0
+			);
+			return [{ date: today, value: totalFallback }];
+		}
 		if (Number.isFinite(days) && days !== null && days > 0 && dates.length > days) {
 			dates = dates.slice(-days);
 		}
@@ -2196,10 +2252,16 @@ class PlatformService {
 		const series = [];
 		for (const date of dates) {
 			let value = 0;
-			for (const [assetId, rows] of Object.entries(rowsByAsset)) {
-				const row = this.#findRowAtOrBefore(rows, date);
-				if (!row) continue;
-				value += quantityByAsset[assetId] * numeric(row.close, 0);
+			for (const assetSeries of assetsSeries) {
+				if (assetSeries.rows.length > 0) {
+					const row = this.#findRowAtOrBefore(assetSeries.rows, date);
+					const close = row ? toNumberOrNull(row.close) : null;
+					if (close !== null && Math.abs(close) > Number.EPSILON) {
+						value += assetSeries.quantity * close * assetSeries.fxRate;
+						continue;
+					}
+				}
+				value += assetSeries.fallbackBrl;
 			}
 			series.push({ date, value });
 		}

@@ -25,6 +25,7 @@
     "allocationByCurrency": "Alocação por Moeda",
     "allocationBySector": "Alocação por Setor",
     "evolution": "Evolução da Carteira",
+    "period": "Período",
     "selectPortfolio": "Selecionar portfólio",
     "noSeries": "Sem dados disponíveis.",
     "loadError": "Falha ao carregar dados do painel.",

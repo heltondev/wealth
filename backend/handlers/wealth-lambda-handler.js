@@ -909,6 +909,7 @@ async function handleDashboard(method, portfolioId, userId, query = {}) {
 	return platformService.getDashboard(userId, {
 		portfolioId,
 		method: query.method || 'fifo',
+		period: query.period || 'MAX',
 	});
 }
 

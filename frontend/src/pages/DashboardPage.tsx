@@ -14,7 +14,12 @@ import {
   YAxis,
 } from 'recharts';
 import Layout from '../components/Layout';
-import { api, type DashboardAllocationItem, type DashboardResponse } from '../services/api';
+import { api, type DashboardAllocationItem, type DashboardResponse, type DropdownConfigMap } from '../services/api';
+import {
+  DEFAULT_DROPDOWN_CONFIG,
+  getDropdownOptions,
+  normalizeDropdownConfig,
+} from '../config/dropdowns';
 import { usePortfolioData } from '../context/PortfolioDataContext';
 import { formatCurrency, formatDate } from '../utils/formatters';
 import './DashboardPage.scss';
@@ -22,6 +27,7 @@ import './DashboardPage.scss';
 const CHART_COLORS = ['#22d3ee', '#818cf8', '#34d399', '#f59e0b', '#fb7185', '#38bdf8', '#f97316', '#a78bfa'];
 const EVOLUTION_STROKE = '#22d3ee';
 const EVOLUTION_FILL = 'rgba(34, 211, 238, 0.26)';
+const SUPPORTED_EVOLUTION_PERIODS = new Set(['1M', '3M', '6M', '1Y', '2Y', '5Y', 'MAX']);
 
 type Trend = 'positive' | 'negative' | 'neutral';
 
@@ -59,6 +65,41 @@ const DashboardPage = () => {
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [dropdownConfig, setDropdownConfig] = useState<DropdownConfigMap>(() =>
+    normalizeDropdownConfig(DEFAULT_DROPDOWN_CONFIG)
+  );
+  const [evolutionPeriod, setEvolutionPeriod] = useState<string>('MAX');
+
+  useEffect(() => {
+    api.getDropdownSettings()
+      .then((dropdownSettings) => {
+        setDropdownConfig(normalizeDropdownConfig(dropdownSettings.dropdowns));
+      })
+      .catch(() => {
+        setDropdownConfig(normalizeDropdownConfig(DEFAULT_DROPDOWN_CONFIG));
+      });
+  }, []);
+
+  const evolutionPeriodOptions = useMemo(() => {
+    const configured = getDropdownOptions(dropdownConfig, 'dashboard.evolution.period');
+    const fallback = getDropdownOptions(DEFAULT_DROPDOWN_CONFIG, 'dashboard.evolution.period');
+    const normalizePeriodOptions = (source: Array<{ value: string; label: string }>) => source
+      .map((option) => ({
+        value: String(option.value || '').toUpperCase(),
+        label: String(option.label || option.value || '').trim(),
+      }))
+      .filter((option) => option.value && SUPPORTED_EVOLUTION_PERIODS.has(option.value));
+
+    const configuredOptions = normalizePeriodOptions(configured);
+    if (configuredOptions.length > 0) return configuredOptions;
+    return normalizePeriodOptions(fallback);
+  }, [dropdownConfig]);
+
+  useEffect(() => {
+    if (evolutionPeriodOptions.length === 0) return;
+    if (evolutionPeriodOptions.some((option) => option.value === evolutionPeriod)) return;
+    setEvolutionPeriod(evolutionPeriodOptions[0].value);
+  }, [evolutionPeriod, evolutionPeriodOptions]);
 
   useEffect(() => {
     if (!selectedPortfolio) {
@@ -71,7 +112,7 @@ const DashboardPage = () => {
     setLoading(true);
     setError(null);
 
-    api.getDashboard(selectedPortfolio)
+    api.getDashboard(selectedPortfolio, evolutionPeriod)
       .then((payload) => {
         if (cancelled) return;
         setDashboard(payload);
@@ -86,7 +127,7 @@ const DashboardPage = () => {
       });
 
     return () => { cancelled = true; };
-  }, [selectedPortfolio]);
+  }, [selectedPortfolio, evolutionPeriod]);
 
   const numberLocale = i18n.language?.startsWith('pt') ? 'pt-BR' : 'en-US';
   const absoluteReturn = Number(dashboard?.return_absolute || 0);
@@ -268,6 +309,23 @@ const DashboardPage = () => {
               <section className="dashboard-card dashboard-card--wide">
                 <header className="dashboard-card__header">
                   <h2>{t('dashboard.evolution', { defaultValue: 'Portfolio Evolution' })}</h2>
+                  <div className="dashboard-card__controls">
+                    <label htmlFor="dashboard-evolution-period">
+                      {t('dashboard.period', { defaultValue: 'Period' })}
+                    </label>
+                    <select
+                      id="dashboard-evolution-period"
+                      className="dashboard__select dashboard__select--small"
+                      value={evolutionPeriod}
+                      onChange={(event) => setEvolutionPeriod(event.target.value)}
+                    >
+                      {evolutionPeriodOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label || option.value}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </header>
                 {evolutionData.length === 0 ? (
                   <p className="dashboard-card__empty">{t('dashboard.noSeries', { defaultValue: 'No data available.' })}</p>

@@ -94,6 +94,18 @@ export const DEFAULT_DROPDOWN_CONFIG: DropdownConfigMap = {
       { value: '50', label: '50' },
     ],
   },
+  'dashboard.evolution.period': {
+    label: 'Dashboard / Evolution Period',
+    options: [
+      { value: '1M', label: '1M' },
+      { value: '3M', label: '3M' },
+      { value: '6M', label: '6M' },
+      { value: '1Y', label: '1Y' },
+      { value: '2Y', label: '2Y' },
+      { value: '5Y', label: '5Y' },
+      { value: 'MAX', label: 'MAX' },
+    ],
+  },
 };
 
 export function sanitizeDropdownOptions(options: DropdownOption[]): DropdownOption[] {

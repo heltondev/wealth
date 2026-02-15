@@ -114,6 +114,7 @@ export interface DashboardResponse {
   allocation_by_currency: DashboardAllocationItem[];
   allocation_by_sector: DashboardAllocationItem[];
   evolution: Array<{ date: string; value: number }>;
+  evolution_period?: string;
   return_absolute: number;
   return_percent: number;
   fetched_at: string;
@@ -230,8 +231,10 @@ export const api = {
     request<Alias>('/settings/aliases', { method: 'POST', body: JSON.stringify(data) }),
 
   // Dashboard + analytics
-  getDashboard: (portfolioId: string) =>
-    request<DashboardResponse>(`/portfolios/${portfolioId}/dashboard`),
+  getDashboard: (portfolioId: string, period = 'MAX') =>
+    request<DashboardResponse>(
+      `/portfolios/${portfolioId}/dashboard?period=${encodeURIComponent(period)}`
+    ),
   getDividends: (portfolioId: string, params?: { fromDate?: string; method?: string }) => {
     const query = new URLSearchParams();
     if (params?.fromDate) query.set('fromDate', params.fromDate);

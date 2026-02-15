@@ -25,6 +25,7 @@
     "allocationByCurrency": "Allocation by Currency",
     "allocationBySector": "Allocation by Sector",
     "evolution": "Portfolio Evolution",
+    "period": "Period",
     "selectPortfolio": "Select portfolio",
     "noSeries": "No data available.",
     "loadError": "Failed to load dashboard data.",
