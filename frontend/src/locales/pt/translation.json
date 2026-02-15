@@ -18,7 +18,16 @@
     "title": "Painel",
     "totalValue": "Valor Total",
     "totalGain": "Ganho/Perda Total",
+    "returnPercent": "Retorno %",
+    "assetsCount": "Classes de Ativos",
     "allocation": "Alocação",
+    "allocationByClass": "Alocação por Classe",
+    "allocationByCurrency": "Alocação por Moeda",
+    "allocationBySector": "Alocação por Setor",
+    "evolution": "Evolução da Carteira",
+    "selectPortfolio": "Selecionar portfólio",
+    "noSeries": "Sem dados disponíveis.",
+    "loadError": "Falha ao carregar dados do painel.",
     "noData": "Nenhum dado de portfólio ainda. Crie um portfólio para começar."
   },
   "assets": {

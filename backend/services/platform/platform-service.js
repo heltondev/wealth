@@ -423,26 +423,55 @@ class PlatformService {
 	async getDashboard(userId, options = {}) {
 		const portfolioId = await this.#resolvePortfolioId(userId, options.portfolioId);
 		const assets = await this.#listPortfolioAssets(portfolioId);
+		const activeAssets = assets.filter((asset) =>
+			String(asset.status || 'active').toLowerCase() === 'active'
+		);
 		const metrics = await this.priceHistoryService.getPortfolioMetrics(userId, {
 			portfolioId,
 			method: options.method || 'fifo',
 		});
 		const fxRates = await this.#getLatestFxMap();
-		const assetById = new Map(assets.map((asset) => [asset.assetId, asset]));
+		const assetById = new Map(activeAssets.map((asset) => [asset.assetId, asset]));
+		const activeMetrics = metrics.assets.filter((metric) => assetById.has(metric.assetId));
 
 		let totalBrl = 0;
+		let totalCostBrl = 0;
 		const allocationByClass = {};
 		const allocationByCurrency = {};
 		const allocationBySector = {};
 
-		for (const metric of metrics.assets) {
+		for (const metric of activeMetrics) {
 			const asset = assetById.get(metric.assetId) || {};
 			const currency = metric.currency || asset.currency || 'BRL';
 			const fxKey = `${currency}/BRL`;
 			const fxRate = currency === 'BRL' ? 1 : numeric(fxRates[fxKey], 0);
-			const marketValue = numeric(metric.market_value, 0);
+			const metricMarketValue = toNumberOrNull(metric.market_value);
+			const metricQuantity = toNumberOrNull(metric.quantity_current);
+			const metricCurrentPrice = toNumberOrNull(metric.current_price);
+			const assetSnapshotCurrentValue = toNumberOrNull(asset.currentValue);
+			const assetSnapshotCurrentPrice = toNumberOrNull(asset.currentPrice);
+			const hasOpenQuantity =
+				metricQuantity !== null && Math.abs(metricQuantity) > Number.EPSILON;
+			const usableMetricMarketValue =
+				metricMarketValue !== null &&
+				(!hasOpenQuantity || Math.abs(metricMarketValue) > Number.EPSILON)
+					? metricMarketValue
+					: null;
+			const fallbackPrice = metricCurrentPrice ?? assetSnapshotCurrentPrice;
+			const derivedMarketValue =
+				(fallbackPrice !== null && metricQuantity !== null)
+					? fallbackPrice * metricQuantity
+					: null;
+			const marketValue =
+				usableMetricMarketValue ??
+				assetSnapshotCurrentValue ??
+				derivedMarketValue ??
+				0;
+			const costTotal = toNumberOrNull(metric.cost_total) ?? 0;
 			const marketValueBrl = fxRate > 0 ? marketValue * fxRate : 0;
+			const costTotalBrl = fxRate > 0 ? costTotal * fxRate : 0;
 			totalBrl += marketValueBrl;
+			totalCostBrl += costTotalBrl;
 
 			const assetClass = String(asset.assetClass || 'unknown').toLowerCase();
 			allocationByClass[assetClass] = (allocationByClass[assetClass] || 0) + marketValueBrl;
@@ -453,13 +482,20 @@ class PlatformService {
 				detail?.fundamentals?.sector ||
 				detail?.raw?.final_payload?.info?.sector ||
 				detail?.raw?.primary_payload?.info?.sector ||
-				'unknown';
+				(assetClass === 'bond'
+					? 'fixed_income'
+					: assetClass === 'fii'
+						? 'real_estate'
+						: 'unknown');
 			allocationBySector[sector] = (allocationBySector[sector] || 0) + marketValueBrl;
 		}
 
-		const historySeries = await this.#buildPortfolioValueSeries(portfolioId, metrics.assets, 365);
-		const absoluteReturn = numeric(metrics.consolidated.absolute_return, 0);
-		const percentReturn = numeric(metrics.consolidated.percent_return, 0);
+		const historySeries = await this.#buildPortfolioValueSeries(portfolioId, activeMetrics, 365);
+		const absoluteReturn = totalBrl - totalCostBrl;
+		const percentReturn =
+			totalCostBrl > Number.EPSILON
+				? (absoluteReturn / totalCostBrl) * 100
+				: 0;
 
 		return {
 			portfolioId,

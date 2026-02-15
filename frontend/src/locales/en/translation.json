@@ -18,7 +18,16 @@
     "title": "Dashboard",
     "totalValue": "Total Value",
     "totalGain": "Total Gain/Loss",
+    "returnPercent": "Return %",
+    "assetsCount": "Asset Classes",
     "allocation": "Allocation",
+    "allocationByClass": "Allocation by Class",
+    "allocationByCurrency": "Allocation by Currency",
+    "allocationBySector": "Allocation by Sector",
+    "evolution": "Portfolio Evolution",
+    "selectPortfolio": "Select portfolio",
+    "noSeries": "No data available.",
+    "loadError": "Failed to load dashboard data.",
     "noData": "No portfolio data yet. Create a portfolio to get started."
   },
   "assets": {
