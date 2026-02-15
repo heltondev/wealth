@@ -17,10 +17,20 @@ import {
   normalizeDropdownConfig,
 } from '../config/dropdowns';
 import { useToast } from '../context/ToastContext';
-import { formatCurrency } from '../utils/formatters';
+import { formatCurrency, formatDate } from '../utils/formatters';
 import './AssetsPage.scss';
 
 type AssetRow = Asset & { quantity: number; source: string | null; investedAmount: number };
+type AssetTradeHistoryRow = {
+  transId: string;
+  date: string;
+  type: 'buy' | 'sell';
+  quantity: number;
+  price: number;
+  amount: number;
+  currency: string;
+  source: string | null;
+};
 
 const COUNTRY_FLAG_MAP: Record<string, string> = {
   BR: '🇧🇷',
@@ -35,6 +45,8 @@ const COUNTRY_NAME_MAP: Record<string, string> = {
 const DECIMAL_PRECISION = 2;
 const DECIMAL_FACTOR = 10 ** DECIMAL_PRECISION;
 const DEFAULT_ITEMS_PER_PAGE = 10;
+const HISTORY_CHART_WIDTH = 860;
+const HISTORY_CHART_HEIGHT = 220;
 
 const toPageSizeOptions = (options: { value: string }[]): number[] => {
   const values = new Set<number>();
@@ -263,12 +275,45 @@ const AssetsPage = () => {
     return `${value > 0 ? '+' : '-'}${absolute}`;
   }, [numberLocale]);
 
+  const hasPrimaryTradeByAssetId = useMemo(() => {
+    const set = new Set<string>();
+
+    for (const transaction of transactions) {
+      const normalizedStatus = transaction.status?.toLowerCase() || 'unknown';
+      if (normalizedStatus !== 'confirmed') continue;
+
+      const normalizedType = transaction.type?.toLowerCase() || '';
+      if (normalizedType !== 'buy' && normalizedType !== 'sell' && normalizedType !== 'subscription') {
+        continue;
+      }
+
+      const sourceTag = normalizeText(transaction.sourceDocId);
+      if (!sourceTag.includes('B3-NEGOCIACAO')) continue;
+      set.add(transaction.assetId);
+    }
+
+    return set;
+  }, [transactions]);
+
+  const shouldIgnoreConsolidatedTrade = useCallback((transaction: Transaction) => {
+    const normalizedType = transaction.type?.toLowerCase() || '';
+    if (normalizedType !== 'buy' && normalizedType !== 'sell' && normalizedType !== 'subscription') {
+      return false;
+    }
+
+    const sourceTag = normalizeText(transaction.sourceDocId);
+    if (!sourceTag.includes('B3-RELATORIO')) return false;
+
+    return hasPrimaryTradeByAssetId.has(transaction.assetId);
+  }, [hasPrimaryTradeByAssetId]);
+
   const assetQuantitiesById = useMemo(() => {
     const quantities: Record<string, number> = {};
 
     for (const transaction of transactions) {
       const normalizedStatus = transaction.status?.toLowerCase() || 'unknown';
       if (normalizedStatus !== 'confirmed') continue;
+      if (shouldIgnoreConsolidatedTrade(transaction)) continue;
 
       const normalizedType = transaction.type?.toLowerCase() || '';
       const normalizedQuantity = Math.round(Number(transaction.quantity || 0) * DECIMAL_FACTOR) / DECIMAL_FACTOR;
@@ -286,7 +331,7 @@ const AssetsPage = () => {
     }
 
     return quantities;
-  }, [transactions]);
+  }, [shouldIgnoreConsolidatedTrade, transactions]);
 
   const assetInvestedAmountById = useMemo(() => {
     const investedById: Record<string, number> = {};
@@ -294,6 +339,7 @@ const AssetsPage = () => {
     for (const transaction of transactions) {
       const normalizedStatus = transaction.status?.toLowerCase() || 'unknown';
       if (normalizedStatus !== 'confirmed') continue;
+      if (shouldIgnoreConsolidatedTrade(transaction)) continue;
 
       const amount = Number(transaction.amount || 0);
       if (!Number.isFinite(amount)) continue;
@@ -310,7 +356,7 @@ const AssetsPage = () => {
     }
 
     return investedById;
-  }, [transactions]);
+  }, [shouldIgnoreConsolidatedTrade, transactions]);
 
   const assetSourcesById = useMemo(() => {
     const sources: Record<string, string[]> = {};
@@ -569,6 +615,161 @@ const AssetsPage = () => {
     ];
   }, [currentQuotesByAssetId, formatAssetQuantity, formatCountryDetail, formatDetailValue, formatSignedCurrency, numberLocale, selectedAsset, t]);
 
+  const assetTradeHistoryRows = useMemo<AssetTradeHistoryRow[]>(() => {
+    if (!selectedAsset) return [];
+
+    return transactions
+      .filter((transaction) => {
+        if (transaction.assetId !== selectedAsset.assetId) return false;
+        const normalizedStatus = transaction.status?.toLowerCase() || 'unknown';
+        if (normalizedStatus !== 'confirmed') return false;
+        if (shouldIgnoreConsolidatedTrade(transaction)) return false;
+        const normalizedType = transaction.type?.toLowerCase() || '';
+        return normalizedType === 'buy' || normalizedType === 'sell';
+      })
+      .map((transaction) => ({
+        transId: transaction.transId,
+        date: transaction.date || transaction.createdAt?.slice(0, 10) || '',
+        type: transaction.type.toLowerCase() as 'buy' | 'sell',
+        quantity: Number(transaction.quantity || 0),
+        price: Number(transaction.price || 0),
+        amount: Number(transaction.amount || 0),
+        currency: transaction.currency || selectedAsset.currency || 'BRL',
+        source: summarizeSourceValue(transaction.sourceDocId || transaction.institution) || null,
+      }))
+      .filter((row) => row.date && Number.isFinite(row.price))
+      .sort((left, right) => new Date(left.date).getTime() - new Date(right.date).getTime());
+  }, [selectedAsset, shouldIgnoreConsolidatedTrade, transactions]);
+
+  const assetTradeHistoryChart = useMemo(() => {
+    const points = assetTradeHistoryRows.filter((row) => Number.isFinite(row.price));
+    if (!points.length) return null;
+
+    const chartPadding = { top: 14, right: 20, bottom: 24, left: 20 };
+    const chartWidth = HISTORY_CHART_WIDTH - chartPadding.left - chartPadding.right;
+    const chartHeight = HISTORY_CHART_HEIGHT - chartPadding.top - chartPadding.bottom;
+    const prices = points.map((point) => point.price);
+    const minPrice = Math.min(...prices);
+    const maxPrice = Math.max(...prices);
+    const spread = Math.max(maxPrice - minPrice, 1);
+    const paddedMin = minPrice - spread * 0.08;
+    const paddedMax = maxPrice + spread * 0.08;
+
+    const xFor = (index: number) =>
+      points.length === 1
+        ? chartPadding.left + chartWidth / 2
+        : chartPadding.left + (index / (points.length - 1)) * chartWidth;
+    const yFor = (price: number) =>
+      chartPadding.top + (1 - (price - paddedMin) / (paddedMax - paddedMin)) * chartHeight;
+
+    const polyline = points
+      .map((point, index) => {
+        const x = xFor(index).toFixed(2);
+        const y = yFor(point.price).toFixed(2);
+        return `${index === 0 ? 'M' : 'L'} ${x} ${y}`;
+      })
+      .join(' ');
+
+    return {
+      points: points.map((point, index) => ({
+        ...point,
+        x: xFor(index),
+        y: yFor(point.price),
+      })),
+      polyline,
+      firstDate: points[0].date,
+      lastDate: points[points.length - 1].date,
+      minPrice: paddedMin,
+      maxPrice: paddedMax,
+    };
+  }, [assetTradeHistoryRows]);
+
+  const assetDetailsExtraContent = useMemo(() => {
+    if (!selectedAsset) return null;
+
+    const chartGradientId = `asset-history-gradient-${selectedAsset.assetId.replace(/[^a-zA-Z0-9_-]/g, '')}`;
+
+    return (
+      <div className="assets-page__history">
+        <h3>{t('assets.modal.history.title')}</h3>
+
+        {assetTradeHistoryRows.length === 0 ? (
+          <p className="assets-page__history-empty">{t('assets.modal.history.empty')}</p>
+        ) : (
+          <>
+            <div className="assets-page__history-chart">
+              <svg viewBox={`0 0 ${HISTORY_CHART_WIDTH} ${HISTORY_CHART_HEIGHT}`} role="img" aria-label={t('assets.modal.history.chart')}>
+                <defs>
+                  <linearGradient id={chartGradientId} x1="0%" y1="0%" x2="0%" y2="100%">
+                    <stop offset="0%" stopColor="rgba(99, 102, 241, 0.5)" />
+                    <stop offset="100%" stopColor="rgba(99, 102, 241, 0.06)" />
+                  </linearGradient>
+                </defs>
+                {assetTradeHistoryChart ? (
+                  <>
+                    <path className="assets-page__history-line" d={assetTradeHistoryChart.polyline} />
+                    {assetTradeHistoryChart.points.map((point) => (
+                      <circle
+                        key={`${point.transId}-${point.date}-${point.price}`}
+                        className={`assets-page__history-point assets-page__history-point--${point.type}`}
+                        cx={point.x}
+                        cy={point.y}
+                        r={4}
+                      >
+                        <title>
+                          {`${formatDate(point.date, numberLocale)} | ${t(`transactions.types.${point.type}`, { defaultValue: point.type })} | ${formatCurrency(point.price, point.currency, numberLocale)}`}
+                        </title>
+                      </circle>
+                    ))}
+                  </>
+                ) : null}
+              </svg>
+              {assetTradeHistoryChart ? (
+                <div className="assets-page__history-scale">
+                  <span>{formatDate(assetTradeHistoryChart.firstDate, numberLocale)}</span>
+                  <span>{formatCurrency(assetTradeHistoryChart.minPrice, selectedAsset.currency || 'BRL', numberLocale)}</span>
+                  <span>{formatCurrency(assetTradeHistoryChart.maxPrice, selectedAsset.currency || 'BRL', numberLocale)}</span>
+                  <span>{formatDate(assetTradeHistoryChart.lastDate, numberLocale)}</span>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="assets-page__history-table-wrap">
+              <table className="assets-page__history-table">
+                <thead>
+                  <tr>
+                    <th>{t('assets.modal.history.date')}</th>
+                    <th>{t('assets.modal.history.type')}</th>
+                    <th>{t('assets.modal.history.quantity')}</th>
+                    <th>{t('assets.modal.history.price')}</th>
+                    <th>{t('assets.modal.history.amount')}</th>
+                    <th>{t('assets.modal.history.source')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...assetTradeHistoryRows].reverse().map((row) => (
+                    <tr key={`${row.transId}-${row.date}-${row.type}`}>
+                      <td>{formatDate(row.date, numberLocale)}</td>
+                      <td>
+                        <span className={`assets-page__history-type assets-page__history-type--${row.type}`}>
+                          {t(`transactions.types.${row.type}`, { defaultValue: row.type })}
+                        </span>
+                      </td>
+                      <td>{formatAssetQuantity(row.quantity)}</td>
+                      <td>{formatCurrency(row.price, row.currency, numberLocale)}</td>
+                      <td>{formatCurrency(row.amount, row.currency, numberLocale)}</td>
+                      <td>{row.source || '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }, [assetTradeHistoryChart, assetTradeHistoryRows, formatAssetQuantity, numberLocale, selectedAsset, t]);
+
   useEffect(() => {
     if (!selectedAsset || !selectedPortfolio) return;
 
@@ -681,6 +882,7 @@ const AssetsPage = () => {
           subtitle={t('assets.modal.subtitle')}
           closeLabel={t('assets.modal.close')}
           sections={assetDetailsSections}
+          extraContent={assetDetailsExtraContent}
           rawTitle={t('assets.modal.sections.raw')}
           rawData={selectedAsset}
           onClose={() => setSelectedAsset(null)}

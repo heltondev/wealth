@@ -90,6 +90,17 @@
         "positive": "Positive",
         "negative": "Negative",
         "neutral": "Neutral"
+      },
+      "history": {
+        "title": "Buy/Sell History",
+        "empty": "No buy or sell operations for this asset.",
+        "chart": "Trade price evolution",
+        "date": "Date",
+        "type": "Type",
+        "quantity": "Quantity",
+        "price": "Price",
+        "amount": "Amount",
+        "source": "Source"
       }
     },
     "form": {

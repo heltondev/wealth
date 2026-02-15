@@ -145,8 +145,9 @@ async function run() {
 	console.log(`Found ${files.length} files.\n`);
 
 	// Collect parsed data per file, tracking which position snapshot is the latest
-	const allTransactions = [];
+	const collectedTransactions = [];
 	const allAliases = new Map(); // normalizedName → alias data
+	let hasDetailedNegotiationTrades = false;
 
 	// Track position snapshots per parser type to pick only the most recent
 	// Each entry: { file, assets: Map<ticker, asset> }
@@ -180,8 +181,16 @@ async function run() {
 			positionSnapshots.push({ file: filePath, assets: snapshot });
 		}
 
-		// Collect transactions from all parsers
-		allTransactions.push(...parsed.transactions);
+		// Collect transactions from all parsers with parser provenance.
+		// Monthly consolidated report ("b3-relatorio") can duplicate buy/sell data
+		// that already exists in detailed negotiation files ("b3-negociacao").
+		for (const transaction of (parsed.transactions || [])) {
+			if (parser.id === 'b3-negociacao') hasDetailedNegotiationTrades = true;
+			collectedTransactions.push({
+				...transaction,
+				__parserId: parser.id,
+			});
+		}
 
 		// Merge aliases from all parsers
 		for (const alias of parsed.aliases) {
@@ -207,6 +216,15 @@ async function run() {
 	} else {
 		allAssets = new Map();
 	}
+
+	const allTransactions = collectedTransactions
+		.filter((transaction) => {
+			if (!hasDetailedNegotiationTrades) return true;
+			if (transaction.__parserId !== 'b3-relatorio') return true;
+			const type = String(transaction.type || '').toLowerCase();
+			return type !== 'buy' && type !== 'sell' && type !== 'subscription';
+		})
+		.map(({ __parserId, ...transaction }) => transaction);
 
 	console.log(`\nParsed totals: ${allAssets.size} active assets, ${allTransactions.length} transactions, ${allAliases.size} aliases`);
 

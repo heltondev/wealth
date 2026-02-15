@@ -90,6 +90,17 @@
         "positive": "Positivo",
         "negative": "Negativo",
         "neutral": "Neutro"
+      },
+      "history": {
+        "title": "Histórico de Compra e Venda",
+        "empty": "Nenhuma operação de compra ou venda para este ativo.",
+        "chart": "Evolução do preço das operações",
+        "date": "Data",
+        "type": "Tipo",
+        "quantity": "Quantidade",
+        "price": "Preço",
+        "amount": "Total",
+        "source": "Fonte"
       }
     },
     "form": {
