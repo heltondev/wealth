@@ -67,13 +67,13 @@ test('FundsExplorerProvider parses property slides into portfolio rows', async (
 	assert.equal(payload.fund_portfolio.length, 2);
 
 	const itupeva = payload.fund_portfolio[0];
-	assert.equal(itupeva.label, 'HGLG Itupeva');
+	assert.equal(itupeva.name, 'HGLG Itupeva');
 	assert.equal(itupeva.category, 'Itupeva - SP');
 	assert.equal(itupeva.source, 'fundsexplorer');
 	assert.ok(Math.abs(itupeva.allocation_pct - 90) < 0.01);
 
 	const vinhedo = payload.fund_portfolio[1];
-	assert.equal(vinhedo.label, 'HGLG Vinhedo');
+	assert.equal(vinhedo.name, 'HGLG Vinhedo');
 	assert.equal(vinhedo.category, 'Vinhedo - SP');
 	assert.ok(Math.abs(vinhedo.allocation_pct - 10) < 0.01);
 });

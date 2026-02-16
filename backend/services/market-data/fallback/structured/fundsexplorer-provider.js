@@ -113,7 +113,7 @@ class FundsExplorerProvider {
 		const totalArea = properties.reduce((sum, p) => sum + p.area, 0);
 
 		return properties.map((p) => ({
-			label: p.name,
+			name: p.name,
 			allocation_pct: totalArea > 0 ? (p.area / totalArea) * 100 : 0,
 			category: p.city || null,
 			source: 'fundsexplorer',
