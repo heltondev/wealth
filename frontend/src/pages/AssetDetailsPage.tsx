@@ -3988,7 +3988,16 @@ const AssetDetailsPage = () => {
 
             {(isFiiAsset || shouldRenderFundInfo) ? (
               <section className="asset-details-page__card asset-details-page__card--full">
-                <h2>{t('assets.modal.sections.summary', { defaultValue: 'Summary' })}</h2>
+                <h2 className="asset-details-page__summary-heading">
+                  {t('assets.modal.sections.summary', { defaultValue: 'Summary' })}
+                  {assetFinancialsLoading ? (
+                    <span
+                      className="asset-details-page__inline-spinner"
+                      role="status"
+                      aria-label={t('common.loading')}
+                    />
+                  ) : null}
+                </h2>
                 {fundSummaryText ? (
                   <ExpandableText
                     text={fundSummaryText}

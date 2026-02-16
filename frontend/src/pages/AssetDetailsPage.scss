@@ -160,6 +160,23 @@
     white-space: normal;
   }
 
+  &__summary-heading {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.42rem;
+    margin: 0 0 $spacing-sm;
+  }
+
+  &__inline-spinner {
+    width: 0.85rem;
+    height: 0.85rem;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    opacity: 0.72;
+    animation: tab-spin 0.6s linear infinite;
+  }
+
   &__summary--text {
     p {
       margin: 0 0 $spacing-sm;
