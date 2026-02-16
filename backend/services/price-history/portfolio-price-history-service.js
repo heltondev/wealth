@@ -840,6 +840,12 @@ class PortfolioPriceHistoryService {
 		);
 
 		if (normalizedChartType === 'price_history') {
+			const splitEvents = buildSplitEventsFromPriceRows(filteredRows).map((event) => ({
+				date: event.date,
+				display_date: resolveDisplayDate(event.date, market),
+				factor: event.factor,
+				event_type: event.factor > 1 ? 'desdobramento' : 'grupamento',
+			}));
 			return {
 				chart_type: 'price_history',
 				period: normalizedPeriod,
@@ -850,7 +856,9 @@ class PortfolioPriceHistoryService {
 					date: row.date,
 					display_date: resolveDisplayDate(row.date, market),
 					close: getCloseForRow(row),
+					stock_splits: toNumberOrNull(row.stock_splits) || 0,
 				})),
+				split_events: splitEvents,
 				markers: filteredTransactions
 					.filter((tx) => ['buy', 'sell'].includes(parseTransactionType(tx.type)))
 					.map((tx) => ({

@@ -85,7 +85,7 @@ const normalizeIsoDate = (value: unknown): string | null => {
 };
 
 type ProventStatus = 'paid' | 'provisioned';
-type ProventCategory = 'dividend' | 'jcp' | 'amortization' | 'rendimento' | 'other';
+type ProventCategory = 'dividend' | 'jcp' | 'amortization' | 'rendimento' | 'subscription' | 'other';
 type ProventFrequencyKey =
   | 'dividends.frequencyValues.insufficient'
   | 'dividends.frequencyValues.monthly'
@@ -147,9 +147,17 @@ const normalizeProventCategory = (eventTypeValue: unknown, rawTypeValue: unknown
   if (text.includes('jcp') || text.includes('juros')) return 'jcp';
   if (text.includes('amort')) return 'amortization';
   if (text.includes('rend')) return 'rendimento';
+  if (text.includes('subscr') || text.includes('subscription') || text.includes('preferenc')) return 'subscription';
   if (text.includes('divid') || text.includes('provent')) return 'dividend';
   return 'other';
 };
+
+const isIncomeCategory = (category: ProventCategory): boolean => (
+  category === 'dividend'
+  || category === 'jcp'
+  || category === 'amortization'
+  || category === 'rendimento'
+);
 
 const formatPercent = (value: number | null, locale: string) => (
   value === null
@@ -168,6 +176,7 @@ const sourcePriority = (source: string | null) => {
 const dedupeFamily = (category: ProventCategory) => {
   if (category === 'jcp') return 'jcp';
   if (category === 'amortization') return 'amortization';
+  if (category === 'subscription') return 'subscription';
   return 'income';
 };
 
@@ -450,6 +459,7 @@ const DividendsPage = () => {
       if (!ticker) return;
 
       const category = normalizeProventCategory(event.eventType, details.rawType);
+      const incomeEvent = isIncomeCategory(category);
       const eventDate = normalizeIsoDate(
         details.paymentDate
         || event.eventDate
@@ -468,7 +478,7 @@ const DividendsPage = () => {
       );
       const amountPerUnit = toAmount(details.value);
       const quantity = quantityByTicker.get(ticker) ?? null;
-      const expectedGross = amountPerUnit !== null && quantity !== null
+      const expectedGross = incomeEvent && amountPerUnit !== null && quantity !== null
         ? amountPerUnit * quantity
         : null;
       const expectedNet = expectedGross === null
@@ -476,16 +486,16 @@ const DividendsPage = () => {
         : category === 'jcp'
           ? expectedGross * 0.85
           : expectedGross;
-      const netIsEstimated = category === 'jcp' && expectedGross !== null;
-      const taxHintKey = category === 'jcp' ? 'dividends.hints.jcpWithholding' : null;
+      const netIsEstimated = incomeEvent && category === 'jcp' && expectedGross !== null;
+      const taxHintKey = incomeEvent && category === 'jcp' ? 'dividends.hints.jcpWithholding' : null;
       const currentPrice = currentPriceByTicker.get(ticker) ?? null;
       const averageCost = averageCostByTicker.get(ticker) ?? null;
       const yieldCurrentPct =
-        amountPerUnit !== null && currentPrice !== null && currentPrice > 0
+        incomeEvent && amountPerUnit !== null && currentPrice !== null && currentPrice > 0
           ? (amountPerUnit / currentPrice) * 100
           : null;
       const yieldOnCostPct =
-        amountPerUnit !== null && averageCost !== null && averageCost > 0
+        incomeEvent && amountPerUnit !== null && averageCost !== null && averageCost > 0
           ? (amountPerUnit / averageCost) * 100
           : null;
       const source = String(event.data_source || '').trim() || null;
@@ -718,6 +728,7 @@ const DividendsPage = () => {
     }>();
 
     for (const event of calendarEvents) {
+      const incomeEvent = isIncomeCategory(event.category);
       const current = grouped.get(event.ticker) || {
         ticker: event.ticker,
         assetId: event.assetId,
@@ -736,23 +747,25 @@ const DividendsPage = () => {
       if (current.currentPrice === null) current.currentPrice = currentPriceByTicker.get(event.ticker) ?? null;
       if (current.averageCost === null) current.averageCost = averageCostByTicker.get(event.ticker) ?? null;
 
-      if (event.status === 'paid') {
+      if (incomeEvent && event.status === 'paid') {
         current.paidDates.push(event.eventDate);
       }
-      if (event.status === 'paid' && event.eventDate >= rolling12mStart) {
+      if (incomeEvent && event.status === 'paid' && event.eventDate >= rolling12mStart) {
         current.totalGross12m += event.expectedGross ?? 0;
         current.totalPerUnit12m += event.amountPerUnit ?? 0;
         current.paidCount12m += 1;
       }
       if (
-        event.status === 'provisioned'
+        incomeEvent
+        && event.status === 'provisioned'
         && event.eventDate >= todayIso
         && (!current.nextPaymentDate || event.eventDate < current.nextPaymentDate)
       ) {
         current.nextPaymentDate = event.eventDate;
       }
       if (
-        event.announcementDate
+        incomeEvent
+        && event.announcementDate
         && (!current.latestAnnouncementDate || event.announcementDate > current.latestAnnouncementDate)
       ) {
         current.latestAnnouncementDate = event.announcementDate;

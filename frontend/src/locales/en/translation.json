@@ -76,6 +76,7 @@
       "jcp": "JCP",
       "amortization": "Amortization",
       "rendimento": "Income",
+      "subscription": "Subscription",
       "other": "Provent"
     },
     "groups": {
@@ -467,6 +468,7 @@
         "overview": "Overview",
         "market": "Market",
         "insights": "Fundamentals & Fair Value",
+        "fundInfo": "Fund General Info",
         "provents": "Provents & Calendar",
         "metadata": "Metadata",
         "raw": "Raw Payload"
@@ -540,6 +542,32 @@
         "changePct": "Change %",
         "lastClose": "Last close"
       },
+      "portfolio": {
+        "title": "Portfolio do {{ticker}}",
+        "items_one": "{{count}} item",
+        "items_other": "{{count}} items",
+        "empty": "No portfolio composition data available for this asset.",
+        "columns": {
+          "label": "Item",
+          "allocation": "Allocation",
+          "category": "Category",
+          "source": "Source"
+        }
+      },
+      "splits": {
+        "title": "Desdobramento / Grupamento",
+        "empty": "No desdobramento/grupamento events found for this asset.",
+        "period": "{{start}} - {{end}}",
+        "date": "Date",
+        "type": "Type",
+        "ratio": "Ratio",
+        "factor": "Factor",
+        "sourceHint": "Derived from stock split factors in historical price data.",
+        "types": {
+          "desdobramento": "Desdobramento",
+          "grupamento": "Grupamento"
+        }
+      },
       "weights": {
         "title": "Asset Weight",
         "portfolio": "In Portfolio",
@@ -587,6 +615,27 @@
           "clubeFii": "Clube FII",
           "fiis": "FIIs.com.br"
         }
+      },
+      "fundInfo": {
+        "cnpj": "CNPJ",
+        "acronym": "Acronym",
+        "legalName": "Legal Name",
+        "tradingName": "Trading Name",
+        "classification": "Classification",
+        "segment": "Segment",
+        "administrator": "Administrator",
+        "managerName": "Manager",
+        "bookkeeper": "Bookkeeper",
+        "quotaCount": "Quota Count",
+        "quotaDateApproved": "Quota Date Approved",
+        "tradingCode": "Trading Code",
+        "tradingCodeOthers": "Other Trading Codes",
+        "website": "Website",
+        "b3Details": "B3 Details",
+        "openB3": "Open B3 page",
+        "address": "Address",
+        "phone": "Phone",
+        "source": "Source"
       },
       "financials": {
         "title": "Financial Statements",

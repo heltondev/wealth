@@ -161,6 +161,53 @@ const FINANCIAL_DOCUMENT_TITLE_KEYWORDS = [
 	'resultado',
 ];
 
+const FUND_PORTFOLIO_LABEL_KEY_HINTS = [
+	'nome',
+	'name',
+	'segmento',
+	'segment',
+	'setor',
+	'sector',
+	'categoria',
+	'category',
+	'tipo',
+	'type',
+	'ativo',
+	'asset',
+	'ticker',
+	'titulo',
+	'title',
+	'descricao',
+	'description',
+	'classe',
+	'class',
+];
+
+const FUND_PORTFOLIO_ALLOCATION_KEY_HINTS = [
+	'percent',
+	'perc',
+	'particip',
+	'allocation',
+	'aloc',
+	'weight',
+	'peso',
+	'represent',
+	'compos',
+];
+
+const FUND_PORTFOLIO_CATEGORY_KEY_HINTS = [
+	'segmento',
+	'segment',
+	'setor',
+	'sector',
+	'categoria',
+	'category',
+	'tipo',
+	'type',
+	'classe',
+	'class',
+];
+
 const createEmptyFinancialStatements = () => ({
 	financials: null,
 	quarterly_financials: null,
@@ -549,6 +596,344 @@ const readFinancialStatementsFromPayload = (payload) => {
 			quoteSummary.quarterly_cashflow ??
 			null,
 	};
+};
+
+const hasMeaningfulValue = (value) => {
+	if (value === null || value === undefined) return false;
+	if (typeof value === 'number') return Number.isFinite(value);
+	if (typeof value === 'string') return value.trim().length > 0;
+	return String(value).trim().length > 0;
+};
+
+const toTrimmedStringOrNull = (value) => {
+	if (!hasMeaningfulValue(value)) return null;
+	const text = String(value).trim();
+	return text || null;
+};
+
+const parseLocalizedNumber = (value) => {
+	if (value === null || value === undefined || value === '') return null;
+	if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+	const direct = toNumberOrNull(value);
+	if (direct !== null) return direct;
+
+	let text = String(value).trim();
+	if (!text) return null;
+	text = text.replace(/[^\d,.-]/g, '');
+	if (!text) return null;
+
+	const hasComma = text.includes(',');
+	const hasDot = text.includes('.');
+	if (hasComma && hasDot) {
+		if (text.lastIndexOf(',') > text.lastIndexOf('.')) {
+			text = text.replace(/\./g, '').replace(',', '.');
+		} else {
+			text = text.replace(/,/g, '');
+		}
+	} else if (hasComma) {
+		if (/,\d{1,4}$/.test(text)) {
+			text = text.replace(/\./g, '').replace(',', '.');
+		} else {
+			text = text.replace(/,/g, '');
+		}
+	} else if ((text.match(/\./g) || []).length > 1) {
+		text = text.replace(/\./g, '');
+	}
+
+	const parsed = Number(text);
+	return Number.isFinite(parsed) ? parsed : null;
+};
+
+const readValueFromRecordHints = (records, hints) => {
+	for (const record of records) {
+		const value = findRecordValueByHints(record, hints);
+		if (!hasMeaningfulValue(value)) continue;
+		return value;
+	}
+	return null;
+};
+
+const readValueFromRecordKeys = (records, keys) => {
+	const normalizedKeys = (Array.isArray(keys) ? keys : [])
+		.map((key) => normalizeRecordKey(key))
+		.filter(Boolean);
+	if (normalizedKeys.length === 0) return null;
+
+	for (const record of records) {
+		if (!isObjectRecord(record)) continue;
+		for (const [key, value] of Object.entries(record)) {
+			const normalizedKey = normalizeRecordKey(key);
+			if (!normalizedKeys.includes(normalizedKey)) continue;
+			if (!hasMeaningfulValue(value)) continue;
+			return value;
+		}
+	}
+
+	return null;
+};
+
+const toUrlOrNull = (value) => normalizeDocumentUrl(toTrimmedStringOrNull(value));
+
+const buildFundPhone = (...values) => {
+	const parts = values
+		.map((value) => toTrimmedStringOrNull(value))
+		.filter(Boolean)
+		.map((value) => value.replace(/\s+/g, ' '));
+	if (parts.length === 0) return null;
+	return parts.join(' ');
+};
+
+const hasFundGeneralInfo = (value) => {
+	if (!isObjectRecord(value)) return false;
+	return Object.entries(value).some(([key, entry]) => {
+		if (key === 'source') return false;
+		return hasMeaningfulValue(entry);
+	});
+};
+
+const mergeFundGeneralInfo = (base, incoming) => {
+	if (!hasFundGeneralInfo(incoming)) {
+		return hasFundGeneralInfo(base) ? { ...base } : null;
+	}
+
+	const merged = isObjectRecord(base) ? { ...base } : {};
+	for (const [key, value] of Object.entries(incoming || {})) {
+		if (!hasMeaningfulValue(value)) continue;
+		if (!hasMeaningfulValue(merged[key])) {
+			merged[key] = value;
+		}
+	}
+
+	return hasFundGeneralInfo(merged) ? merged : null;
+};
+
+const isFundPortfolioRow = (value) => (
+	isObjectRecord(value) &&
+	toTrimmedStringOrNull(value.label) &&
+	Number.isFinite(toNumberOrNull(value.allocation_pct))
+);
+
+const normalizeFundPortfolioRows = (rows, sourceHint = null) => {
+	if (!Array.isArray(rows)) return [];
+
+	const normalized = [];
+	for (const rawRow of rows) {
+		if (!isObjectRecord(rawRow)) continue;
+
+		const label =
+			toTrimmedStringOrNull(
+				findRecordValueByHints(rawRow, FUND_PORTFOLIO_LABEL_KEY_HINTS)
+			) ||
+			Object.values(rawRow)
+				.map((value) => toTrimmedStringOrNull(value))
+				.find((value) => value && !/^https?:\/\//i.test(value)) ||
+			null;
+		if (!label) continue;
+
+		let allocationPct = parseLocalizedNumber(
+			findRecordValueByHints(rawRow, FUND_PORTFOLIO_ALLOCATION_KEY_HINTS)
+		);
+		if (allocationPct === null) continue;
+		if (Math.abs(allocationPct) <= 1 && allocationPct !== 0) {
+			allocationPct *= 100;
+		}
+		if (!Number.isFinite(allocationPct) || allocationPct <= 0 || allocationPct > 100) continue;
+
+		const categoryRaw = toTrimmedStringOrNull(
+			findRecordValueByHints(rawRow, FUND_PORTFOLIO_CATEGORY_KEY_HINTS)
+		);
+		const category = categoryRaw && categoryRaw !== label ? categoryRaw : null;
+
+		normalized.push({
+			label,
+			allocation_pct: allocationPct,
+			category,
+			source:
+				toTrimmedStringOrNull(rawRow.source) ||
+				toTrimmedStringOrNull(sourceHint) ||
+				null,
+		});
+	}
+
+	return normalized.sort((left, right) => right.allocation_pct - left.allocation_pct);
+};
+
+const hasFundPortfolio = (value) =>
+	Array.isArray(value) && value.some((entry) => isFundPortfolioRow(entry));
+
+const mergeFundPortfolio = (base, incoming) => {
+	const dedupe = new Set();
+	const merged = [];
+
+	const append = (entry) => {
+		if (!isFundPortfolioRow(entry)) return;
+		const label = toTrimmedStringOrNull(entry.label);
+		const allocationPct = toNumberOrNull(entry.allocation_pct);
+		if (!label || allocationPct === null) return;
+		const normalizedPct = Number(allocationPct.toFixed(4));
+		const key = [
+			label.toLowerCase(),
+			normalizedPct.toFixed(4),
+			toTrimmedStringOrNull(entry.category || ''),
+		].join('|');
+		if (dedupe.has(key)) return;
+		dedupe.add(key);
+		merged.push({
+			label,
+			allocation_pct: normalizedPct,
+			category: toTrimmedStringOrNull(entry.category) || null,
+			source: toTrimmedStringOrNull(entry.source) || null,
+		});
+	};
+
+	for (const entry of Array.isArray(base) ? base : []) append(entry);
+	for (const entry of Array.isArray(incoming) ? incoming : []) append(entry);
+
+	return merged.sort((left, right) => right.allocation_pct - left.allocation_pct);
+};
+
+const readFundPortfolioFromPayload = (payload, sourceHint) => {
+	const root = isObjectRecord(payload) ? payload : {};
+	const fundamentals = isObjectRecord(root.fundamentals) ? root.fundamentals : {};
+	const raw = isObjectRecord(root.raw) ? root.raw : {};
+	const rawDetail = isObjectRecord(raw.detail) ? raw.detail : {};
+	const rawFund = isObjectRecord(raw.fund) ? raw.fund : {};
+	const fundamentalsInfo = isObjectRecord(fundamentals.info) ? fundamentals.info : {};
+	const rootFundInfo = isObjectRecord(root.fund_info) ? root.fund_info : {};
+	const fundamentalsFundInfo = isObjectRecord(fundamentals.fund_info) ? fundamentals.fund_info : {};
+
+	const listCandidates = [
+		root.fund_portfolio,
+		root.portfolio_composition,
+		root.portfolio,
+		fundamentals.fund_portfolio,
+		fundamentals.portfolio_composition,
+		raw.fund_portfolio,
+		raw.portfolio_composition,
+		rawDetail.classes,
+		rawFund.classes,
+		fundamentalsInfo.classes,
+		rootFundInfo.classes,
+		fundamentalsFundInfo.classes,
+	];
+
+	let merged = [];
+	for (const candidate of listCandidates) {
+		const normalized = normalizeFundPortfolioRows(candidate, sourceHint);
+		if (normalized.length === 0) continue;
+		merged = mergeFundPortfolio(merged, normalized);
+	}
+
+	return merged;
+};
+
+const readFundGeneralInfoFromPayload = (payload, sourceHint) => {
+	const root = isObjectRecord(payload) ? payload : {};
+	const fundamentals = isObjectRecord(root.fundamentals) ? root.fundamentals : {};
+	const raw = isObjectRecord(root.raw) ? root.raw : {};
+	const rawDetail = isObjectRecord(raw.detail) ? raw.detail : {};
+	const rawFund = isObjectRecord(raw.fund) ? raw.fund : {};
+	const fundamentalsInfo = isObjectRecord(fundamentals.info) ? fundamentals.info : {};
+	const quoteSummary = isObjectRecord(raw.quote_summary) ? raw.quote_summary : {};
+	const rawFinal = isObjectRecord(raw.final_payload) ? raw.final_payload : {};
+	const rawPrimary = isObjectRecord(raw.primary_payload) ? raw.primary_payload : {};
+	const finalInfo = isObjectRecord(rawFinal.info) ? rawFinal.info : {};
+	const primaryInfo = isObjectRecord(rawPrimary.info) ? rawPrimary.info : {};
+	const b3Meta = isObjectRecord(fundamentals.b3) ? fundamentals.b3 : {};
+	const b3MetaFund = isObjectRecord(b3Meta.fund) ? b3Meta.fund : {};
+	const rootFundInfo = isObjectRecord(root.fund_info) ? root.fund_info : {};
+	const fundamentalsFundInfo = isObjectRecord(fundamentals.fund_info) ? fundamentals.fund_info : {};
+
+	const candidateRecords = [
+		rootFundInfo,
+		fundamentalsFundInfo,
+		rawDetail,
+		rawFund,
+		fundamentalsInfo,
+		b3MetaFund,
+		finalInfo,
+		primaryInfo,
+		quoteSummary,
+		root,
+		fundamentals,
+		raw,
+	];
+
+	const shareHolderRecords = candidateRecords
+		.map((record) => {
+			if (!isObjectRecord(record)) return null;
+			return (
+				record.shareHolder ||
+				record.shareholder ||
+				record.share_holder ||
+				record.escriturador ||
+				null
+			);
+		})
+		.filter((value) => isObjectRecord(value));
+
+	const allRecords = [
+		...candidateRecords.filter((record) => isObjectRecord(record)),
+		...shareHolderRecords,
+	];
+	const readString = (hints) => toTrimmedStringOrNull(readValueFromRecordHints(allRecords, hints));
+
+	const fundPhone = buildFundPhone(
+		readValueFromRecordKeys(allRecords, ['fundphonenumberddd']),
+		readValueFromRecordKeys(allRecords, ['fundphonenumber'])
+	);
+	const shareHolderPhone = buildFundPhone(
+		readValueFromRecordKeys(shareHolderRecords, ['shareholderphonenumberddd']),
+		readValueFromRecordKeys(shareHolderRecords, ['shareholderphonenumber'])
+	);
+	const fallbackPhone = buildFundPhone(
+		readValueFromRecordKeys(allRecords, ['phonenumberddd']),
+		readValueFromRecordKeys(allRecords, ['phonenumber'])
+	);
+
+	const fundId = parseLocalizedNumber(
+		readValueFromRecordHints(allRecords, ['idfnet'])
+	);
+	const acronym = readString(['acronym', 'idcem']);
+	const b3DetailsUrl =
+		Number.isFinite(fundId) && acronym
+			? `https://sistemaswebb3-listados.b3.com.br/fundsListedPage/funds-main/${Math.trunc(
+				fundId
+			)}/${encodeURIComponent(acronym.toUpperCase())}/FII/funds-details`
+			: toUrlOrNull(readValueFromRecordHints(allRecords, ['fundsdetailsurl', 'fundslistpage']));
+
+	const source =
+		toTrimmedStringOrNull(
+			root.data_source ||
+				root.source ||
+				fundamentals.data_source ||
+				raw.data_source ||
+				sourceHint ||
+				null
+		) || null;
+
+	const fundInfo = {
+		legal_name: readString(['fundname', 'legalname']),
+		trading_name: readString(['tradingname', 'pregao']),
+		acronym,
+		cnpj: readString(['cnpj']),
+		classification: readString(['classification', 'classificacao']),
+		segment: readString(['segment']),
+		administrator: readString(['positionmanager', 'administrator', 'administrador']),
+		manager_name: readString(['managername', 'gestor']),
+		bookkeeper: readString(['shareholdername', 'escriturador', 'bookkeeper']),
+		website: toUrlOrNull(readValueFromRecordHints(allRecords, ['website', 'site'])),
+		address: readString(['fundaddress', 'address', 'endereco']),
+		phone: fundPhone || shareHolderPhone || fallbackPhone,
+		quota_count: parseLocalizedNumber(readValueFromRecordHints(allRecords, ['quotacount', 'quotas'])),
+		quota_date_approved: normalizeDate(readValueFromRecordHints(allRecords, ['quotadateapproved'])),
+		trading_code: readString(['tradingcode']),
+		trading_code_others: readString(['tradingcodeothers']),
+		b3_details_url: b3DetailsUrl,
+		source,
+	};
+
+	return hasFundGeneralInfo(fundInfo) ? fundInfo : null;
 };
 
 const normalizeDate = (value) => {
@@ -1219,7 +1604,7 @@ class PlatformService {
 					},
 				});
 					return events
-						.filter((event) => this.#isDividendEventType(event.eventType))
+						.filter((event) => this.#isDividendCalendarEventType(event.eventType))
 						.map((event) => ({
 							...event,
 							ticker: String(event.ticker || ticker).toUpperCase(),
@@ -2330,11 +2715,16 @@ class PlatformService {
 		const details = await this.getAssetDetails(ticker, options);
 		const current = mergeFinancialStatements(createEmptyFinancialStatements(), details.financial_statements);
 		let documents = readFinancialDocumentsFromPayload(details.detail, 'cached_asset_detail');
+		let fundInfo = readFundGeneralInfoFromPayload(details.detail, 'cached_asset_detail');
+		let fundPortfolio = readFundPortfolioFromPayload(details.detail, 'cached_asset_detail');
 		const sourcesWithData = new Set();
 		const attemptedSources = [];
 		const errors = [];
 
 		if (hasAnyFinancialStatements(current)) {
+			sourcesWithData.add('cached_asset_detail');
+		}
+		if (hasFundPortfolio(fundPortfolio)) {
 			sourcesWithData.add('cached_asset_detail');
 		}
 
@@ -2354,6 +2744,8 @@ class PlatformService {
 					return {
 						statements: readFinancialStatementsFromPayload(payload),
 						documents: readFinancialDocumentsFromPayload(payload, 'yahoo_quote_summary_api'),
+						fund_info: readFundGeneralInfoFromPayload(payload, 'yahoo_quote_summary_api'),
+						fund_portfolio: readFundPortfolioFromPayload(payload, 'yahoo_quote_summary_api'),
 						error: payload?.raw?.quote_summary_error || null,
 					};
 				},
@@ -2365,6 +2757,8 @@ class PlatformService {
 					return {
 						statements: readFinancialStatementsFromPayload(payload),
 						documents: readFinancialDocumentsFromPayload(payload, 'yahoo_finance_scraper'),
+						fund_info: readFundGeneralInfoFromPayload(payload, 'yahoo_finance_scraper'),
+						fund_portfolio: readFundPortfolioFromPayload(payload, 'yahoo_finance_scraper'),
 						error: null,
 					};
 				},
@@ -2379,6 +2773,8 @@ class PlatformService {
 					return {
 						statements: readFinancialStatementsFromPayload(payload),
 						documents: readFinancialDocumentsFromPayload(payload, 'b3_direct_financials'),
+						fund_info: readFundGeneralInfoFromPayload(payload, 'b3_direct_financials'),
+						fund_portfolio: readFundPortfolioFromPayload(payload, 'b3_direct_financials'),
 						error: payload?.raw?.error || null,
 					};
 				},
@@ -2390,6 +2786,8 @@ class PlatformService {
 					return {
 						statements: readFinancialStatementsFromPayload(payload),
 						documents: readFinancialDocumentsFromPayload(payload, 'statusinvest_structured'),
+						fund_info: readFundGeneralInfoFromPayload(payload, 'statusinvest_structured'),
+						fund_portfolio: readFundPortfolioFromPayload(payload, 'statusinvest_structured'),
 						error: null,
 					};
 				},
@@ -2401,6 +2799,8 @@ class PlatformService {
 					return {
 						statements: readFinancialStatementsFromPayload(payload),
 						documents: readFinancialDocumentsFromPayload(payload, 'statusinvest_scraper'),
+						fund_info: readFundGeneralInfoFromPayload(payload, 'statusinvest_scraper'),
+						fund_portfolio: readFundPortfolioFromPayload(payload, 'statusinvest_scraper'),
 						error: null,
 					};
 				},
@@ -2415,6 +2815,8 @@ class PlatformService {
 					return {
 						statements: readFinancialStatementsFromPayload(payload),
 						documents: readFinancialDocumentsFromPayload(payload, 'google_finance_scraper'),
+						fund_info: readFundGeneralInfoFromPayload(payload, 'google_finance_scraper'),
+						fund_portfolio: readFundPortfolioFromPayload(payload, 'google_finance_scraper'),
 						error: null,
 					};
 				},
@@ -2428,6 +2830,8 @@ class PlatformService {
 				const loaded = await candidate.load();
 				const candidateStatements = loaded?.statements || createEmptyFinancialStatements();
 				documents = mergeFinancialDocuments(documents, loaded?.documents);
+				fundInfo = mergeFundGeneralInfo(fundInfo, loaded?.fund_info);
+				fundPortfolio = mergeFundPortfolio(fundPortfolio, loaded?.fund_portfolio);
 				if (loaded?.error?.message) {
 					errors.push({
 						source: candidate.source,
@@ -2435,6 +2839,9 @@ class PlatformService {
 					});
 				}
 				if (hasAnyFinancialStatements(candidateStatements)) {
+					sourcesWithData.add(candidate.source);
+				}
+				if (hasFundPortfolio(loaded?.fund_portfolio)) {
 					sourcesWithData.add(candidate.source);
 				}
 
@@ -2452,7 +2859,11 @@ class PlatformService {
 		}
 
 		const normalizedAssetClass = String(details.asset.assetClass || '').toLowerCase();
-		if (market === 'BR' && ['fii', 'stock'].includes(normalizedAssetClass)) {
+		if (
+			documents.length === 0 &&
+			market === 'BR' &&
+			['fii', 'stock'].includes(normalizedAssetClass)
+		) {
 			attemptedSources.push('statusinvest_communications');
 			try {
 				const communications = await this.#fetchStatusInvestFilingDocuments(
@@ -2475,13 +2886,15 @@ class PlatformService {
 			...merged,
 			ticker: details.asset.ticker,
 			portfolioId: details.asset.portfolioId,
-			sources: Array.from(sourcesWithData),
-			attempted_sources: attemptedSources,
-			documents,
-			errors,
-			fetched_at: nowIso(),
-		};
-	}
+				sources: Array.from(sourcesWithData),
+				attempted_sources: attemptedSources,
+				documents,
+				fund_info: fundInfo,
+				fund_portfolio: fundPortfolio,
+				errors,
+				fetched_at: nowIso(),
+			};
+		}
 
 	async getFairPrice(ticker, options = {}) {
 		const details = await this.getAssetDetails(ticker, options);
@@ -4088,7 +4501,7 @@ class PlatformService {
 				const dateMatches = cells
 					.map((cell) => cell.match(/\b\d{2}\/\d{2}\/\d{4}\b/)?.[0] || null)
 					.filter(Boolean);
-				if (dateMatches.length < 2) continue;
+				if (dateMatches.length < 1) continue;
 
 				const findDateByKeyword = (keywords) => {
 					const loweredKeywords = Array.isArray(keywords) ? keywords : [];
@@ -4132,7 +4545,10 @@ class PlatformService {
 				)
 				: null;
 				const type = cells[0] || 'Dividend';
-				const normalizedType = String(type).toLowerCase();
+				const normalizedType = String(type)
+					.toLowerCase()
+					.normalize('NFD')
+					.replace(/[\u0300-\u036f]/g, '');
 				const eventType =
 					normalizedType.includes('jcp') || normalizedType.includes('juros')
 						? 'jcp'
@@ -4140,9 +4556,11 @@ class PlatformService {
 							? 'amortization'
 							: normalizedType.includes('rend')
 								? 'rendimento'
-						: 'dividend';
+								: normalizedType.includes('subscr') || normalizedType.includes('subscription')
+									? 'subscription'
+									: 'dividend';
 
-			if (!valueText && !/divid|rend|juro|provent|amort/i.test(cells.join(' '))) continue;
+				if (!valueText && !/divid|rend|juro|provent|amort|subscr|subscription|preferenc/i.test(normalizedType)) continue;
 
 				parsed.push({
 					type,
@@ -4256,6 +4674,17 @@ class PlatformService {
 			|| type.includes('juros')
 			|| type.includes('rendimento')
 			|| type.includes('amort');
+	}
+
+	#isDividendCalendarEventType(value) {
+		const type = String(value || '')
+			.toLowerCase()
+			.normalize('NFD')
+			.replace(/[\u0300-\u036f]/g, '');
+		return this.#isDividendEventType(type)
+			|| type.includes('subscr')
+			|| type.includes('subscription')
+			|| (type.includes('direito') && type.includes('preferenc'));
 	}
 
 	async #resolveAssetsForTickerOrPortfolio(ticker, portfolioId) {

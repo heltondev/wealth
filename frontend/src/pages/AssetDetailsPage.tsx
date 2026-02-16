@@ -46,6 +46,14 @@ type AssetPriceSeriesPoint = {
   date: string;
   display_date: string | undefined;
   close: number | null;
+  stock_splits: number | null;
+};
+
+type AssetSplitEvent = {
+  date: string;
+  displayDate: string;
+  factor: number;
+  eventType: 'desdobramento' | 'grupamento';
 };
 
 type ChartPeriodPreset = 'MAX' | '5A' | '2A' | '1A' | '6M' | '3M' | '1M' | 'CUSTOM';
@@ -91,6 +99,8 @@ type AssetFinancialStatements = {
   cashflow?: unknown;
   quarterly_cashflow?: unknown;
   documents?: unknown;
+  fund_info?: unknown;
+  fund_portfolio?: unknown;
 };
 
 type AssetFinancialDocument = {
@@ -105,6 +115,34 @@ type AssetFinancialDocument = {
   url: string;
   viewerUrl: string | null;
   downloadUrl: string | null;
+};
+
+type AssetFundGeneralInfo = {
+  legalName: string | null;
+  tradingName: string | null;
+  acronym: string | null;
+  cnpj: string | null;
+  classification: string | null;
+  segment: string | null;
+  administrator: string | null;
+  managerName: string | null;
+  bookkeeper: string | null;
+  website: string | null;
+  address: string | null;
+  phone: string | null;
+  quotaCount: number | null;
+  quotaDateApproved: string | null;
+  tradingCode: string | null;
+  tradingCodeOthers: string | null;
+  b3DetailsUrl: string | null;
+  source: string | null;
+};
+
+type AssetFundPortfolioRow = {
+  label: string;
+  allocationPct: number;
+  category: string | null;
+  source: string | null;
 };
 
 type ParsedFinancialRow = {
@@ -148,6 +186,7 @@ const CHART_PERIOD_DAYS: Partial<Record<ChartPeriodPreset, number>> = {
   '2A': 730,
   '5A': 1825,
 };
+const SPLIT_EVENT_DEDUP_WINDOW_DAYS = 7;
 
 const FINANCIAL_STATEMENT_KEY_MAP: Record<
 FinancialStatementKind,
@@ -241,6 +280,14 @@ const splitFieldsIntoColumns = <T,>(fields: T[], columnCount = 2): T[][] => {
 
   return columns;
 };
+
+const normalizeComparableText = (value: unknown): string => (
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\.sa$/i, '')
+    .replace(/\s+/g, ' ')
+);
 
 const buildAssetExternalLinks = (ticker: string, assetClass: string) => {
   const normalizedTicker = String(ticker || '').toUpperCase();
@@ -600,6 +647,194 @@ const normalizeFinancialDocumentUrl = (value: unknown): string | null => {
   return null;
 };
 
+const parseLocalizedNumber = (value: unknown): number | null => {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  const direct = Number(value);
+  if (Number.isFinite(direct)) return direct;
+
+  let text = String(value).trim();
+  if (!text) return null;
+  text = text.replace(/[^\d,.-]/g, '');
+  if (!text) return null;
+
+  const hasComma = text.includes(',');
+  const hasDot = text.includes('.');
+  if (hasComma && hasDot) {
+    if (text.lastIndexOf(',') > text.lastIndexOf('.')) {
+      text = text.replace(/\./g, '').replace(',', '.');
+    } else {
+      text = text.replace(/,/g, '');
+    }
+  } else if (hasComma) {
+    if (/,\d{1,4}$/.test(text)) {
+      text = text.replace(/\./g, '').replace(',', '.');
+    } else {
+      text = text.replace(/,/g, '');
+    }
+  } else if ((text.match(/\./g) || []).length > 1) {
+    text = text.replace(/\./g, '');
+  }
+
+  const parsed = Number(text);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const normalizeSplitEventType = (value: unknown, factor: number): 'desdobramento' | 'grupamento' => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized.includes('desdobr') || normalized.includes('split')) return 'desdobramento';
+  if (normalized.includes('grup') || normalized.includes('reverse')) return 'grupamento';
+  return factor > 1 ? 'desdobramento' : 'grupamento';
+};
+
+const dedupeSplitEvents = (events: AssetSplitEvent[]): AssetSplitEvent[] => {
+  const dedupeWindowMs = SPLIT_EVENT_DEDUP_WINDOW_DAYS * 86400000;
+  const byDate = [...events].sort((left, right) => left.date.localeCompare(right.date));
+  const deduped: AssetSplitEvent[] = [];
+
+  for (const event of byDate) {
+    const eventTime = new Date(`${event.date}T00:00:00Z`).getTime();
+    const duplicate = deduped.some((existing) => {
+      const existingTime = new Date(`${existing.date}T00:00:00Z`).getTime();
+      if (!Number.isFinite(existingTime) || !Number.isFinite(eventTime)) return false;
+      const sameFactor = Math.abs(existing.factor - event.factor) <= 1e-8;
+      return sameFactor && Math.abs(existingTime - eventTime) <= dedupeWindowMs;
+    });
+    if (duplicate) continue;
+    deduped.push(event);
+  }
+
+  return deduped.sort((left, right) => right.date.localeCompare(left.date));
+};
+
+const parseFundGeneralInfoPayload = (payload: unknown): AssetFundGeneralInfo | null => {
+  const entry = toObjectRecord(payload);
+  if (Object.keys(entry).length === 0) return null;
+
+  const legalName = toNonEmptyString(entry.legal_name ?? entry.legalName ?? entry.fund_name ?? entry.fundName);
+  const tradingName = toNonEmptyString(entry.trading_name ?? entry.tradingName);
+  const acronym = toNonEmptyString(entry.acronym);
+  const cnpj = toNonEmptyString(entry.cnpj);
+  const classification = toNonEmptyString(entry.classification);
+  const segment = toNonEmptyString(entry.segment);
+  const administrator = toNonEmptyString(entry.administrator);
+  const managerName = toNonEmptyString(entry.manager_name ?? entry.managerName);
+  const bookkeeper = toNonEmptyString(entry.bookkeeper);
+  const website = normalizeFinancialDocumentUrl(entry.website);
+  const address = toNonEmptyString(entry.address);
+  const phone = toNonEmptyString(entry.phone);
+  const quotaCount = parseLocalizedNumber(entry.quota_count ?? entry.quotaCount);
+  const quotaDateApproved = toIsoDate(String(entry.quota_date_approved ?? entry.quotaDateApproved ?? '')) || null;
+  const tradingCode = toNonEmptyString(entry.trading_code ?? entry.tradingCode);
+  const tradingCodeOthers = toNonEmptyString(entry.trading_code_others ?? entry.tradingCodeOthers);
+  const b3DetailsUrl = normalizeFinancialDocumentUrl(entry.b3_details_url ?? entry.b3DetailsUrl);
+  const source = toNonEmptyString(entry.source);
+
+  const normalized: AssetFundGeneralInfo = {
+    legalName,
+    tradingName,
+    acronym,
+    cnpj,
+    classification,
+    segment,
+    administrator,
+    managerName,
+    bookkeeper,
+    website,
+    address,
+    phone,
+    quotaCount,
+    quotaDateApproved,
+    tradingCode,
+    tradingCodeOthers,
+    b3DetailsUrl,
+    source,
+  };
+
+  const hasValues = Object.entries(normalized).some(([key, value]) => (
+    key !== 'source' && value !== null && value !== undefined && String(value).trim() !== ''
+  ));
+  return hasValues ? normalized : null;
+};
+
+const parseFundPortfolioPayload = (payload: unknown): AssetFundPortfolioRow[] => {
+  const rawRows = Array.isArray(payload)
+    ? payload
+    : (toObjectRecord(payload).rows && Array.isArray(toObjectRecord(payload).rows))
+      ? (toObjectRecord(payload).rows as unknown[])
+      : [];
+  if (rawRows.length === 0) return [];
+
+  const dedupe = new Set<string>();
+  const rows: AssetFundPortfolioRow[] = [];
+
+  for (const rawEntry of rawRows) {
+    const entry = toObjectRecord(rawEntry);
+    if (Object.keys(entry).length === 0) continue;
+
+    const label = toNonEmptyString(
+      entry.label
+      ?? entry.name
+      ?? entry.nome
+      ?? entry.segment
+      ?? entry.segmento
+      ?? entry.category
+      ?? entry.categoria
+      ?? entry.asset
+      ?? entry.ativo
+      ?? entry.ticker
+      ?? null
+    );
+    if (!label) continue;
+
+    let allocationPct = parseLocalizedNumber(
+      entry.allocation_pct
+      ?? entry.allocation
+      ?? entry.percent
+      ?? entry.percentage
+      ?? entry.weight
+      ?? entry.peso
+      ?? entry.participacao
+      ?? null
+    );
+    if (allocationPct === null) continue;
+    if (Math.abs(allocationPct) <= 1 && allocationPct !== 0) {
+      allocationPct *= 100;
+    }
+    if (!Number.isFinite(allocationPct) || allocationPct <= 0 || allocationPct > 100) continue;
+
+    const categoryRaw = toNonEmptyString(
+      entry.category
+      ?? entry.categoria
+      ?? entry.segment
+      ?? entry.segmento
+      ?? entry.sector
+      ?? entry.setor
+      ?? entry.class
+      ?? entry.classe
+      ?? entry.type
+      ?? entry.tipo
+      ?? null
+    );
+    const category = categoryRaw && categoryRaw !== label ? categoryRaw : null;
+    const source = toNonEmptyString(entry.source);
+    const normalizedAllocation = Number(allocationPct.toFixed(4));
+
+    const dedupeKey = `${label.toLowerCase()}|${normalizedAllocation.toFixed(4)}|${(category || '').toLowerCase()}`;
+    if (dedupe.has(dedupeKey)) continue;
+    dedupe.add(dedupeKey);
+
+    rows.push({
+      label,
+      allocationPct: normalizedAllocation,
+      category,
+      source,
+    });
+  }
+
+  return rows.sort((left, right) => right.allocationPct - left.allocationPct);
+};
+
 const parseFinancialDocumentPayload = (payload: unknown): AssetFinancialDocument[] => {
   if (!Array.isArray(payload)) return [];
 
@@ -678,6 +913,7 @@ const AssetDetailsPage = () => {
   const [currentQuote, setCurrentQuote] = useState<number | null>(null);
   const [averageCost, setAverageCost] = useState<number | null>(null);
   const [marketSeries, setMarketSeries] = useState<AssetPriceSeriesPoint[]>([]);
+  const [assetSplitEvents, setAssetSplitEvents] = useState<AssetSplitEvent[]>([]);
   const [marketSeriesLoading, setMarketSeriesLoading] = useState(false);
   const [hoveredMarketPointIndex, setHoveredMarketPointIndex] = useState<number | null>(null);
   const [selectedTradePoint, setSelectedTradePoint] = useState<AssetTradeHistoryPoint | null>(null);
@@ -700,6 +936,13 @@ const AssetDetailsPage = () => {
     if (value === undefined || value === null || value === '') return t('assets.modal.noValue');
     return String(value);
   }, [t]);
+
+  const formatCnpjValue = useCallback((value: string | null) => {
+    if (!value) return formatDetailValue(null);
+    const digits = value.replace(/\D/g, '');
+    if (digits.length !== 14) return value;
+    return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12, 14)}`;
+  }, [formatDetailValue]);
 
   const formatAssetQuantity = useCallback((value: unknown) => {
     const numeric = Number(value);
@@ -732,6 +975,21 @@ const AssetDetailsPage = () => {
       maximumFractionDigits: 2,
     })}%`
   ), [numberLocale]);
+
+  const formatSplitFactor = useCallback((factor: number) => (
+    factor.toLocaleString(numberLocale, {
+      minimumFractionDigits: Number.isInteger(factor) ? 0 : 2,
+      maximumFractionDigits: 6,
+    })
+  ), [numberLocale]);
+
+  const formatSplitRatio = useCallback((factor: number) => {
+    if (!Number.isFinite(factor) || factor <= 0 || Math.abs(factor - 1) <= Number.EPSILON) return '-';
+    if (factor > 1) {
+      return `1:${formatSplitFactor(factor)}`;
+    }
+    return `${formatSplitFactor(1 / factor)}:1`;
+  }, [formatSplitFactor]);
 
   const formatCompactNumber = useCallback((value: number) => (
     value.toLocaleString(numberLocale, {
@@ -1084,6 +1342,7 @@ const AssetDetailsPage = () => {
     setCurrentQuote(null);
     setAverageCost(null);
     setMarketSeries([]);
+    setAssetSplitEvents([]);
     setHoveredMarketPointIndex(null);
     setSelectedTradePoint(null);
     setChartPeriod('MAX');
@@ -1213,25 +1472,71 @@ const AssetDetailsPage = () => {
       .then((payload) => {
         if (cancelled) return;
 
-        const normalizedSeries = Array.isArray((payload as { series?: unknown[] }).series)
-          ? ((payload as { series: unknown[] }).series
+        const chartPayload = payload as {
+          series?: unknown[];
+          split_events?: unknown[];
+        };
+
+        const normalizedSeries = Array.isArray(chartPayload.series)
+          ? (chartPayload.series
             .map((item) => {
               const point = item as Record<string, unknown>;
               const close = Number(point.close);
+              const stockSplits = Number(point.stock_splits ?? point.stockSplits);
               return {
                 date: String(point.date || ''),
                 display_date: point.display_date ? String(point.display_date) : undefined,
                 close: Number.isFinite(close) ? close : null,
+                stock_splits: Number.isFinite(stockSplits) ? stockSplits : null,
               } satisfies AssetPriceSeriesPoint;
             })
             .filter((point) => point.date))
           : [];
 
+        const splitEventsFromPayload = Array.isArray(chartPayload.split_events)
+          ? chartPayload.split_events
+            .map((item) => {
+              const event = item as Record<string, unknown>;
+              const dateCandidate = String(event.date || '').slice(0, 10);
+              const normalizedDate = toIsoDate(dateCandidate);
+              const factor = toNumericValue(event.factor ?? event.stock_splits ?? event.stockSplits);
+              if (!normalizedDate || factor === null || factor <= 0 || Math.abs(factor - 1) <= Number.EPSILON) {
+                return null;
+              }
+              return {
+                date: normalizedDate,
+                displayDate: String(event.display_date || event.displayDate || normalizedDate),
+                factor,
+                eventType: normalizeSplitEventType(event.event_type ?? event.type, factor),
+              } satisfies AssetSplitEvent;
+            })
+            .filter((event): event is AssetSplitEvent => Boolean(event))
+          : [];
+
+        const splitEventsFromSeries = normalizedSeries
+          .filter((point) => (
+            point.stock_splits !== null
+            && point.stock_splits > 0
+            && Math.abs(point.stock_splits - 1) > Number.EPSILON
+          ))
+          .map((point) => ({
+            date: point.date,
+            displayDate: point.display_date || point.date,
+            factor: Number(point.stock_splits),
+            eventType: normalizeSplitEventType(null, Number(point.stock_splits)),
+          } satisfies AssetSplitEvent));
+
+        const normalizedSplitEvents = dedupeSplitEvents(
+          splitEventsFromPayload.length > 0 ? splitEventsFromPayload : splitEventsFromSeries
+        );
+
         setMarketSeries(normalizedSeries);
+        setAssetSplitEvents(normalizedSplitEvents);
       })
       .catch(() => {
         if (cancelled) return;
         setMarketSeries([]);
+        setAssetSplitEvents([]);
       })
       .finally(() => {
         if (cancelled) return;
@@ -1624,6 +1929,15 @@ const AssetDetailsPage = () => {
       transform: `translate(${isRightSide ? '-100%' : '0'}, ${isNearTop ? '12px' : 'calc(-100% - 12px)'})`,
     };
   }, [selectedTradePoint]);
+
+  const splitEventsCoverage = useMemo(() => {
+    if (assetSplitEvents.length === 0) return null;
+    const ordered = [...assetSplitEvents].sort((left, right) => left.date.localeCompare(right.date));
+    return {
+      start: ordered[0].date,
+      end: ordered[ordered.length - 1].date,
+    };
+  }, [assetSplitEvents]);
 
   const overviewFields = useMemo(() => {
     if (!selectedAsset) return [];
@@ -2166,6 +2480,151 @@ const AssetDetailsPage = () => {
     parseFinancialDocumentPayload(assetFinancials?.documents)
   ), [assetFinancials?.documents]);
 
+  const fundGeneralInfo = useMemo<AssetFundGeneralInfo | null>(() => (
+    parseFundGeneralInfoPayload(assetFinancials?.fund_info)
+  ), [assetFinancials?.fund_info]);
+
+  const fundPortfolioRows = useMemo<AssetFundPortfolioRow[]>(() => (
+    parseFundPortfolioPayload(assetFinancials?.fund_portfolio)
+  ), [assetFinancials?.fund_portfolio]);
+
+  const shouldRenderFundInfo = useMemo(() => {
+    if (!selectedAsset) return false;
+    const isFii = String(selectedAsset.assetClass || '').toLowerCase() === 'fii';
+    return isFii || fundGeneralInfo !== null;
+  }, [fundGeneralInfo, selectedAsset]);
+
+  const shouldRenderFundPortfolio = useMemo(() => {
+    if (!selectedAsset) return false;
+    const isFii = String(selectedAsset.assetClass || '').toLowerCase() === 'fii';
+    return isFii || fundPortfolioRows.length > 0;
+  }, [fundPortfolioRows.length, selectedAsset]);
+
+  const fundGeneralInfoFields = useMemo<Array<{ key: string; label: string; value: React.ReactNode }>>(() => {
+    const quotaCountValue = fundGeneralInfo?.quotaCount ?? null;
+    const quotaCountDisplay = quotaCountValue !== null && Number.isFinite(quotaCountValue)
+      ? quotaCountValue.toLocaleString(numberLocale, {
+        maximumFractionDigits: Number.isInteger(quotaCountValue) ? 0 : 4,
+      })
+      : formatDetailValue(null);
+
+    const selectedTicker = normalizeComparableText(selectedAsset?.ticker || null);
+    const selectedName = normalizeComparableText(selectedAsset?.name || null);
+    const selectedSource = normalizeComparableText(assetInsights?.source || selectedAsset?.source || null);
+    const fundTradingCode = normalizeComparableText(fundGeneralInfo?.tradingCode || null);
+    const fundTradingName = normalizeComparableText(fundGeneralInfo?.tradingName || null);
+    const fundAcronym = normalizeComparableText(fundGeneralInfo?.acronym || null);
+    const fundSource = normalizeComparableText(fundGeneralInfo?.source || null);
+
+    const shouldHideTradingCode = Boolean(fundTradingCode) && fundTradingCode === selectedTicker;
+    const shouldHideTradingName = Boolean(fundTradingName) && fundTradingName === selectedName;
+    const shouldHideAcronym = Boolean(fundAcronym) && selectedTicker.startsWith(fundAcronym);
+    const shouldHideSource = Boolean(fundSource) && fundSource === selectedSource;
+
+    return [
+      {
+        key: 'cnpj',
+        label: t('assets.modal.fundInfo.cnpj', { defaultValue: 'CNPJ' }),
+        value: formatCnpjValue(fundGeneralInfo?.cnpj || null),
+      },
+      ...(shouldHideAcronym ? [] : [{
+        key: 'acronym',
+        label: t('assets.modal.fundInfo.acronym', { defaultValue: 'Acronym' }),
+        value: formatDetailValue(fundGeneralInfo?.acronym ?? null),
+      }]),
+      {
+        key: 'legalName',
+        label: t('assets.modal.fundInfo.legalName', { defaultValue: 'Legal Name' }),
+        value: formatDetailValue(fundGeneralInfo?.legalName ?? null),
+      },
+      ...(shouldHideTradingName ? [] : [{
+        key: 'tradingName',
+        label: t('assets.modal.fundInfo.tradingName', { defaultValue: 'Trading Name' }),
+        value: formatDetailValue(fundGeneralInfo?.tradingName ?? null),
+      }]),
+      {
+        key: 'classification',
+        label: t('assets.modal.fundInfo.classification', { defaultValue: 'Classification' }),
+        value: formatDetailValue(fundGeneralInfo?.classification ?? null),
+      },
+      {
+        key: 'segment',
+        label: t('assets.modal.fundInfo.segment', { defaultValue: 'Segment' }),
+        value: formatDetailValue(fundGeneralInfo?.segment ?? null),
+      },
+      {
+        key: 'administrator',
+        label: t('assets.modal.fundInfo.administrator', { defaultValue: 'Administrator' }),
+        value: formatDetailValue(fundGeneralInfo?.administrator ?? null),
+      },
+      {
+        key: 'managerName',
+        label: t('assets.modal.fundInfo.managerName', { defaultValue: 'Manager' }),
+        value: formatDetailValue(fundGeneralInfo?.managerName ?? null),
+      },
+      {
+        key: 'bookkeeper',
+        label: t('assets.modal.fundInfo.bookkeeper', { defaultValue: 'Bookkeeper' }),
+        value: formatDetailValue(fundGeneralInfo?.bookkeeper ?? null),
+      },
+      {
+        key: 'quotaCount',
+        label: t('assets.modal.fundInfo.quotaCount', { defaultValue: 'Quota Count' }),
+        value: quotaCountDisplay,
+      },
+      {
+        key: 'quotaDateApproved',
+        label: t('assets.modal.fundInfo.quotaDateApproved', { defaultValue: 'Quota Date Approved' }),
+        value: fundGeneralInfo?.quotaDateApproved
+          ? formatDate(fundGeneralInfo.quotaDateApproved, numberLocale)
+          : formatDetailValue(null),
+      },
+      ...(shouldHideTradingCode ? [] : [{
+        key: 'tradingCode',
+        label: t('assets.modal.fundInfo.tradingCode', { defaultValue: 'Trading Code' }),
+        value: formatDetailValue(fundGeneralInfo?.tradingCode ?? null),
+      }]),
+      {
+        key: 'tradingCodeOthers',
+        label: t('assets.modal.fundInfo.tradingCodeOthers', { defaultValue: 'Other Trading Codes' }),
+        value: formatDetailValue(fundGeneralInfo?.tradingCodeOthers ?? null),
+      },
+      {
+        key: 'website',
+        label: t('assets.modal.fundInfo.website', { defaultValue: 'Website' }),
+        value: fundGeneralInfo?.website ? (
+          <a href={fundGeneralInfo.website} target="_blank" rel="noreferrer" className="asset-details-page__document-title">
+            {fundGeneralInfo.website}
+          </a>
+        ) : formatDetailValue(null),
+      },
+      {
+        key: 'b3Details',
+        label: t('assets.modal.fundInfo.b3Details', { defaultValue: 'B3 Details' }),
+        value: fundGeneralInfo?.b3DetailsUrl ? (
+          <a href={fundGeneralInfo.b3DetailsUrl} target="_blank" rel="noreferrer" className="asset-details-page__document-title">
+            {t('assets.modal.fundInfo.openB3', { defaultValue: 'Open B3 page' })}
+          </a>
+        ) : formatDetailValue(null),
+      },
+      {
+        key: 'address',
+        label: t('assets.modal.fundInfo.address', { defaultValue: 'Address' }),
+        value: formatDetailValue(fundGeneralInfo?.address ?? null),
+      },
+      {
+        key: 'phone',
+        label: t('assets.modal.fundInfo.phone', { defaultValue: 'Phone' }),
+        value: formatDetailValue(fundGeneralInfo?.phone ?? null),
+      },
+      ...(shouldHideSource ? [] : [{
+        key: 'source',
+        label: t('assets.modal.fundInfo.source', { defaultValue: 'Source' }),
+        value: formatDetailValue(fundGeneralInfo?.source ?? null),
+      }]),
+    ];
+  }, [assetInsights?.source, formatCnpjValue, formatDetailValue, fundGeneralInfo, numberLocale, selectedAsset?.name, selectedAsset?.source, selectedAsset?.ticker, t]);
+
   const fallbackFinancialDocuments = useMemo(() => {
     if (!selectedAsset) return [];
     const links = buildAssetExternalLinks(selectedAsset.ticker, selectedAsset.assetClass);
@@ -2330,6 +2789,86 @@ const AssetDetailsPage = () => {
                 </article>
               </div>
             </section>
+
+            {shouldRenderFundInfo ? (
+              <section className="asset-details-page__card asset-details-page__card--full asset-details-page__card--two-cols">
+                <h2>{t('assets.modal.sections.fundInfo', { defaultValue: 'Fund General Info' })}</h2>
+                <dl>
+                  {fundGeneralInfoFields.map((field) => (
+                    <div key={field.key}>
+                      <dt>{field.label}</dt>
+                      <dd>{field.value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </section>
+            ) : null}
+
+            {shouldRenderFundPortfolio ? (
+              <section className="asset-details-page__card asset-details-page__card--full asset-details-page__card--portfolio">
+                <div className="asset-details-page__portfolio-header">
+                  <h2>
+                    {t('assets.modal.portfolio.title', {
+                      ticker: selectedAsset.ticker,
+                      defaultValue: 'Portfolio do {{ticker}}',
+                    })}
+                  </h2>
+                  {fundPortfolioRows.length > 0 ? (
+                    <span className="asset-details-page__portfolio-count">
+                      {t('assets.modal.portfolio.items', {
+                        count: fundPortfolioRows.length,
+                        defaultValue: '{{count}} items',
+                      })}
+                    </span>
+                  ) : null}
+                </div>
+
+                {assetFinancialsLoading ? (
+                  <p className="asset-details-page__financials-state">{t('common.loading')}</p>
+                ) : fundPortfolioRows.length === 0 ? (
+                  <p className="asset-details-page__financials-state">
+                    {t('assets.modal.portfolio.empty', {
+                      defaultValue: 'No portfolio composition data available for this asset.',
+                    })}
+                  </p>
+                ) : (
+                  <div className="asset-details-page__portfolio-table-wrap">
+                    <table className="asset-details-page__portfolio-table">
+                      <thead>
+                        <tr>
+                          <th>{t('assets.modal.portfolio.columns.label', { defaultValue: 'Item' })}</th>
+                          <th>{t('assets.modal.portfolio.columns.allocation', { defaultValue: 'Allocation' })}</th>
+                          <th>{t('assets.modal.portfolio.columns.category', { defaultValue: 'Category' })}</th>
+                          <th>{t('assets.modal.portfolio.columns.source', { defaultValue: 'Source' })}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {fundPortfolioRows.map((row) => (
+                          <tr key={`${row.label}-${row.allocationPct}-${row.category || ''}`}>
+                            <td>{row.label}</td>
+                            <td>
+                              <div className="asset-details-page__portfolio-allocation">
+                                <span>
+                                  {formatPercent(row.allocationPct / 100)}
+                                </span>
+                                <div className="asset-details-page__portfolio-allocation-bar" aria-hidden="true">
+                                  <span
+                                    className="asset-details-page__portfolio-allocation-fill"
+                                    style={{ width: `${Math.max(0, Math.min(100, row.allocationPct))}%` }}
+                                  />
+                                </div>
+                              </div>
+                            </td>
+                            <td>{row.category || '-'}</td>
+                            <td>{row.source || '-'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+            ) : null}
 
             <section className="asset-details-page__card asset-details-page__card--full asset-details-page__card--financials">
               <div className="asset-details-page__financials-header">
@@ -3041,6 +3580,62 @@ const AssetDetailsPage = () => {
                   </>
                 )}
               </div>
+            </section>
+
+            <section className="asset-details-page__card asset-details-page__card--full asset-details-page__card--splits">
+              <div className="asset-details-page__splits-header">
+                <h2>{t('assets.modal.splits.title', { defaultValue: 'Desdobramento / Grupamento' })}</h2>
+                {splitEventsCoverage ? (
+                  <span className="asset-details-page__splits-meta">
+                    {t('assets.modal.splits.period', {
+                      start: formatDate(splitEventsCoverage.start, numberLocale),
+                      end: formatDate(splitEventsCoverage.end, numberLocale),
+                      defaultValue: '{{start}} - {{end}}',
+                    })}
+                  </span>
+                ) : null}
+              </div>
+
+              {assetSplitEvents.length === 0 ? (
+                <p className="asset-details-page__financials-state">
+                  {t('assets.modal.splits.empty', {
+                    defaultValue: 'No desdobramento/grupamento events found for this asset.',
+                  })}
+                </p>
+              ) : (
+                <div className="asset-details-page__splits-table-wrap">
+                  <table className="asset-details-page__splits-table">
+                    <thead>
+                      <tr>
+                        <th>{t('assets.modal.splits.date', { defaultValue: 'Date' })}</th>
+                        <th>{t('assets.modal.splits.type', { defaultValue: 'Type' })}</th>
+                        <th>{t('assets.modal.splits.ratio', { defaultValue: 'Ratio' })}</th>
+                        <th>{t('assets.modal.splits.factor', { defaultValue: 'Factor' })}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {assetSplitEvents.map((event) => (
+                        <tr key={`${event.date}-${event.factor}-${event.eventType}`}>
+                          <td>{formatDate(event.date, numberLocale)}</td>
+                          <td>
+                            <span className={`asset-details-page__split-type asset-details-page__split-type--${event.eventType}`}>
+                              {t(`assets.modal.splits.types.${event.eventType}`, { defaultValue: event.eventType })}
+                            </span>
+                          </td>
+                          <td>{formatSplitRatio(event.factor)}</td>
+                          <td>{formatSplitFactor(event.factor)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              <p className="asset-details-page__splits-source">
+                {t('assets.modal.splits.sourceHint', {
+                  defaultValue: 'Derived from stock split factors in historical price data.',
+                })}
+              </p>
             </section>
           </>
         ) : null}

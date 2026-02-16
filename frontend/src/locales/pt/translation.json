@@ -76,6 +76,7 @@
       "jcp": "JCP",
       "amortization": "Amortização",
       "rendimento": "Rendimento",
+      "subscription": "Subscrição",
       "other": "Provento"
     },
     "groups": {
@@ -467,6 +468,7 @@
         "overview": "Resumo",
         "market": "Mercado",
         "insights": "Fundamentos e Preço Justo",
+        "fundInfo": "Informações Gerais do Fundo",
         "provents": "Proventos e Calendário",
         "metadata": "Metadados",
         "raw": "Payload Bruto"
@@ -540,6 +542,32 @@
         "changePct": "Variação %",
         "lastClose": "Último fechamento"
       },
+      "portfolio": {
+        "title": "Portfólio do {{ticker}}",
+        "items_one": "{{count}} item",
+        "items_other": "{{count}} itens",
+        "empty": "Não há dados de composição de portfólio para este ativo.",
+        "columns": {
+          "label": "Item",
+          "allocation": "Alocação",
+          "category": "Categoria",
+          "source": "Fonte"
+        }
+      },
+      "splits": {
+        "title": "Desdobramento / Grupamento",
+        "empty": "Nenhum evento de desdobramento ou grupamento encontrado para este ativo.",
+        "period": "{{start}} - {{end}}",
+        "date": "Data",
+        "type": "Tipo",
+        "ratio": "Relação",
+        "factor": "Fator",
+        "sourceHint": "Derivado dos fatores de split no histórico de preços.",
+        "types": {
+          "desdobramento": "Desdobramento",
+          "grupamento": "Grupamento"
+        }
+      },
       "weights": {
         "title": "Peso do Ativo",
         "portfolio": "Na Carteira",
@@ -587,6 +615,27 @@
           "clubeFii": "Clube FII",
           "fiis": "FIIs.com.br"
         }
+      },
+      "fundInfo": {
+        "cnpj": "CNPJ",
+        "acronym": "Sigla",
+        "legalName": "Razão Social",
+        "tradingName": "Nome de Pregão",
+        "classification": "Classificação",
+        "segment": "Segmento",
+        "administrator": "Administrador",
+        "managerName": "Gestor",
+        "bookkeeper": "Escriturador",
+        "quotaCount": "Quantidade de Cotas",
+        "quotaDateApproved": "Data de Aprovação das Cotas",
+        "tradingCode": "Código de Negociação",
+        "tradingCodeOthers": "Outros Códigos de Negociação",
+        "website": "Website",
+        "b3Details": "Detalhes na B3",
+        "openB3": "Abrir página da B3",
+        "address": "Endereço",
+        "phone": "Telefone",
+        "source": "Fonte"
       },
       "financials": {
         "title": "Demonstrativos Financeiros",

@@ -8,6 +8,8 @@ const {
 const B3_FII_BASE_URL = 'https://sistemaswebb3-listados.b3.com.br/fundsListedProxy/Search/';
 const DEFAULT_TIMEOUT_MS = 15000;
 const DEFAULT_START_YEAR = 2016;
+const DEFAULT_MAX_PAGES = 8;
+const DEFAULT_RELEVANT_CATEGORIES = [1, 2, 3, 4, 5, 6, 7, 8];
 
 const REPORT_META_KEYS = new Set([
 	'id',
@@ -94,6 +96,13 @@ const toIsoDate = (value) => {
 	const text = String(value).trim();
 	if (!text) return null;
 	if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+
+	const brazilianDateTimeMatch = text.match(
+		/^(\d{2})\/(\d{2})\/(\d{4})(?:\s+\d{2}:\d{2}(?::\d{2})?)?$/
+	);
+	if (brazilianDateTimeMatch) {
+		return `${brazilianDateTimeMatch[3]}-${brazilianDateTimeMatch[2]}-${brazilianDateTimeMatch[1]}`;
+	}
 
 	const brazilianMatch = text.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
 	if (brazilianMatch) {
@@ -209,6 +218,130 @@ const mapStatementBucketToRows = (bucket) => {
 	return rows.length ? rows : null;
 };
 
+const normalizeDocumentUrl = (value) => {
+	const text = String(value || '').trim();
+	if (!text) return null;
+	if (/^https?:\/\//i.test(text)) return text;
+	if (text.startsWith('//')) return `https:${text}`;
+	if (text.startsWith('/')) return `https://fnet.bmfbovespa.com.br${text}`;
+	if (/^[a-z0-9.-]+\.[a-z]{2,}\/?/i.test(text)) return `https://${text}`;
+	return null;
+};
+
+const normalizeFilingDocumentRow = (row, source) => {
+	if (!isObjectRecord(row)) return null;
+	const viewerUrl = normalizeDocumentUrl(
+		row.urlViewerFundosNet ?? row.urlviewerfundosnet ?? row.urlViewer ?? null
+	);
+	const downloadUrl = normalizeDocumentUrl(
+		row.urlFundosNet ??
+		row.urlfundosnet ??
+		row.urlDownload ??
+		row.urldownload ??
+		null
+	);
+	const primaryUrl = viewerUrl || downloadUrl;
+	if (!primaryUrl) return null;
+
+	const title =
+		String(
+			row.subjects ||
+			row.subject ||
+			row.describleType ||
+			row.describleKind ||
+			row.describleCategory ||
+			row.typeName ||
+			row.type ||
+			''
+		).trim() || 'Documento B3';
+	const category = String(row.describleCategory || row.category || '').trim() || null;
+	const documentType = String(row.describleType || row.describleKind || row.typeName || '').trim() || null;
+	const referenceDate =
+		toIsoDate(row.referenceDate) ||
+		toIsoDate(row.referenceDateFormat) ||
+		toIsoDate(row.competencia) ||
+		null;
+	const deliveryDate =
+		toIsoDate(row.deliveryDate) ||
+		toIsoDate(row.deliveryDateFormat) ||
+		null;
+
+	return {
+		id: String(row.idMain || row.id || '').trim() || null,
+		source: source || 'b3_fundosnet',
+		title,
+		category,
+		document_type: documentType,
+		reference_date: referenceDate,
+		delivery_date: deliveryDate,
+		status: String(row.status || '').trim() || null,
+		url: primaryUrl,
+		url_viewer: viewerUrl,
+		url_download: downloadUrl,
+		url_alternatives: [],
+	};
+};
+
+const dedupeDocuments = (documents) => {
+	const dedupe = new Set();
+	const rows = [];
+	for (const document of Array.isArray(documents) ? documents : []) {
+		if (!isObjectRecord(document)) continue;
+		const url = String(document.url || '').trim();
+		if (!url) continue;
+		const key = [
+			url,
+			String(document.reference_date || ''),
+			String(document.delivery_date || ''),
+			String(document.title || ''),
+		].join('|');
+		if (dedupe.has(key)) continue;
+		dedupe.add(key);
+		rows.push(document);
+	}
+
+	return rows.sort((left, right) => {
+		const leftDate = left.reference_date || left.delivery_date || '';
+		const rightDate = right.reference_date || right.delivery_date || '';
+		return String(rightDate).localeCompare(String(leftDate));
+	});
+};
+
+const collectNumericIdCandidates = (value, output = new Set(), path = []) => {
+	if (Array.isArray(value)) {
+		for (let index = 0; index < value.length; index += 1) {
+			collectNumericIdCandidates(value[index], output, [...path, String(index)]);
+		}
+		return output;
+	}
+	if (!isObjectRecord(value)) return output;
+
+	for (const [key, entry] of Object.entries(value)) {
+		const normalizedKey = normalizeTextKey(key);
+		const numericValue = toNumberOrNull(entry);
+		const keyLooksLikeId =
+			normalizedKey.startsWith('id') ||
+			normalizedKey.includes('idfnet') ||
+			normalizedKey.includes('idmain');
+
+		if (
+			keyLooksLikeId &&
+			numericValue !== null &&
+			Number.isFinite(numericValue) &&
+			numericValue > 0 &&
+			numericValue < 1_000_000_000
+		) {
+			output.add(Math.trunc(numericValue));
+		}
+
+		if (entry && typeof entry === 'object') {
+			collectNumericIdCandidates(entry, output, [...path, key]);
+		}
+	}
+
+	return output;
+};
+
 const parseStructuredReportsStatements = (reports) => {
 	const buckets = initializeStatementBucket();
 
@@ -273,6 +406,17 @@ class B3FinancialStatementsProvider {
 		this.startYear = Number(options.startYear || process.env.MARKET_DATA_B3_REPORTS_START_YEAR || DEFAULT_START_YEAR);
 		this.pageSize = Number(options.pageSize || process.env.MARKET_DATA_B3_PAGE_SIZE || 50);
 		this.maxReportTypes = Number(options.maxReportTypes || process.env.MARKET_DATA_B3_MAX_REPORT_TYPES || 8);
+		this.maxPages = Number(options.maxPages || process.env.MARKET_DATA_B3_MAX_PAGES || DEFAULT_MAX_PAGES);
+		const categories =
+			options.relevantCategories ||
+			process.env.MARKET_DATA_B3_RELEVANT_CATEGORIES ||
+			DEFAULT_RELEVANT_CATEGORIES;
+		this.relevantCategories = Array.isArray(categories)
+			? categories.map((value) => toNumberOrNull(value)).filter((value) => value !== null)
+			: String(categories)
+				.split(',')
+				.map((value) => toNumberOrNull(value.trim()))
+				.filter((value) => value !== null);
 	}
 
 	canHandle(asset) {
@@ -300,39 +444,46 @@ class B3FinancialStatementsProvider {
 
 		const dateInitial = `${this.startYear}-01-01`;
 		const dateFinal = nowIso().slice(0, 10);
-		const reportFilterBase = {
+		const baseReportFilter = {
 			language: this.language,
-			idFNET: fundDescriptor.idFNET,
 			dateInitial,
 			dateFinal,
 			pageNumber: 1,
 			pageSize: this.pageSize,
 		};
+		const detail = isObjectRecord(detailPayload) ? detailPayload : {};
+		const reportIdCandidates = Array.from(
+			new Set([
+				fundDescriptor.idFNET,
+				...Array.from(collectNumericIdCandidates(detail)),
+			].filter((value) => Number.isFinite(value) && value > 0))
+		);
 
-		const reportTypesPayload = await this.#requestJson('GetTypesReport', reportFilterBase);
-		const reportTypes = Array.isArray(reportTypesPayload) ? reportTypesPayload : [];
-		const reports = [];
+		const reportCollection = await this.#fetchStructuredReports(
+			reportIdCandidates,
+			baseReportFilter
+		);
+		const reports = reportCollection.reports;
+		const reportTypes = reportCollection.reportTypes;
+		const resolvedStructuredReportId = reportCollection.resolvedReportId;
+		const relevantReports = await this.#fetchRelevantReports(
+			reportIdCandidates,
+			baseReportFilter
+		);
 
-		for (const reportType of reportTypes.slice(0, this.maxReportTypes)) {
-			const typeId = toNumberOrNull(reportType?.inputId);
-			if (typeId === null) continue;
-			const reportPayload = await this.#requestJson('GetStructuredReports', {
-				...reportFilterBase,
-				type: typeId,
-			});
-			const reportRows = Array.isArray(reportPayload?.results) ? reportPayload.results : [];
-			if (reportRows.length === 0) continue;
-
-			reports.push({
-				typeId,
-				typeLabel: reportType?.label || reportType?.ariaLabel || null,
-				rows: reportRows,
-				page: reportPayload?.page || null,
-			});
-		}
+		const structuredDocuments = reports.flatMap((report) => (
+			Array.isArray(report.rows)
+				? report.rows
+					.map((row) => normalizeFilingDocumentRow(row, 'b3_structured_reports'))
+					.filter(Boolean)
+				: []
+		));
+		const relevantDocuments = relevantReports.rows
+			.map((row) => normalizeFilingDocumentRow(row, 'b3_reports_relevants'))
+			.filter(Boolean);
+		const documents = dedupeDocuments([...structuredDocuments, ...relevantDocuments]);
 
 		const statements = parseStructuredReportsStatements(reports);
-		const detail = isObjectRecord(detailPayload) ? detailPayload : {};
 		const currentPrice = parseLocalizedNumber(detail.quote);
 		const marketCap = parseLocalizedNumber(detail.equity);
 
@@ -359,12 +510,16 @@ class B3FinancialStatementsProvider {
 				b3: {
 					fund: fundDescriptor,
 					report_types: reportTypes,
+					relevant_report_categories: relevantReports.categories,
+					resolved_report_id: resolvedStructuredReportId || relevantReports.resolvedReportId || null,
 					reports_total: reports.reduce(
 						(total, report) => total + (Array.isArray(report.rows) ? report.rows.length : 0),
 						0
 					),
+					relevant_reports_total: relevantReports.rows.length,
 				},
 			},
+			documents,
 			historical: {
 				history_30d: [],
 				dividends: [],
@@ -373,16 +528,145 @@ class B3FinancialStatementsProvider {
 				ticker: normalizedTicker,
 				fund: fundDescriptor,
 				detail,
+				report_id_candidates: reportIdCandidates,
 				report_types: reportTypes,
 				reports,
+				relevant_reports: relevantReports.rows,
 				financials: statements.financials,
 				quarterly_financials: statements.quarterly_financials,
 				balance_sheet: statements.balance_sheet,
 				quarterly_balance_sheet: statements.quarterly_balance_sheet,
 				cashflow: statements.cashflow,
 				quarterly_cashflow: statements.quarterly_cashflow,
+				documents,
 			},
 		};
+	}
+
+	async #fetchStructuredReports(reportIdCandidates, baseFilter) {
+		const reportIds = Array.isArray(reportIdCandidates) ? reportIdCandidates : [];
+		let resolvedReportId = null;
+		let reportTypes = [];
+		const reports = [];
+
+		for (const reportId of reportIds) {
+			const reportFilterBase = {
+				...baseFilter,
+				idFNET: reportId,
+			};
+			const reportTypesPayload = await this.#requestJson('GetTypesReport', reportFilterBase);
+			const candidateTypes = Array.isArray(reportTypesPayload) ? reportTypesPayload : [];
+			if (candidateTypes.length === 0) continue;
+
+			const candidateReports = [];
+			for (const reportType of candidateTypes.slice(0, this.maxReportTypes)) {
+				const typeId = toNumberOrNull(reportType?.inputId);
+				if (typeId === null) continue;
+				const reportRows = await this.#listStructuredReportsPages({
+					...reportFilterBase,
+					type: typeId,
+				});
+				if (reportRows.length === 0) continue;
+				candidateReports.push({
+					typeId,
+					typeLabel: reportType?.label || reportType?.ariaLabel || null,
+					rows: reportRows,
+				});
+			}
+
+			if (candidateReports.length === 0) continue;
+			resolvedReportId = reportId;
+			reportTypes = candidateTypes;
+			reports.push(...candidateReports);
+			break;
+		}
+
+		return {
+			resolvedReportId,
+			reportTypes,
+			reports,
+		};
+	}
+
+	async #fetchRelevantReports(reportIdCandidates, baseFilter) {
+		const reportIds = Array.isArray(reportIdCandidates) ? reportIdCandidates : [];
+		const categories = this.relevantCategories.length > 0
+			? this.relevantCategories
+			: DEFAULT_RELEVANT_CATEGORIES;
+		let resolvedReportId = null;
+		const rows = [];
+
+		for (const reportId of reportIds) {
+			const candidateRows = [];
+			for (const category of categories) {
+				const pageRows = await this.#listRelevantReportsPages({
+					...baseFilter,
+					idFNET: reportId,
+					category,
+				});
+				if (pageRows.length === 0) continue;
+				for (const row of pageRows) {
+					candidateRows.push({
+						...row,
+						__category: category,
+					});
+				}
+			}
+			if (candidateRows.length === 0) continue;
+			resolvedReportId = reportId;
+			rows.push(...candidateRows);
+			break;
+		}
+
+		return {
+			resolvedReportId,
+			categories,
+			rows,
+		};
+	}
+
+	async #listStructuredReportsPages(basePayload) {
+		const rows = [];
+		let pageNumber = 1;
+		let totalPages = 1;
+
+		while (pageNumber <= totalPages && pageNumber <= this.maxPages) {
+			const payload = {
+				...basePayload,
+				pageNumber,
+				pageSize: basePayload.pageSize || this.pageSize,
+			};
+			const response = await this.#requestJson('GetStructuredReports', payload);
+			const pageRows = Array.isArray(response?.results) ? response.results : [];
+			rows.push(...pageRows);
+			totalPages = toNumberOrNull(response?.page?.totalPages) || 1;
+			if (pageRows.length === 0) break;
+			pageNumber += 1;
+		}
+
+		return rows;
+	}
+
+	async #listRelevantReportsPages(basePayload) {
+		const rows = [];
+		let pageNumber = 1;
+		let totalPages = 1;
+
+		while (pageNumber <= totalPages && pageNumber <= this.maxPages) {
+			const payload = {
+				...basePayload,
+				pageNumber,
+				pageSize: basePayload.pageSize || this.pageSize,
+			};
+			const response = await this.#requestJson('GetReportsRelevants', payload);
+			const pageRows = Array.isArray(response?.results) ? response.results : [];
+			rows.push(...pageRows);
+			totalPages = toNumberOrNull(response?.page?.totalPages) || 1;
+			if (pageRows.length === 0) break;
+			pageNumber += 1;
+		}
+
+		return rows;
 	}
 
 	async #resolveFundDescriptor(ticker) {

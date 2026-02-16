@@ -24,6 +24,8 @@ test('B3FinancialStatementsProvider builds normalized statements from B3 structu
 		timeoutMs: 1000,
 		startYear: 2020,
 		maxReportTypes: 4,
+		relevantCategories: [1, 2],
+		maxPages: 1,
 	});
 
 	const fetchImpl = async (url) => {
@@ -66,7 +68,7 @@ test('B3FinancialStatementsProvider builds normalized statements from B3 structu
 			const decodedPayload = decodeLastUrlSegment(url);
 			if (decodedPayload.type === 47) {
 				return new Response(JSON.stringify({
-					page: { totalRecords: 1 },
+					page: { totalRecords: 1, totalPages: 1 },
 					results: [
 						{
 							referenceDate: '31/12/2025',
@@ -78,7 +80,7 @@ test('B3FinancialStatementsProvider builds normalized statements from B3 structu
 			}
 			if (decodedPayload.type === 45) {
 				return new Response(JSON.stringify({
-					page: { totalRecords: 1 },
+					page: { totalRecords: 1, totalPages: 1 },
 					results: [
 						{
 							referenceDate: '30/09/2025',
@@ -90,6 +92,31 @@ test('B3FinancialStatementsProvider builds normalized statements from B3 structu
 			}
 			return new Response(JSON.stringify({
 				page: { totalRecords: 0 },
+				results: [],
+			}), { status: 200, headers: { 'content-type': 'application/json' } });
+		}
+
+		if (url.includes('GetReportsRelevants/')) {
+			const decodedPayload = decodeLastUrlSegment(url);
+			if (decodedPayload.category === 1) {
+				return new Response(JSON.stringify({
+					page: { totalRecords: 1, totalPages: 1 },
+					results: [
+						{
+							urlFundosNet: 'https://fnet.bmfbovespa.com.br/fnet/publico/downloadDocumento?id=1106412',
+							urlViewerFundosNet: 'https://fnet.bmfbovespa.com.br/fnet/publico/visualizarDocumento?id=1106412',
+							referenceDateFormat: '10/02/2026',
+							deliveryDateFormat: '10/02/2026 09:28',
+							referenceDate: '2026-02-10T00:00:00-03:00',
+							describleCategory: 'Fato Relevante',
+							subjects: 'Data Base do Direito de Preferência',
+							status: '1 (Ativo)',
+						},
+					],
+				}), { status: 200, headers: { 'content-type': 'application/json' } });
+			}
+			return new Response(JSON.stringify({
+				page: { totalRecords: 0, totalPages: 1 },
 				results: [],
 			}), { status: 200, headers: { 'content-type': 'application/json' } });
 		}
@@ -116,6 +143,12 @@ test('B3FinancialStatementsProvider builds normalized statements from B3 structu
 	assert.equal(payload.fundamentals.quarterly_balance_sheet?.[0]?.period, '2025-09-30');
 	assert.equal(payload.fundamentals.quarterly_balance_sheet?.[0]?.patrimonioliquido, 12345.67);
 	assert.equal(payload.fundamentals.quarterly_cashflow?.[0]?.fluxocaixaoperacional, 345.67);
+	assert.equal(payload.documents?.length, 1);
+	assert.equal(payload.documents?.[0]?.source, 'b3_reports_relevants');
+	assert.equal(payload.documents?.[0]?.category, 'Fato Relevante');
+	assert.equal(payload.documents?.[0]?.url, 'https://fnet.bmfbovespa.com.br/fnet/publico/visualizarDocumento?id=1106412');
+	assert.equal(payload.documents?.[0]?.reference_date, '2026-02-10');
+	assert.equal(payload.documents?.[0]?.delivery_date, '2026-02-10');
 });
 
 test('B3FinancialStatementsProvider ignores non-BR and non-FII assets', async () => {
