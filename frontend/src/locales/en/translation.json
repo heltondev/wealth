@@ -470,6 +470,7 @@
         "insights": "Fundamentals & Fair Value",
         "fundInfo": "General Info",
         "summary": "Summary",
+        "dividendsResume": "Dividends Snapshot",
         "provents": "Provents & Calendar",
         "metadata": "Metadata",
         "raw": "Raw Payload"
@@ -734,6 +735,13 @@
           "exDate": "Ex-Date",
           "source": "Source"
         }
+      },
+      "dividendsResume": {
+        "table": {
+          "metric": "Metric",
+          "returnByUnit": "Return per quota",
+          "relativeToQuote": "Relative to current quote"
+        }
       }
     },
     "detail": {
@@ -895,6 +903,7 @@
     "all": "All",
     "yes": "Yes",
     "no": "No",
+    "readMore": "Read more",
     "showLess": "Show less"
   }
 }

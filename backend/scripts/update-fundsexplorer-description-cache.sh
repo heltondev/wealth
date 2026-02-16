@@ -11,7 +11,7 @@ PORTFOLIO_ID="${PORTFOLIO_ID:-oliver-main}"
 
 TICKERS_RAW="$(
   curl -s "${API_BASE}/api/portfolios/${PORTFOLIO_ID}/assets" \
-    | jq -r '.[] | select((.status|ascii_downcase)=="active" and (.assetClass|ascii_downcase)=="fii") | .ticker' \
+    | jq -r '.[] | select(((.status // "")|ascii_downcase)=="active" and ((.assetClass // "")|ascii_downcase)=="fii") | .ticker' \
     | sort -u
 )"
 
@@ -27,22 +27,19 @@ for ticker in ${TICKERS_RAW}; do
     continue
   fi
 
-  article_html="$(
+  parsed_payload="$(
     printf '%s' "${page_html}" \
-      | node -e "const fs=require('fs');const html=fs.readFileSync(0,'utf8');const section=(html.match(/<section[^>]*id=[\\\"'][^\\\"']*carbon_fields_fiis_description[^\\\"']*[\\\"'][^>]*>([\\s\\S]*?)<\\/section>/i)||[])[1]||html;const article=(section.match(/<article[^>]*class=[\\\"'][^\\\"']*newsContent__article[^\\\"']*[\\\"'][^>]*>[\\s\\S]*?<\\/article>/i)||section.match(/<article[^>]*>[\\s\\S]*?<\\/article>/i)||[])[0]||'';if(article)process.stdout.write(article);"
+      | node -e "const fs=require('fs');const html=fs.readFileSync(0,'utf8');const normalize=(value)=>String(value||'').replace(/<[^>]+>/g,' ').replace(/&nbsp;/gi,' ').replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim();const result={};const descriptionSection=(html.match(/<section[^>]*id=[\\\"'][^\\\"']*carbon_fields_fiis_description[^\\\"']*[\\\"'][^>]*>([\\s\\S]*?)<\\/section>/i)||[])[1]||html;const article=(descriptionSection.match(/<article[^>]*class=[\\\"'][^\\\"']*newsContent__article[^\\\"']*[\\\"'][^>]*>[\\s\\S]*?<\\/article>/i)||descriptionSection.match(/<article[^>]*>[\\s\\S]*?<\\/article>/i)||[])[0]||'';if(article){result.description_html=article;}const dividendsSection=(html.match(/<section[^>]*id=[\\\"'][^\\\"']*carbon_fields_fiis_dividends_resume[^\\\"']*[\\\"'][^>]*>([\\s\\S]*?)<\\/section>/i)||[])[1]||'';if(dividendsSection){const title=normalize((dividendsSection.match(/<h2[^>]*>([\\s\\S]*?)<\\/h2>/i)||[])[1]||'');const txtContainer=(dividendsSection.match(/<div[^>]*class=[\\\"'][^\\\"']*\\btxt\\b[^\\\"']*[\\\"'][^>]*>([\\s\\S]*?)<\\/div>/i)||[])[1]||'';const paragraphs=[];for(const paragraphMatch of txtContainer.matchAll(/<p[^>]*>([\\s\\S]*?)<\\/p>/gi)){const text=normalize(paragraphMatch[1]||'');if(text){paragraphs.push(text);}}const headContainer=(dividendsSection.match(/<div[^>]*data-element=[\\\"']head[\\\"'][^>]*>([\\s\\S]*?)<\\/div>\\s*<\\/div>\\s*<\\/div>/i)||[])[1]||dividendsSection;const tableBlocks=[];for(const blockMatch of headContainer.matchAll(/<div[^>]*class=[\\\"'][^\\\"']*yieldChart__table__bloco[^\\\"']*[\\\"'][^>]*>([\\s\\S]*?)<\\/div>/gi)){const lines=[];for(const lineMatch of String(blockMatch[1]||'').matchAll(/<div[^>]*class=[\\\"'][^\\\"']*table__linha[^\\\"']*[\\\"'][^>]*>([\\s\\S]*?)<\\/div>/gi)){const line=normalize(lineMatch[1]||'');if(line){lines.push(line);}}if(lines.length>0){tableBlocks.push(lines);}}let table=null;if(tableBlocks.length>=3){const periods=tableBlocks[0].slice(1);const returnByUnitLabel=tableBlocks[1][0]||null;const returnByUnit=tableBlocks[1].slice(1);const relativeToQuoteLabel=tableBlocks[2][0]||null;const relativeToQuote=tableBlocks[2].slice(1);const columnsCount=Math.min(periods.length,returnByUnit.length,relativeToQuote.length);if(columnsCount>0){table={periods:periods.slice(0,columnsCount),return_by_unit_label:returnByUnitLabel,return_by_unit:returnByUnit.slice(0,columnsCount),relative_to_quote_label:relativeToQuoteLabel,relative_to_quote:relativeToQuote.slice(0,columnsCount)};}}if(title||paragraphs.length>0||table){result.dividends_resume={title:title||null,paragraphs,table,source:'fundsexplorer'};}}process.stdout.write(JSON.stringify(result));"
   )"
 
-  if [[ -z "${article_html}" ]]; then
+  if [[ -z "${parsed_payload}" || "${parsed_payload}" == "{}" ]]; then
     continue
   fi
 
-  ARTICLE_FILE="$(mktemp)"
-  printf '%s' "${article_html}" > "${ARTICLE_FILE}"
-  jq --arg ticker "${ticker}" --rawfile html "${ARTICLE_FILE}" \
-    '.items[$ticker] = {description_html: $html}' \
+  jq --arg ticker "${ticker}" --argjson payload "${parsed_payload}" \
+    '.items[$ticker] = $payload' \
     "${TMP_FILE}" > "${TMP_FILE}.next"
   mv "${TMP_FILE}.next" "${TMP_FILE}"
-  rm -f "${ARTICLE_FILE}"
 done
 
 mkdir -p "$(dirname "${CACHE_FILE}")"

@@ -931,6 +931,13 @@ const readFundGeneralInfoFromPayload = (payload, sourceHint) => {
 				'descricaoHtml',
 			])
 		),
+		dividends_resume:
+			readValueFromRecordKeys(allRecords, [
+				'dividends_resume',
+				'dividendsResume',
+				'dividend_resume',
+				'dividendResume',
+			]) || null,
 		classification: readString(['classification', 'classificacao']),
 		segment: readString(['segment']),
 		administrator: readString(['positionmanager', 'administrator', 'administrador']),

@@ -54,6 +54,7 @@ const ExpandableText = ({
       type="button"
       className={classes}
       onClick={isInteractive ? () => setExpanded((previous) => !previous) : undefined}
+      aria-expanded={isInteractive ? expanded : undefined}
     >
       <span
         ref={contentRef}

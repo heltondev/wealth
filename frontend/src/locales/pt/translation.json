@@ -470,6 +470,7 @@
         "insights": "Fundamentos e Preço Justo",
         "fundInfo": "Informações Gerais",
         "summary": "Resumo",
+        "dividendsResume": "Resumo de Dividendos",
         "provents": "Proventos e Calendário",
         "metadata": "Metadados",
         "raw": "Payload Bruto"
@@ -734,6 +735,13 @@
           "exDate": "Data-Ex",
           "source": "Fonte"
         }
+      },
+      "dividendsResume": {
+        "table": {
+          "metric": "Métrica",
+          "returnByUnit": "Retorno por cota",
+          "relativeToQuote": "Em relação ao valor de cota atual"
+        }
       }
     },
     "detail": {
@@ -895,6 +903,7 @@
     "all": "Todos",
     "yes": "Sim",
     "no": "Não",
+    "readMore": "Ler mais",
     "showLess": "Mostrar menos"
   }
 }

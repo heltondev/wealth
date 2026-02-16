@@ -74,15 +74,20 @@ class FundsExplorerProvider {
 			const rows = this.#parseProperties(html);
 			const descriptionHtml = this.#parseDescriptionHtml(html);
 			const description = this.#parseDescription(html, descriptionHtml);
+			const dividendsResume = this.#parseDividendsResume(html);
+			const fundInfo = {
+				source: 'fundsexplorer',
+			};
+			if (description) {
+				fundInfo.description = description;
+				fundInfo.description_html = descriptionHtml;
+			}
+			if (dividendsResume) {
+				fundInfo.dividends_resume = dividendsResume;
+			}
 			return {
 				data_source: 'fundsexplorer',
-				fund_info: description
-					? {
-						description,
-						description_html: descriptionHtml,
-						source: 'fundsexplorer',
-					}
-					: null,
+				fund_info: Object.keys(fundInfo).length > 1 ? fundInfo : null,
 				fund_portfolio: rows,
 				portfolio_composition: rows,
 			};
@@ -94,6 +99,7 @@ class FundsExplorerProvider {
 				fund_info: {
 					description: localFallback.description || null,
 					description_html: localFallback.description_html || null,
+					dividends_resume: localFallback.dividends_resume || null,
 					source: localFallback.source || 'fundsexplorer_local_cache',
 				},
 				fund_portfolio: [],
@@ -367,6 +373,140 @@ class FundsExplorerProvider {
 		return this.#sanitizeDescriptionHtml(articleHtml);
 	}
 
+	#parseDividendsResume(html) {
+		const container = this.#extractDivContainerByClass(html, 'dividends-resume');
+		if (!container?.html) return null;
+
+		const block = container.html;
+		const title = this.#normalizeInlineText(
+			(block.match(/<h2[^>]*>([\s\S]*?)<\/h2>/i) || [])[1] || ''
+		);
+
+		const txtContainer = this.#extractDivContainerByClass(block, 'txt');
+		const paragraphs = [];
+		if (txtContainer?.html) {
+			const paragraphPattern = /<p[^>]*>([\s\S]*?)<\/p>/gi;
+			let paragraphMatch;
+			while ((paragraphMatch = paragraphPattern.exec(txtContainer.html)) !== null) {
+				const paragraphText = this.#normalizeInlineText(paragraphMatch[1]);
+				if (!paragraphText) continue;
+				paragraphs.push(paragraphText);
+			}
+		}
+
+		const tableContainer = this.#extractDivContainerByClass(block, 'yieldChart__table');
+		const tableBlocks = this.#extractAllDivContainersByClass(
+			tableContainer?.html || block,
+			'yieldChart__table__bloco'
+		);
+		const parsedTableBlocks = tableBlocks
+			.map((item) => this.#extractTableLines(item.html))
+			.filter((lines) => Array.isArray(lines) && lines.length > 0);
+
+		let table = null;
+		if (parsedTableBlocks.length >= 3) {
+			const periods = parsedTableBlocks[0].slice(1);
+			const returnByUnitLabel = parsedTableBlocks[1][0] || null;
+			const returnByUnit = parsedTableBlocks[1].slice(1);
+			const relativeToQuoteLabel = parsedTableBlocks[2][0] || null;
+			const relativeToQuote = parsedTableBlocks[2].slice(1);
+			const columnsCount = Math.min(periods.length, returnByUnit.length, relativeToQuote.length);
+
+			table = {
+				periods: periods.slice(0, columnsCount),
+				return_by_unit_label: returnByUnitLabel,
+				return_by_unit: returnByUnit.slice(0, columnsCount),
+				relative_to_quote_label: relativeToQuoteLabel,
+				relative_to_quote: relativeToQuote.slice(0, columnsCount),
+			};
+		}
+
+		if (!title && paragraphs.length === 0 && !table) return null;
+		return {
+			title,
+			paragraphs,
+			table,
+			source: 'fundsexplorer',
+		};
+	}
+
+	#extractTableLines(html) {
+		const lines = [];
+		const linePattern = /<div[^>]*class=["'][^"']*table__linha[^"']*["'][^>]*>([\s\S]*?)<\/div>/gi;
+		let match;
+		while ((match = linePattern.exec(String(html || ''))) !== null) {
+			const text = this.#normalizeInlineText(match[1]);
+			if (!text) continue;
+			lines.push(text);
+		}
+		return lines;
+	}
+
+	#normalizeInlineText(value) {
+		const raw = String(value || '');
+		if (!raw) return '';
+		return decodeHtmlEntities(raw)
+			.replace(/<[^>]+>/g, ' ')
+			.replace(/\s+/g, ' ')
+			.trim();
+	}
+
+	#extractDivContainerByClass(html, className, startFrom = 0) {
+		if (!html || !className) return null;
+		const escapedClassName = String(className).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+		const openTagPattern = new RegExp(
+			`<div[^>]*class=["'][^"']*\\b${escapedClassName}\\b[^"']*["'][^>]*>`,
+			'gi'
+		);
+		openTagPattern.lastIndex = Math.max(0, Number(startFrom) || 0);
+		const match = openTagPattern.exec(String(html));
+		if (!match) return null;
+		const extracted = this.#extractBalancedDivFromIndex(String(html), match.index);
+		return extracted;
+	}
+
+	#extractAllDivContainersByClass(html, className) {
+		const blocks = [];
+		let cursor = 0;
+		while (cursor < String(html || '').length) {
+			const found = this.#extractDivContainerByClass(html, className, cursor);
+			if (!found) break;
+			blocks.push(found);
+			cursor = found.endIndex;
+		}
+		return blocks;
+	}
+
+	#extractBalancedDivFromIndex(html, startIndex) {
+		const source = String(html || '');
+		const start = Number(startIndex);
+		if (!Number.isFinite(start) || start < 0 || start >= source.length) return null;
+
+		const startTagMatch = source.slice(start).match(/^<div\b[^>]*>/i);
+		if (!startTagMatch?.[0]) return null;
+
+		let cursor = start + startTagMatch[0].length;
+		let depth = 1;
+		while (depth > 0) {
+			const nextOpen = source.indexOf('<div', cursor);
+			const nextClose = source.indexOf('</div>', cursor);
+			if (nextClose === -1) return null;
+			if (nextOpen !== -1 && nextOpen < nextClose) {
+				depth += 1;
+				cursor = nextOpen + 4;
+				continue;
+			}
+			depth -= 1;
+			cursor = nextClose + 6;
+		}
+
+		return {
+			html: source.slice(start, cursor),
+			startIndex: start,
+			endIndex: cursor,
+		};
+	}
+
 	#extractDescriptionArticleHtml(html) {
 		if (!html) return null;
 		const htmlText = String(html);
@@ -516,11 +656,13 @@ class FundsExplorerProvider {
 		const description =
 			this.#normalizeDescriptionText(entry.description || null) ||
 			this.#normalizeDescriptionText(descriptionHtml || null);
-		if (!description && !descriptionHtml) return null;
+		const dividendsResume = entry.dividends_resume || entry.dividendsResume || null;
+		if (!description && !descriptionHtml && !dividendsResume) return null;
 
 		return {
 			description,
 			description_html: descriptionHtml,
+			dividends_resume: dividendsResume,
 			source: 'fundsexplorer_local_cache',
 		};
 	}

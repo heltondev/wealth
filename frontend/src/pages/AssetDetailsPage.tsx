@@ -126,6 +126,7 @@ type AssetFundGeneralInfo = {
   cnpj: string | null;
   description: string | null;
   descriptionHtml: string | null;
+  dividendsResume: AssetFundDividendsResume | null;
   classification: string | null;
   segment: string | null;
   administrator: string | null;
@@ -139,6 +140,21 @@ type AssetFundGeneralInfo = {
   tradingCode: string | null;
   tradingCodeOthers: string | null;
   b3DetailsUrl: string | null;
+  source: string | null;
+};
+
+type AssetFundDividendsResumeTable = {
+  periods: string[];
+  returnByUnitLabel: string | null;
+  returnByUnit: string[];
+  relativeToQuoteLabel: string | null;
+  relativeToQuote: string[];
+};
+
+type AssetFundDividendsResume = {
+  title: string | null;
+  paragraphs: string[];
+  table: AssetFundDividendsResumeTable | null;
   source: string | null;
 };
 
@@ -406,6 +422,120 @@ const toDisplayLabel = (value: string): string => (
     .join(' ')
 );
 
+const SUMMARY_CONTINUATION_TAIL = /\b(?:do|da|de|em|no|na|nos|nas|ao|aos|para|com|e|ou|o|a|os|as|um|uma|seu|sua|seus|suas|pelo|pela|pelos|pelas|dos|das|que|por|sobre)$/i;
+const SUMMARY_HEADING_BREAK_TOKENS = [
+  'Características do fundo',
+  'Agora falando da política',
+  'As aplicações realizadas',
+  'Portanto,',
+  'Para conferir outros dados',
+];
+
+const decodeBasicHtmlEntities = (value: string): string => (
+  String(value || '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&apos;/gi, '\'')
+    .replace(/&#39;/gi, '\'')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+);
+
+const stripSummaryMarkup = (value: string): string => (
+  decodeBasicHtmlEntities(String(value || ''))
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\u00a0/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+);
+
+const reflowSummaryBlocks = (value: unknown): string[] => {
+  const raw = String(value || '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\u00a0/g, ' ')
+    .replace(/\r/g, '')
+    .trim();
+  if (!raw) return [];
+
+  const normalizedBlocks = raw
+    .split(/\n\s*\n+/)
+    .map((block) => block.replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+
+  const shouldMergeBlock = (previousBlock: string, nextBlock: string): boolean => {
+    const previousText = stripSummaryMarkup(previousBlock);
+    const nextText = stripSummaryMarkup(nextBlock);
+    if (!previousText || !nextText) return false;
+
+    if (/[.!?;:)]$/.test(previousText)) return false;
+    if (/<\/h[1-6]>\s*$/i.test(previousBlock)) return false;
+    if (/^<\s*(h[1-6]|ul|ol|li)\b/i.test(nextBlock)) return false;
+
+    const nextStartsLowercase = /^[a-zà-ÿ]/.test(nextText);
+    const previousEndsConnector = SUMMARY_CONTINUATION_TAIL.test(previousText);
+    return nextStartsLowercase || previousEndsConnector;
+  };
+
+  const mergedBlocks: string[] = [];
+  for (const block of normalizedBlocks) {
+    const previousIndex = mergedBlocks.length - 1;
+    if (previousIndex >= 0 && shouldMergeBlock(mergedBlocks[previousIndex], block)) {
+      mergedBlocks[previousIndex] = `${mergedBlocks[previousIndex]} ${block}`.trim();
+      continue;
+    }
+    mergedBlocks.push(block);
+  }
+
+  return mergedBlocks;
+};
+
+const splitLongSummaryParagraph = (value: string): string[] => {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!text) return [];
+
+  const headingBreakRegex = new RegExp(
+    `\\s+(?=${SUMMARY_HEADING_BREAK_TOKENS.map((token) => escapeRegExp(token)).join('|')})`,
+    'gi'
+  );
+  const withHeadingBreaks = text.replace(headingBreakRegex, '\n\n');
+  const seededChunks = withHeadingBreaks
+    .split(/\n\s*\n+/)
+    .map((chunk) => chunk.trim())
+    .filter(Boolean);
+
+  const result: string[] = [];
+  for (const chunk of seededChunks) {
+    if (chunk.length <= 420) {
+      result.push(chunk);
+      continue;
+    }
+
+    const sentences = chunk
+      .split(/(?<=[.!?])\s+(?=[A-ZÀ-Ý])/)
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    if (sentences.length <= 1) {
+      result.push(chunk);
+      continue;
+    }
+
+    let current = '';
+    for (const sentence of sentences) {
+      const candidate = current ? `${current} ${sentence}` : sentence;
+      if (candidate.length > 360 && current) {
+        result.push(current);
+        current = sentence;
+      } else {
+        current = candidate;
+      }
+    }
+    if (current) result.push(current);
+  }
+
+  return result;
+};
+
 const sanitizeSummaryHtml = (value: unknown): string | null => {
   const raw = String(value || '').trim();
   if (!raw) return null;
@@ -439,9 +569,137 @@ const sanitizeSummaryHtml = (value: unknown): string | null => {
     return full.trim().startsWith('</') ? `</${normalizedTag}>` : `<${normalizedTag}>`;
   });
 
-  const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  const articleBody = html
+    .replace(/<\/?article>/gi, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/\r/g, '');
+
+  const blocks = reflowSummaryBlocks(articleBody);
+  const formattedBlocks = blocks.map((block) => {
+    if (/^<(h[1-6]|p|ul|ol)\b/i.test(block)) return block;
+    return `<p>${block}</p>`;
+  });
+
+  const formattedHtml = `<article>${formattedBlocks.join('')}</article>`;
+  const text = stripSummaryMarkup(formattedHtml);
   if (!text) return null;
-  return html;
+  return formattedHtml;
+};
+
+const normalizeSummaryTextParagraphs = (value: unknown): string[] => (
+  reflowSummaryBlocks(value)
+    .map((block) => stripSummaryMarkup(block))
+    .flatMap((block) => splitLongSummaryParagraph(block))
+    .map((block) => block.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+);
+
+const escapeRegExp = (value: string): string => (
+  String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+);
+
+const stripFundSummaryIntroLines = (
+  paragraphs: string[],
+  ticker: string | null,
+  legalName: string | null
+): string[] => {
+  const cleanedTicker = String(ticker || '').trim().toUpperCase();
+  const cleanedLegalName = String(legalName || '').trim().toUpperCase();
+  if (!cleanedTicker) return paragraphs;
+
+  const headingPattern = new RegExp(`^${escapeRegExp(cleanedTicker)}\\s*:`, 'i');
+  const taglinePattern = new RegExp(`^${escapeRegExp(cleanedTicker)}\\s*[–-]\\s*um\\b`, 'i');
+  const legalNamePattern = /\bFUNDO\s+DE\s+INVESTIMENTO\b/i;
+  const mainStartPatterns = [
+    new RegExp(`\\b${escapeRegExp(cleanedTicker)}\\s+é\\b`, 'i'),
+    new RegExp(`\\bo\\s+objeto\\s+do\\s+${escapeRegExp(cleanedTicker)}\\b`, 'i'),
+  ];
+
+  const next = [...paragraphs];
+  while (next.length > 0) {
+    const current = String(next[0] || '').replace(/\s+/g, ' ').trim();
+    if (!current) {
+      next.shift();
+      continue;
+    }
+
+    const currentUpper = current.toUpperCase();
+    const isTickerHeading = headingPattern.test(current);
+    const isTagline = taglinePattern.test(current);
+    const isLegalNameLine = Boolean(
+      legalNamePattern.test(current) &&
+      (currentUpper === cleanedLegalName || currentUpper.includes('RESPONSABILIDADE LIMITADA'))
+    );
+
+    // If intro and body were merged into one paragraph, keep body from first meaningful sentence.
+    if (isTickerHeading || isTagline || isLegalNameLine) {
+      const bodyStartIndex = mainStartPatterns
+        .map((pattern) => current.search(pattern))
+        .filter((index) => index > 0)
+        .sort((left, right) => left - right)[0];
+      if (Number.isFinite(bodyStartIndex)) {
+        const trimmed = current.slice(bodyStartIndex).trim();
+        if (trimmed.length > 0) {
+          next[0] = trimmed;
+          break;
+        }
+      }
+    }
+
+    if (isTickerHeading || isTagline || isLegalNameLine) {
+      next.shift();
+      continue;
+    }
+
+    break;
+  }
+
+  return next;
+};
+
+const toStringArray = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => toNonEmptyString(entry))
+    .filter((entry): entry is string => Boolean(entry));
+};
+
+const parseFundDividendsResumePayload = (payload: unknown): AssetFundDividendsResume | null => {
+  const entry = toObjectRecord(payload);
+  if (Object.keys(entry).length === 0) return null;
+
+  const title = toNonEmptyString(entry.title ?? entry.titulo ?? entry.heading);
+  const paragraphs = toStringArray(entry.paragraphs).map((paragraph) => (
+    paragraph.replace(/\s+/g, ' ').trim()
+  ));
+
+  const rawTable = toObjectRecord(entry.table);
+  let table: AssetFundDividendsResumeTable | null = null;
+  if (Object.keys(rawTable).length > 0) {
+    const periods = toStringArray(rawTable.periods ?? rawTable.periodos);
+    const returnByUnit = toStringArray(rawTable.return_by_unit ?? rawTable.returnByUnit);
+    const relativeToQuote = toStringArray(rawTable.relative_to_quote ?? rawTable.relativeToQuote);
+    const columns = Math.min(periods.length, returnByUnit.length, relativeToQuote.length);
+    if (columns > 0) {
+      table = {
+        periods: periods.slice(0, columns),
+        returnByUnitLabel: toNonEmptyString(rawTable.return_by_unit_label ?? rawTable.returnByUnitLabel),
+        returnByUnit: returnByUnit.slice(0, columns),
+        relativeToQuoteLabel: toNonEmptyString(rawTable.relative_to_quote_label ?? rawTable.relativeToQuoteLabel),
+        relativeToQuote: relativeToQuote.slice(0, columns),
+      };
+    }
+  }
+
+  const source = toNonEmptyString(entry.source);
+  if (!title && paragraphs.length === 0 && !table) return null;
+  return {
+    title,
+    paragraphs,
+    table,
+    source,
+  };
 };
 
 const normalizeComparableText = (value: unknown): string => (
@@ -923,6 +1181,12 @@ const parseFundGeneralInfoPayload = (payload: unknown): AssetFundGeneralInfo | n
     ?? entry.descricao_html
     ?? entry.descricaoHtml
   );
+  const dividendsResume = parseFundDividendsResumePayload(
+    entry.dividends_resume
+    ?? entry.dividendsResume
+    ?? entry.dividend_resume
+    ?? entry.dividendResume
+  );
   const classification = toNonEmptyString(entry.classification);
   const segment = toNonEmptyString(entry.segment);
   const administrator = toNonEmptyString(entry.administrator);
@@ -945,6 +1209,7 @@ const parseFundGeneralInfoPayload = (payload: unknown): AssetFundGeneralInfo | n
     cnpj,
     description,
     descriptionHtml,
+    dividendsResume,
     classification,
     segment,
     administrator,
@@ -3172,33 +3437,41 @@ const AssetDetailsPage = () => {
     ];
   }, [assetInsights?.source, formatCnpjValue, formatDetailValue, fundGeneralInfo, numberLocale, selectedAsset?.name, selectedAsset?.source, selectedAsset?.ticker, t]);
 
-  const fundSummaryText = useMemo(() => {
-    const explicitSummary = toNonEmptyString(fundGeneralInfo?.description ?? null);
-    if (explicitSummary) return explicitSummary;
-    if (!fundGeneralInfo) return null;
+  const fundSummaryParagraphs = useMemo(() => {
+    const explicitParagraphs = stripFundSummaryIntroLines(
+      normalizeSummaryTextParagraphs(
+        fundGeneralInfo?.descriptionHtml ?? fundGeneralInfo?.description ?? null
+      ),
+      selectedAsset?.ticker ?? null,
+      fundGeneralInfo?.legalName ?? null
+    );
+    if (explicitParagraphs.length > 0) return explicitParagraphs;
 
-    const lines = [
-      toNonEmptyString(fundGeneralInfo.legalName),
-      toNonEmptyString(fundGeneralInfo.classification)
-        ? `${t('assets.modal.fundInfo.classification', { defaultValue: 'Classification' })}: ${fundGeneralInfo.classification}`
+    const fallbackParagraphs = stripFundSummaryIntroLines([
+      toNonEmptyString(fundGeneralInfo?.legalName),
+      toNonEmptyString(fundGeneralInfo?.classification)
+        ? `${t('assets.modal.fundInfo.classification', { defaultValue: 'Classification' })}: ${fundGeneralInfo?.classification}`
         : null,
-      toNonEmptyString(fundGeneralInfo.segment)
-        ? `${t('assets.modal.fundInfo.segment', { defaultValue: 'Segment' })}: ${fundGeneralInfo.segment}`
+      toNonEmptyString(fundGeneralInfo?.segment)
+        ? `${t('assets.modal.fundInfo.segment', { defaultValue: 'Segment' })}: ${fundGeneralInfo?.segment}`
         : null,
-      toNonEmptyString(fundGeneralInfo.administrator)
-        ? `${t('assets.modal.fundInfo.administrator', { defaultValue: 'Administrator' })}: ${fundGeneralInfo.administrator}`
+      toNonEmptyString(fundGeneralInfo?.administrator)
+        ? `${t('assets.modal.fundInfo.administrator', { defaultValue: 'Administrator' })}: ${fundGeneralInfo?.administrator}`
         : null,
-      toNonEmptyString(fundGeneralInfo.managerName)
-        ? `${t('assets.modal.fundInfo.managerName', { defaultValue: 'Manager' })}: ${fundGeneralInfo.managerName}`
+      toNonEmptyString(fundGeneralInfo?.managerName)
+        ? `${t('assets.modal.fundInfo.managerName', { defaultValue: 'Manager' })}: ${fundGeneralInfo?.managerName}`
         : null,
-    ].filter(Boolean) as string[];
+    ].filter(Boolean) as string[], selectedAsset?.ticker ?? null, fundGeneralInfo?.legalName ?? null);
+    return fallbackParagraphs;
+  }, [fundGeneralInfo, selectedAsset?.ticker, t]);
 
-    return lines.length > 0 ? lines.join('\n') : null;
-  }, [fundGeneralInfo, t]);
+  const fundSummaryText = useMemo(() => (
+    fundSummaryParagraphs.join('\n\n').trim() || null
+  ), [fundSummaryParagraphs]);
 
-  const fundSummaryHtml = useMemo(() => (
-    sanitizeSummaryHtml(fundGeneralInfo?.descriptionHtml ?? null)
-  ), [fundGeneralInfo?.descriptionHtml]);
+  const fundDividendsResume = useMemo(() => (
+    fundGeneralInfo?.dividendsResume || null
+  ), [fundGeneralInfo?.dividendsResume]);
 
   const fallbackFinancialDocuments = useMemo(() => {
     if (!selectedAsset) return [];
@@ -3526,6 +3799,69 @@ const AssetDetailsPage = () => {
               </section>
             ) : null}
 
+            {(isFiiAsset || shouldRenderFundInfo) ? (
+              <section className="asset-details-page__card asset-details-page__card--full">
+                <h2>{t('assets.modal.sections.summary', { defaultValue: 'Summary' })}</h2>
+                {fundSummaryText ? (
+                  <ExpandableText
+                    text={fundSummaryText}
+                    maxLines={6}
+                    expandLabel={t('common.readMore', { defaultValue: 'Read more' })}
+                    collapseLabel={t('common.showLess', { defaultValue: 'Show less' })}
+                    className="asset-details-page__summary-expandable"
+                  />
+                ) : (
+                  <div className="asset-details-page__summary asset-details-page__summary--text">
+                    <p>{formatDetailValue(null)}</p>
+                  </div>
+                )}
+              </section>
+            ) : null}
+
+            {fundDividendsResume ? (
+              <section className="asset-details-page__card asset-details-page__card--full">
+                <h2>{t('assets.modal.sections.dividendsResume', { defaultValue: 'Dividends Snapshot' })}</h2>
+                {fundDividendsResume.title ? (
+                  <h3 className="asset-details-page__dividends-resume-title">{fundDividendsResume.title}</h3>
+                ) : null}
+
+                {fundDividendsResume.paragraphs.map((paragraph, index) => (
+                  <p key={`dividends-resume-paragraph-${index}`} className="asset-details-page__dividends-resume-paragraph">
+                    {paragraph}
+                  </p>
+                ))}
+
+                {fundDividendsResume.table ? (
+                  <div className="asset-details-page__dividends-resume-table-wrap">
+                    <table className="asset-details-page__dividends-resume-table">
+                      <thead>
+                        <tr>
+                          <th>{t('assets.modal.dividendsResume.table.metric', { defaultValue: 'Metric' })}</th>
+                          {fundDividendsResume.table.periods.map((period) => (
+                            <th key={`dividends-resume-period-${period}`}>{period}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <th>{fundDividendsResume.table.returnByUnitLabel || t('assets.modal.dividendsResume.table.returnByUnit', { defaultValue: 'Return per quota' })}</th>
+                          {fundDividendsResume.table.returnByUnit.map((value, index) => (
+                            <td key={`dividends-resume-return-${index}`}>{value}</td>
+                          ))}
+                        </tr>
+                        <tr>
+                          <th>{fundDividendsResume.table.relativeToQuoteLabel || t('assets.modal.dividendsResume.table.relativeToQuote', { defaultValue: 'Relative to current quote' })}</th>
+                          {fundDividendsResume.table.relativeToQuote.map((value, index) => (
+                            <td key={`dividends-resume-relative-${index}`}>{value}</td>
+                          ))}
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
+
             {shouldRenderFundInfo ? (
               <section className="asset-details-page__card asset-details-page__card--full asset-details-page__card--two-cols">
                 <h2>{t('assets.modal.sections.fundInfo', { defaultValue: 'General Info' })}</h2>
@@ -3537,23 +3873,6 @@ const AssetDetailsPage = () => {
                     </div>
                   ))}
                 </dl>
-              </section>
-            ) : null}
-
-            {(isFiiAsset || shouldRenderFundInfo) ? (
-              <section className="asset-details-page__card asset-details-page__card--full">
-                <h2>{t('assets.modal.sections.summary', { defaultValue: 'Summary' })}</h2>
-                {fundSummaryHtml ? (
-                  <div
-                    className="asset-details-page__summary asset-details-page__summary--html"
-                    // Rich summary comes from scraped article HTML and is sanitized before rendering.
-                    dangerouslySetInnerHTML={{ __html: fundSummaryHtml }}
-                  />
-                ) : (
-                  <p className="asset-details-page__summary">
-                    {fundSummaryText ?? formatDetailValue(null)}
-                  </p>
-                )}
               </section>
             ) : null}
 
