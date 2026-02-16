@@ -4,6 +4,7 @@
     "assets": "Ativos",
     "transactions": "Transações",
     "dividends": "Proventos",
+    "rebalance": "Rebalanceamento",
     "tax": "Imposto",
     "platform": "Plataforma",
     "documents": "Documentos",
@@ -133,6 +134,55 @@
       "deleteError": "Falha ao remover alerta.",
       "evaluated": "Alertas avaliados.",
       "evaluateError": "Falha ao avaliar alertas."
+    }
+  },
+  "rebalance": {
+    "title": "Rebalanceamento",
+    "selectPortfolio": "Selecionar portfólio",
+    "selectScope": "Selecionar escopo",
+    "noData": "Nenhum dado de portfólio ainda.",
+    "loadError": "Falha ao carregar dados de rebalanceamento.",
+    "targetEditorTitle": "Alocação Alvo",
+    "driftTitle": "Desvio Atual vs Alvo",
+    "suggestionTitle": "Simulação de Aporte",
+    "amount": "Valor do Aporte",
+    "refreshSuggestion": "Atualizar Sugestão",
+    "saveTargets": "Salvar Alvos",
+    "addTarget": "Adicionar Alvo",
+    "emptyTargets": "Nenhum alvo configurado.",
+    "targetSumLabel": "Soma dos alvos:",
+    "targetSumState": {
+      "balanced": "Balanceado (100%)",
+      "under": "Abaixo de 100%",
+      "over": "Acima de 100%"
+    },
+    "scopes": {
+      "assetClass": "Por Classe",
+      "asset": "Por Ativo"
+    },
+    "totals": {
+      "currentTotal": "Total Atual",
+      "targetTotal": "Total Alvo (Após Aporte)",
+      "contribution": "Aporte"
+    },
+    "table": {
+      "class": "Classe",
+      "asset": "Ativo",
+      "percent": "Alvo %",
+      "actions": "Ações",
+      "currentValue": "Valor Atual",
+      "targetValue": "Valor Alvo",
+      "diffValue": "Diferença",
+      "driftPct": "Desvio %",
+      "recommendedContribution": "Aporte Recomendado"
+    },
+    "messages": {
+      "saved": "Alvos salvos.",
+      "invalidTargets": "Revise alvos duplicados ou inválidos.",
+      "invalidAmount": "O valor do aporte deve ser maior que zero.",
+      "noAssets": "Não há ativos disponíveis para alvos por ativo.",
+      "emptySuggestion": "Sem sugestões de aporte para os filtros atuais.",
+      "emptyDrift": "Sem dados de desvio para os alvos atuais."
     }
   },
   "tax": {

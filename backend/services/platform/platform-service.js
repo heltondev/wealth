@@ -1073,17 +1073,19 @@ class PlatformService {
 	async setRebalanceTargets(userId, payload, options = {}) {
 		const portfolioId = await this.#resolvePortfolioId(userId, options.portfolioId);
 		const targets = Array.isArray(payload?.targets) ? payload.targets : [];
-		const normalized = [];
+		const deduped = new Map();
 
 		for (const target of targets) {
-			const targetId = String(target.targetId || `target-${hashId(`${target.scope}:${target.value}`)}`);
-			const scope = String(target.scope || 'assetClass');
+			const scopeRaw = String(target.scope || 'assetClass').trim().toLowerCase();
+			const scope = scopeRaw === 'asset' ? 'asset' : 'assetClass';
 			const value = String(target.value || '').trim();
 			if (!value) continue;
 			const percent = numeric(target.percent, 0);
 			if (percent <= 0) continue;
+			const targetId = String(target.targetId || `target-${hashId(`${scope}:${value}`)}`);
+			const dedupeKey = `${scope}:${value.toLowerCase()}`;
 
-			const item = {
+			deduped.set(dedupeKey, {
 				PK: `PORTFOLIO#${portfolioId}`,
 				SK: `TARGET_ALLOC#${targetId}`,
 				entityType: 'TARGET_ALLOCATION',
@@ -1096,9 +1098,33 @@ class PlatformService {
 				fetched_at: nowIso(),
 				is_scraped: false,
 				updatedAt: nowIso(),
-			};
+			});
+		}
+
+		const normalized = Array.from(deduped.values());
+		const existing = await this.#queryAll({
+			TableName: this.tableName,
+			KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
+			ExpressionAttributeValues: {
+				':pk': `PORTFOLIO#${portfolioId}`,
+				':sk': 'TARGET_ALLOC#',
+			},
+		});
+
+		for (const item of existing) {
+			await this.dynamo.send(
+				new DeleteCommand({
+					TableName: this.tableName,
+					Key: {
+						PK: item.PK,
+						SK: item.SK,
+					},
+				})
+			);
+		}
+
+		for (const item of normalized) {
 			await this.dynamo.send(new PutCommand({ TableName: this.tableName, Item: item }));
-			normalized.push(item);
 		}
 
 		return {
@@ -1107,27 +1133,70 @@ class PlatformService {
 		};
 	}
 
+	async getRebalanceTargets(userId, options = {}) {
+		const portfolioId = await this.#resolvePortfolioId(userId, options.portfolioId);
+		const items = await this.#queryAll({
+			TableName: this.tableName,
+			KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
+			ExpressionAttributeValues: {
+				':pk': `PORTFOLIO#${portfolioId}`,
+				':sk': 'TARGET_ALLOC#',
+			},
+		});
+
+		const targets = items
+			.map((item) => ({
+				targetId: item.targetId || String(item.SK || '').replace(/^TARGET_ALLOC#/, ''),
+				scope: String(item.scope || 'assetClass').trim().toLowerCase() === 'asset' ? 'asset' : 'assetClass',
+				value: String(item.value || '').trim(),
+				percent: numeric(item.percent, 0),
+				updatedAt: item.updatedAt || null,
+			}))
+			.filter((item) => item.value && item.percent > 0)
+			.sort((left, right) =>
+				String(left.scope).localeCompare(String(right.scope))
+				|| String(left.value).localeCompare(String(right.value))
+			);
+
+		return {
+			portfolioId,
+			targets,
+			fetched_at: nowIso(),
+		};
+	}
+
 	async getRebalancingSuggestion(userId, amount, options = {}) {
 		const contribution = numeric(amount, 0);
 		if (contribution <= 0) {
 			throw new Error('amount must be greater than zero');
 		}
+		const scopeRaw = String(options.scope || 'assetClass').trim().toLowerCase();
+		const suggestionScope = scopeRaw === 'asset' ? 'asset' : 'assetClass';
 
 		const portfolioId = await this.#resolvePortfolioId(userId, options.portfolioId);
 		const assets = await this.#listPortfolioAssets(portfolioId);
+		const assetById = new Map(assets.map((asset) => [String(asset.assetId || ''), asset]));
+		const assetIdByTicker = new Map(
+			assets.map((asset) => [String(asset.ticker || '').toUpperCase(), String(asset.assetId || '')])
+		);
 		const metrics = await this.priceHistoryService.getPortfolioMetrics(userId, {
 			portfolioId,
 			method: options.method || 'fifo',
 		});
 
 		const currentByClass = {};
+		const currentByAsset = {};
 		const assetByClass = {};
 		for (const metric of metrics.assets) {
-			const asset = assets.find((candidate) => candidate.assetId === metric.assetId) || {};
+			const assetId = String(metric.assetId || '');
+			if (!assetId) continue;
+			const asset = assetById.get(assetId) || {};
 			const assetClass = String(asset.assetClass || 'unknown').toLowerCase();
-			currentByClass[assetClass] = (currentByClass[assetClass] || 0) + numeric(metric.market_value, 0);
+			const marketValue = numeric(metric.market_value, 0);
+			currentByClass[assetClass] = (currentByClass[assetClass] || 0) + marketValue;
+			currentByAsset[assetId] = marketValue;
 			if (!assetByClass[assetClass]) assetByClass[assetClass] = [];
-			assetByClass[assetClass].push({ asset, metric });
+			assetByClass[assetClass].push({ asset, metric, assetId });
 		}
 
 		const targets = await this.#queryAll({
@@ -1139,57 +1208,140 @@ class PlatformService {
 			},
 		});
 
-		let targetByClass = {};
-		if (targets.length > 0) {
-			for (const target of targets) {
-				if (String(target.scope || '').toLowerCase() !== 'assetclass') continue;
-				const cls = String(target.value || '').toLowerCase();
-				targetByClass[cls] = numeric(target.percent, 0) / 100;
+		const targetByClass = {};
+		const targetByAsset = {};
+		for (const target of targets) {
+			const scope = String(target.scope || '').trim().toLowerCase();
+			const value = String(target.value || '').trim();
+			const weight = numeric(target.percent, 0) / 100;
+			if (!value || weight <= 0) continue;
+			if (scope === 'assetclass') {
+				targetByClass[value.toLowerCase()] = weight;
+				continue;
+			}
+			if (scope === 'asset') {
+				const directAssetId = assetById.has(value) ? value : null;
+				const tickerAssetId = assetIdByTicker.get(value.toUpperCase()) || null;
+				const assetId = directAssetId || tickerAssetId;
+				if (!assetId) continue;
+				targetByAsset[assetId] = weight;
 			}
 		}
 
-		if (Object.keys(targetByClass).length === 0) {
-			const classes = Object.keys(currentByClass);
-			const equalWeight = classes.length ? 1 / classes.length : 0;
-			for (const cls of classes) targetByClass[cls] = equalWeight;
+		let targetByScope = {};
+		let currentByScope = {};
+		if (suggestionScope === 'asset') {
+			targetByScope = { ...targetByAsset };
+			currentByScope = currentByAsset;
+			if (Object.keys(targetByScope).length === 0) {
+				const assetsWithValue = Object.entries(currentByAsset)
+					.filter(([, value]) => numeric(value, 0) > 0)
+					.map(([assetId]) => assetId);
+				const base = assetsWithValue.length > 0
+					? assetsWithValue
+					: Object.keys(currentByAsset);
+				const equalWeight = base.length ? 1 / base.length : 0;
+				for (const assetId of base) targetByScope[assetId] = equalWeight;
+			}
+		} else {
+			targetByScope = { ...targetByClass };
+			currentByScope = currentByClass;
+			if (Object.keys(targetByScope).length === 0) {
+				const classes = Object.keys(currentByClass);
+				const equalWeight = classes.length ? 1 / classes.length : 0;
+				for (const cls of classes) targetByScope[cls] = equalWeight;
+			}
 		}
 
-		const currentTotal = Object.values(currentByClass).reduce((sum, value) => sum + value, 0);
+		const currentTotal = Object.values(currentByScope).reduce((sum, value) => sum + value, 0);
 		const targetTotal = currentTotal + contribution;
 		const deficits = {};
+		const drift = [];
 		let positiveDeficitSum = 0;
-		for (const [cls, weight] of Object.entries(targetByClass)) {
+		for (const [key, weight] of Object.entries(targetByScope)) {
 			const desired = targetTotal * weight;
-			const current = numeric(currentByClass[cls], 0);
+			const current = numeric(currentByScope[key], 0);
 			const deficit = Math.max(0, desired - current);
-			deficits[cls] = deficit;
+			deficits[key] = deficit;
 			positiveDeficitSum += deficit;
+			const targetWeight = numeric(weight, 0);
+			const currentWeight = currentTotal > 0 ? current / currentTotal : 0;
+			const driftPct = (currentWeight - targetWeight) * 100;
+			const driftValue = current - desired;
+
+			if (suggestionScope === 'asset') {
+				const asset = assetById.get(key) || {};
+				drift.push({
+					scope: 'asset',
+					scope_key: key,
+					assetId: key,
+					ticker: asset.ticker || null,
+					assetClass: String(asset.assetClass || 'unknown').toLowerCase(),
+					current_value: current,
+					target_value: desired,
+					target_weight_pct: targetWeight * 100,
+					current_weight_pct: currentWeight * 100,
+					drift_value: driftValue,
+					drift_pct: driftPct,
+				});
+			} else {
+				drift.push({
+					scope: 'assetClass',
+					scope_key: key,
+					assetClass: key,
+					current_value: current,
+					target_value: desired,
+					target_weight_pct: targetWeight * 100,
+					current_weight_pct: currentWeight * 100,
+					drift_value: driftValue,
+					drift_pct: driftPct,
+				});
+			}
 		}
 
 		const suggestions = [];
-		for (const [cls, deficit] of Object.entries(deficits)) {
+		for (const [key, deficit] of Object.entries(deficits)) {
 			if (deficit <= 0) continue;
 			const allocation = positiveDeficitSum > 0
 				? (deficit / positiveDeficitSum) * contribution
 				: 0;
+			if (suggestionScope === 'asset') {
+				const asset = assetById.get(key) || {};
+				suggestions.push({
+					scope: 'asset',
+					assetId: key,
+					ticker: asset.ticker || null,
+					assetClass: String(asset.assetClass || 'unknown').toLowerCase(),
+					recommended_amount: allocation,
+					current_value: numeric(currentByScope[key], 0),
+					target_value: targetTotal * numeric(targetByScope[key], 0),
+				});
+				continue;
+			}
+
+			const cls = key;
 			const bucket = assetByClass[cls] || [];
-			const selected = bucket.sort((left, right) => numeric(right.metric.market_value, 0) - numeric(left.metric.market_value, 0))[0];
+			const selected = bucket
+				.sort((left, right) => numeric(right.metric.market_value, 0) - numeric(left.metric.market_value, 0))[0];
 			suggestions.push({
+				scope: 'assetClass',
 				assetClass: cls,
 				recommended_amount: allocation,
 				assetId: selected?.asset?.assetId || null,
 				ticker: selected?.asset?.ticker || null,
-				current_value: numeric(currentByClass[cls], 0),
-				target_value: targetTotal * numeric(targetByClass[cls], 0),
+				current_value: numeric(currentByScope[cls], 0),
+				target_value: targetTotal * numeric(targetByScope[cls], 0),
 			});
 		}
 
 		return {
 			portfolioId,
+			scope: suggestionScope,
 			contribution,
 			current_total: currentTotal,
 			target_total_after_contribution: targetTotal,
-			targets: targetByClass,
+			targets: targetByScope,
+			drift,
 			suggestions,
 			fetched_at: nowIso(),
 		};

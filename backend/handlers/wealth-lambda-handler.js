@@ -933,12 +933,18 @@ async function handleRebalance(method, portfolioId, userId, body, query = {}, su
 	if (subId === 'suggestion') {
 		if (method !== 'GET') throw errorResponse(405, 'Method not allowed');
 		const amount = Number(query.amount || 0);
-		return platformService.getRebalancingSuggestion(userId, amount, { portfolioId });
+		const scope = String(query.scope || query.targetScope || 'assetClass');
+		return platformService.getRebalancingSuggestion(userId, amount, { portfolioId, scope });
 	}
 
 	if (subId === 'targets') {
-		if (method !== 'POST') throw errorResponse(405, 'Method not allowed');
-		return platformService.setRebalanceTargets(userId, parseBody(body), { portfolioId });
+		if (method === 'POST') {
+			return platformService.setRebalanceTargets(userId, parseBody(body), { portfolioId });
+		}
+		if (method === 'GET') {
+			return platformService.getRebalanceTargets(userId, { portfolioId });
+		}
+		throw errorResponse(405, 'Method not allowed');
 	}
 
 	throw errorResponse(404, 'Rebalance route not found');

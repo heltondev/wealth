@@ -4,6 +4,7 @@
     "assets": "Assets",
     "transactions": "Transactions",
     "dividends": "Dividends",
+    "rebalance": "Rebalance",
     "tax": "Tax",
     "platform": "Platform",
     "documents": "Documents",
@@ -133,6 +134,55 @@
       "deleteError": "Failed to remove alert.",
       "evaluated": "Alerts evaluated.",
       "evaluateError": "Failed to evaluate alerts."
+    }
+  },
+  "rebalance": {
+    "title": "Rebalancing",
+    "selectPortfolio": "Select portfolio",
+    "selectScope": "Select scope",
+    "noData": "No portfolio data yet.",
+    "loadError": "Failed to load rebalancing data.",
+    "targetEditorTitle": "Target Allocation",
+    "driftTitle": "Current vs Target Drift",
+    "suggestionTitle": "Contribution Simulation",
+    "amount": "Contribution Amount",
+    "refreshSuggestion": "Refresh Suggestion",
+    "saveTargets": "Save Targets",
+    "addTarget": "Add Target",
+    "emptyTargets": "No targets configured.",
+    "targetSumLabel": "Target sum:",
+    "targetSumState": {
+      "balanced": "Balanced (100%)",
+      "under": "Under 100%",
+      "over": "Over 100%"
+    },
+    "scopes": {
+      "assetClass": "By Class",
+      "asset": "By Asset"
+    },
+    "totals": {
+      "currentTotal": "Current Total",
+      "targetTotal": "Target Total (After Contribution)",
+      "contribution": "Contribution"
+    },
+    "table": {
+      "class": "Class",
+      "asset": "Asset",
+      "percent": "Target %",
+      "actions": "Actions",
+      "currentValue": "Current Value",
+      "targetValue": "Target Value",
+      "diffValue": "Difference",
+      "driftPct": "Drift %",
+      "recommendedContribution": "Recommended Contribution"
+    },
+    "messages": {
+      "saved": "Targets saved.",
+      "invalidTargets": "Review duplicate or invalid targets.",
+      "invalidAmount": "Contribution amount must be greater than zero.",
+      "noAssets": "No assets available for asset-level targets.",
+      "emptySuggestion": "No contribution suggestions for current filters.",
+      "emptyDrift": "No drift data available for current targets."
     }
   },
   "tax": {

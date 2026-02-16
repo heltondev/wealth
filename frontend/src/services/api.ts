@@ -175,6 +175,56 @@ export interface TaxReportResponse {
   is_scraped?: boolean;
 }
 
+export interface RebalanceTarget {
+  targetId?: string;
+  scope: 'assetClass' | 'asset' | string;
+  value: string;
+  percent: number;
+  updatedAt?: string | null;
+}
+
+export interface RebalanceTargetsResponse {
+  portfolioId: string;
+  targets: RebalanceTarget[];
+  fetched_at?: string;
+}
+
+export interface RebalanceDriftItem {
+  scope: 'assetClass' | 'asset' | string;
+  scope_key: string;
+  assetClass?: string;
+  assetId?: string;
+  ticker?: string | null;
+  current_value: number;
+  target_value: number;
+  target_weight_pct: number;
+  current_weight_pct: number;
+  drift_value: number;
+  drift_pct: number;
+}
+
+export interface RebalanceSuggestionItem {
+  scope: 'assetClass' | 'asset' | string;
+  assetClass?: string;
+  assetId?: string | null;
+  ticker?: string | null;
+  recommended_amount: number;
+  current_value: number;
+  target_value: number;
+}
+
+export interface RebalanceSuggestionResponse {
+  portfolioId: string;
+  scope: 'assetClass' | 'asset' | string;
+  contribution: number;
+  current_total: number;
+  target_total_after_contribution: number;
+  targets: Record<string, number>;
+  drift?: RebalanceDriftItem[];
+  suggestions: RebalanceSuggestionItem[];
+  fetched_at?: string;
+}
+
 export interface AlertEvent {
   eventId: string;
   ruleId?: string;
@@ -313,10 +363,14 @@ export const api = {
   },
   getTaxReport: (portfolioId: string, year: number) =>
     request<TaxReportResponse>(`/portfolios/${portfolioId}/tax?year=${encodeURIComponent(String(year))}`),
-  getRebalanceSuggestion: (portfolioId: string, amount: number) =>
-    request(`/portfolios/${portfolioId}/rebalance/suggestion?amount=${encodeURIComponent(String(amount))}`),
-  setRebalanceTargets: (portfolioId: string, targets: Array<{ scope: string; value: string; percent: number }>) =>
-    request(`/portfolios/${portfolioId}/rebalance/targets`, { method: 'POST', body: JSON.stringify({ targets }) }),
+  getRebalanceTargets: (portfolioId: string) =>
+    request<RebalanceTargetsResponse>(`/portfolios/${portfolioId}/rebalance/targets`),
+  getRebalanceSuggestion: (portfolioId: string, amount: number, scope = 'assetClass') =>
+    request<RebalanceSuggestionResponse>(
+      `/portfolios/${portfolioId}/rebalance/suggestion?amount=${encodeURIComponent(String(amount))}&scope=${encodeURIComponent(scope)}`
+    ),
+  setRebalanceTargets: (portfolioId: string, targets: RebalanceTarget[]) =>
+    request<RebalanceTargetsResponse>(`/portfolios/${portfolioId}/rebalance/targets`, { method: 'POST', body: JSON.stringify({ targets }) }),
   getRisk: (portfolioId: string) =>
     request(`/portfolios/${portfolioId}/risk`),
   getBenchmarks: (portfolioId: string, benchmark = 'IBOV', period = '1A') =>
