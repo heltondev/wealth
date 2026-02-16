@@ -4,6 +4,7 @@
     "assets": "Ativos",
     "transactions": "Transações",
     "dividends": "Proventos",
+    "tax": "Imposto",
     "platform": "Plataforma",
     "documents": "Documentos",
     "settings": "Configurações",
@@ -132,6 +133,54 @@
       "deleteError": "Falha ao remover alerta.",
       "evaluated": "Alertas avaliados.",
       "evaluateError": "Falha ao avaliar alertas."
+    }
+  },
+  "tax": {
+    "title": "Imposto de Renda",
+    "selectPortfolio": "Selecionar portfólio",
+    "selectYear": "Selecionar ano",
+    "selectClass": "Selecionar classe",
+    "loadError": "Falha ao carregar os dados do relatório de imposto.",
+    "noSeries": "Sem atividade de imposto para os filtros selecionados.",
+    "stockExemptionRule": "Vendas de ações abaixo de {{limit}} no mês são isentas de IR sobre ganho.",
+    "classFilter": {
+      "all": "Todas as classes"
+    },
+    "kpis": {
+      "annualTaxDue": "DARF Estimado (Ano)",
+      "taxableJcp": "JCP Tributável (Ano)",
+      "exemptDividends": "Dividendos Isentos (Ano)",
+      "monthsWithDarf": "Meses com DARF",
+      "stockExemptMonths": "Meses com Isenção em Ações"
+    },
+    "sections": {
+      "gainByClass": "Ganho/Perda Mensal por Classe",
+      "monthlyDarf": "Estimativa Mensal de DARF",
+      "carryLoss": "Controle de Prejuízo Acumulado",
+      "monthlyByClass": "Detalhe Mensal por Classe",
+      "annualSummary": "Resumo Anual para Declaração"
+    },
+    "carryLoss": {
+      "none": "Sem prejuízo acumulado no ano selecionado."
+    },
+    "exemption": {
+      "exempt": "Isento (< R$20 mil em ações)",
+      "taxable": "Tributável",
+      "noSales": "Sem vendas de ações",
+      "notApplicable": "N/A"
+    },
+    "table": {
+      "month": "Mês",
+      "class": "Classe",
+      "grossSales": "Vendas Brutas",
+      "realizedGain": "Lucro/Prejuízo Realizado",
+      "taxDue": "Imposto Devido (DARF)",
+      "carryLoss": "Prejuízo Acumulado",
+      "exemption": "Isenção",
+      "dividends": "Dividendos (Isentos)",
+      "jcp": "JCP (Tributável)",
+      "stockExemption": "Isenção em Ações",
+      "total": "Total"
     }
   },
   "assets": {

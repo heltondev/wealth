@@ -153,6 +153,28 @@ export interface DividendsResponse {
   fetched_at: string;
 }
 
+export interface TaxMonthlyItem {
+  month: string;
+  gross_sales: Record<string, number>;
+  realized_gain: Record<string, number>;
+  tax_due: Record<string, number>;
+  dividends: number;
+  jcp: number;
+}
+
+export interface TaxReportResponse {
+  portfolioId: string;
+  year: number;
+  monthly: TaxMonthlyItem[];
+  total_tax_due: number;
+  total_dividends_isentos: number;
+  total_jcp_tributavel: number;
+  carry_loss_by_class: Record<string, number>;
+  data_source?: string;
+  fetched_at?: string;
+  is_scraped?: boolean;
+}
+
 export interface AlertEvent {
   eventId: string;
   ruleId?: string;
@@ -290,7 +312,7 @@ export const api = {
     return request<DividendsResponse>(`/portfolios/${portfolioId}/dividends${suffix}`);
   },
   getTaxReport: (portfolioId: string, year: number) =>
-    request(`/portfolios/${portfolioId}/tax?year=${encodeURIComponent(String(year))}`),
+    request<TaxReportResponse>(`/portfolios/${portfolioId}/tax?year=${encodeURIComponent(String(year))}`),
   getRebalanceSuggestion: (portfolioId: string, amount: number) =>
     request(`/portfolios/${portfolioId}/rebalance/suggestion?amount=${encodeURIComponent(String(amount))}`),
   setRebalanceTargets: (portfolioId: string, targets: Array<{ scope: string; value: string; percent: number }>) =>

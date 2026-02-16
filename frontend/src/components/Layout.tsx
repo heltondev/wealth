@@ -24,6 +24,7 @@ const Layout = ({ children }: LayoutProps) => {
     { path: '/assets', label: t('nav.assets'), icon: '💰' },
     { path: '/transactions', label: t('nav.transactions'), icon: '🧾' },
     { path: '/dividends', label: t('nav.dividends'), icon: '💵' },
+    { path: '/tax', label: t('nav.tax'), icon: '📑' },
     { path: '/documents', label: t('nav.documents'), icon: '📄' },
     { path: '/settings', label: t('nav.settings'), icon: '⚙️' },
   ];

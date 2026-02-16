@@ -4,6 +4,7 @@
     "assets": "Assets",
     "transactions": "Transactions",
     "dividends": "Dividends",
+    "tax": "Tax",
     "platform": "Platform",
     "documents": "Documents",
     "settings": "Settings",
@@ -132,6 +133,54 @@
       "deleteError": "Failed to remove alert.",
       "evaluated": "Alerts evaluated.",
       "evaluateError": "Failed to evaluate alerts."
+    }
+  },
+  "tax": {
+    "title": "Tax (IR)",
+    "selectPortfolio": "Select portfolio",
+    "selectYear": "Select year",
+    "selectClass": "Select class",
+    "loadError": "Failed to load tax report data.",
+    "noSeries": "No tax activity for the selected filters.",
+    "stockExemptionRule": "Stock sales below {{limit}} in a month are exempt from IR on gains.",
+    "classFilter": {
+      "all": "All classes"
+    },
+    "kpis": {
+      "annualTaxDue": "Estimated DARF (Year)",
+      "taxableJcp": "Taxable JCP (Year)",
+      "exemptDividends": "Exempt Dividends (Year)",
+      "monthsWithDarf": "Months with DARF",
+      "stockExemptMonths": "Stock Exempt Months"
+    },
+    "sections": {
+      "gainByClass": "Monthly Gain/Loss by Class",
+      "monthlyDarf": "Monthly DARF Estimate",
+      "carryLoss": "Accumulated Loss Control",
+      "monthlyByClass": "Monthly Tax Detail by Class",
+      "annualSummary": "Annual Tax Report Summary"
+    },
+    "carryLoss": {
+      "none": "No accumulated losses in the selected year."
+    },
+    "exemption": {
+      "exempt": "Exempt (< R$20k stock sales)",
+      "taxable": "Taxable",
+      "noSales": "No stock sales",
+      "notApplicable": "N/A"
+    },
+    "table": {
+      "month": "Month",
+      "class": "Class",
+      "grossSales": "Gross Sales",
+      "realizedGain": "Realized Gain/Loss",
+      "taxDue": "Tax Due (DARF)",
+      "carryLoss": "Carry Loss",
+      "exemption": "Exemption",
+      "dividends": "Dividends (Exempt)",
+      "jcp": "JCP (Taxable)",
+      "stockExemption": "Stock Exemption",
+      "total": "Total"
     }
   },
   "assets": {

@@ -857,9 +857,18 @@ class PlatformService {
 		const transactions = await this.#listPortfolioTransactions(portfolioId);
 
 		const sorted = [...transactions]
-			.map((tx) => ({ ...tx, date: normalizeDate(tx.date) }))
+			.map((tx) => ({
+				...tx,
+				date: normalizeDate(tx.date),
+				createdAt: String(tx.createdAt || ''),
+				transId: String(tx.transId || ''),
+			}))
 			.filter((tx) => tx.date)
-			.sort((left, right) => left.date.localeCompare(right.date));
+			.sort((left, right) =>
+				left.date.localeCompare(right.date)
+				|| left.createdAt.localeCompare(right.createdAt)
+				|| left.transId.localeCompare(right.transId)
+			);
 
 		const lotsByAsset = new Map();
 		const monthly = new Map();
@@ -879,6 +888,11 @@ class PlatformService {
 			}
 			return monthly.get(key);
 		};
+		const addRealizedGain = (monthData, assetClass, gain) => {
+			const normalizedGain = numeric(gain, 0);
+			if (Math.abs(normalizedGain) <= Number.EPSILON) return;
+			monthData.realized_gain[assetClass] = (monthData.realized_gain[assetClass] || 0) + normalizedGain;
+		};
 
 		for (const tx of sorted) {
 			const txYear = Number(tx.date.slice(0, 4));
@@ -897,27 +911,71 @@ class PlatformService {
 			if (type === 'buy' || type === 'subscription') {
 				const totalCost = amount + fees;
 				const costPerUnit = quantity > 0 ? totalCost / quantity : 0;
-				lots.push({ quantity, costPerUnit, date: tx.date });
+				let remaining = quantity;
+				let realizedGain = 0;
+
+				// Close existing short lots (sell then buy) before opening a new long lot.
+				while (remaining > 0 && lots.length > 0 && numeric(lots[0].quantity, 0) < 0) {
+					const lot = lots[0];
+					const shortQty = Math.abs(numeric(lot.quantity, 0));
+					if (shortQty <= 0) {
+						lots.shift();
+						continue;
+					}
+					const consumed = Math.min(remaining, shortQty);
+					realizedGain += consumed * (numeric(lot.costPerUnit, 0) - costPerUnit);
+					lot.quantity += consumed;
+					remaining -= consumed;
+					if (Math.abs(numeric(lot.quantity, 0)) <= Number.EPSILON) lots.shift();
+				}
+
+				if (remaining > 0) {
+					lots.push({ quantity: remaining, costPerUnit, date: tx.date });
+				}
+
+				if (txYear === selectedYear && Math.abs(realizedGain) > Number.EPSILON) {
+					const monthData = ensureMonth(month);
+					addRealizedGain(monthData, assetClass, realizedGain);
+				}
 				continue;
 			}
 
 			if (type === 'sell') {
+				const proceedsPerUnit = quantity > 0 ? amount / quantity : 0;
+				const feesPerUnit = quantity > 0 ? fees / quantity : 0;
 				let remaining = quantity;
 				let costBasis = 0;
-				while (remaining > 0 && lots.length > 0) {
+				let closedLongQty = 0;
+
+				// Close existing long lots first (FIFO).
+				while (remaining > 0 && lots.length > 0 && numeric(lots[0].quantity, 0) > 0) {
 					const lot = lots[0];
-					const consumed = Math.min(remaining, lot.quantity);
-					costBasis += consumed * lot.costPerUnit;
+					const lotQty = numeric(lot.quantity, 0);
+					if (lotQty <= 0) {
+						lots.shift();
+						continue;
+					}
+					const consumed = Math.min(remaining, lotQty);
+					costBasis += consumed * numeric(lot.costPerUnit, 0);
 					lot.quantity -= consumed;
 					remaining -= consumed;
-					if (lot.quantity <= 0) lots.shift();
+					closedLongQty += consumed;
+					if (numeric(lot.quantity, 0) <= Number.EPSILON) lots.shift();
 				}
+
+				// If sell quantity exceeds available long lots, open a short lot instead of treating
+				// unmatched quantity as immediate profit. This avoids inflated gains for intraday shorts.
+				if (remaining > 0) {
+					const shortOpenPrice = proceedsPerUnit - feesPerUnit;
+					lots.push({ quantity: -remaining, costPerUnit: shortOpenPrice, date: tx.date });
+				}
+
+				const realizedFromClosedLong = (closedLongQty * (proceedsPerUnit - feesPerUnit)) - costBasis;
 
 				if (txYear === selectedYear) {
 					const monthData = ensureMonth(month);
 					monthData.gross_sales[assetClass] = (monthData.gross_sales[assetClass] || 0) + amount;
-					const gain = amount - fees - costBasis;
-					monthData.realized_gain[assetClass] = (monthData.realized_gain[assetClass] || 0) + gain;
+					addRealizedGain(monthData, assetClass, realizedFromClosedLong);
 				}
 				continue;
 			}
