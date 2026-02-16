@@ -48,9 +48,74 @@
     "currentYieldPeriod": "Current Dividend Yield ({{period}})",
     "monthlyHistory": "Monthly Dividends",
     "calendar": "Upcoming Payments",
+    "paymentsList": "Payments List (Selected Month)",
+    "paymentsListTitle": "Payment Details",
+    "paymentsScope": {
+      "month": "Showing {{status}} events in selected month",
+      "day": "Showing {{status}} events for {{date}}",
+      "event": "Showing selected event for {{date}}",
+      "none": "No statuses selected"
+    },
+    "proventsCalendar": "Provents Calendar",
+    "calendarMonth": "Month",
+    "noCalendarEvents": "No provents in selected month.",
     "noSeries": "No data available.",
-    "noUpcoming": "No upcoming dividend events.",
+    "noUpcoming": "No dividend events for selected filters.",
     "loadError": "Failed to load dividends data.",
+    "calendarStatus": {
+      "paid": "Paid",
+      "provisioned": "Provisioned"
+    },
+    "categories": {
+      "dividend": "Dividend",
+      "jcp": "JCP",
+      "amortization": "Amortization",
+      "rendimento": "Income",
+      "other": "Provent"
+    },
+    "groups": {
+      "event": "Event",
+      "cashYield": "Cash & Yield",
+      "ticker12m": "Ticker 12M",
+      "sourceQuality": "Source & Quality"
+    },
+    "paymentDate": "Payment Date",
+    "type": "Type",
+    "perUnit": "Per Unit",
+    "quantity": "Quantity",
+    "grossReceive": "Gross Receive",
+    "netReceive": "Net Receive",
+    "yieldCurrentEvent": "Yield@Current",
+    "yieldOnCostEvent": "Yield@Cost",
+    "exDate": "Ex-Date",
+    "recordDate": "Record/Com Date",
+    "announcementDate": "Announcement Date",
+    "source": "Source",
+    "valueSource": "Value Source",
+    "frequency": "Frequency",
+    "gross12m": "Gross 12M",
+    "events12m": "Paid Events (12M)",
+    "yieldCurrent12m": "Yield@Current (12M)",
+    "yieldCost12m": "Yield@Cost (12M)",
+    "nextPayment": "Next Payment",
+    "latestAnnouncement": "Latest Announcement",
+    "revisions": "Revisions",
+    "revision": "Revised",
+    "estimated": "(estimated)",
+    "frequencyValues": {
+      "insufficient": "Insufficient data",
+      "monthly": "Monthly",
+      "quarterly": "Quarterly",
+      "semiannual": "Semiannual",
+      "annual": "Annual",
+      "irregular": "Irregular"
+    },
+    "hints": {
+      "jcpWithholding": "Estimated 15% withholding tax (IRRF) for JCP.",
+      "mergedSources": "Multiple source records were merged for this event.",
+      "valueConflict": "Different values were found across sources for this payment.",
+      "sourceOverride": "A secondary source overrode the primary value."
+    },
     "alerts": {
       "title": "Dividend Alerts",
       "tickerPlaceholder": "Ticker (optional)",
@@ -353,6 +418,10 @@
     "edit": "Edit",
     "create": "Create",
     "confirm": "Confirm",
-    "search": "Search"
+    "search": "Search",
+    "all": "All",
+    "yes": "Yes",
+    "no": "No",
+    "showLess": "Show less"
   }
 }

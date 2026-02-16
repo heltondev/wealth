@@ -48,9 +48,74 @@
     "currentYieldPeriod": "Dividend Yield Atual ({{period}})",
     "monthlyHistory": "Proventos Mensais",
     "calendar": "Pagamentos Futuros",
+    "paymentsList": "Lista de Pagamentos (Mês Selecionado)",
+    "paymentsListTitle": "Detalhes de Pagamentos",
+    "paymentsScope": {
+      "month": "Exibindo eventos {{status}} no mês selecionado",
+      "day": "Exibindo eventos {{status}} de {{date}}",
+      "event": "Exibindo o evento selecionado de {{date}}",
+      "none": "Nenhum status selecionado"
+    },
+    "proventsCalendar": "Calendário de Proventos",
+    "calendarMonth": "Mês",
+    "noCalendarEvents": "Sem proventos no mês selecionado.",
     "noSeries": "Sem dados disponíveis.",
-    "noUpcoming": "Sem eventos de proventos futuros.",
+    "noUpcoming": "Sem eventos de proventos para os filtros selecionados.",
     "loadError": "Falha ao carregar dados de proventos.",
+    "calendarStatus": {
+      "paid": "Pago",
+      "provisioned": "Provisionado"
+    },
+    "categories": {
+      "dividend": "Dividendo",
+      "jcp": "JCP",
+      "amortization": "Amortização",
+      "rendimento": "Rendimento",
+      "other": "Provento"
+    },
+    "groups": {
+      "event": "Evento",
+      "cashYield": "Caixa e Yield",
+      "ticker12m": "Ticker 12M",
+      "sourceQuality": "Fonte e Qualidade"
+    },
+    "paymentDate": "Data de Pagamento",
+    "type": "Tipo",
+    "perUnit": "Por Cota/Ação",
+    "quantity": "Quantidade",
+    "grossReceive": "Recebimento Bruto",
+    "netReceive": "Recebimento Líquido",
+    "yieldCurrentEvent": "Yield@Atual",
+    "yieldOnCostEvent": "Yield@Custo",
+    "exDate": "Data-Ex",
+    "recordDate": "Data Com",
+    "announcementDate": "Data de Anúncio",
+    "source": "Fonte",
+    "valueSource": "Fonte do Valor",
+    "frequency": "Frequência",
+    "gross12m": "Bruto 12M",
+    "events12m": "Eventos Pagos (12M)",
+    "yieldCurrent12m": "Yield@Atual (12M)",
+    "yieldCost12m": "Yield@Custo (12M)",
+    "nextPayment": "Próximo Pagamento",
+    "latestAnnouncement": "Último Anúncio",
+    "revisions": "Revisões",
+    "revision": "Revisado",
+    "estimated": "(estimado)",
+    "frequencyValues": {
+      "insufficient": "Dados insuficientes",
+      "monthly": "Mensal",
+      "quarterly": "Trimestral",
+      "semiannual": "Semestral",
+      "annual": "Anual",
+      "irregular": "Irregular"
+    },
+    "hints": {
+      "jcpWithholding": "Retenção estimada de 15% de IRRF para JCP.",
+      "mergedSources": "Registros de múltiplas fontes foram mesclados para este evento.",
+      "valueConflict": "Foram encontrados valores diferentes entre fontes para este pagamento.",
+      "sourceOverride": "Uma fonte secundária sobrescreveu o valor da fonte primária."
+    },
     "alerts": {
       "title": "Alertas de Proventos",
       "tickerPlaceholder": "Ticker (opcional)",
@@ -353,6 +418,10 @@
     "edit": "Editar",
     "create": "Criar",
     "confirm": "Confirmar",
-    "search": "Buscar"
+    "search": "Buscar",
+    "all": "Todos",
+    "yes": "Sim",
+    "no": "Não",
+    "showLess": "Mostrar menos"
   }
 }

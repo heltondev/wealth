@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Bar,
@@ -85,13 +85,39 @@ const normalizeIsoDate = (value: unknown): string | null => {
 };
 
 type ProventStatus = 'paid' | 'provisioned';
+type ProventCategory = 'dividend' | 'jcp' | 'amortization' | 'rendimento' | 'other';
+type ProventFrequencyKey =
+  | 'dividends.frequencyValues.insufficient'
+  | 'dividends.frequencyValues.monthly'
+  | 'dividends.frequencyValues.quarterly'
+  | 'dividends.frequencyValues.semiannual'
+  | 'dividends.frequencyValues.annual'
+  | 'dividends.frequencyValues.irregular';
 
-type ProventCalendarItem = {
+type ProventEvent = {
+  id: string;
   ticker: string;
-  eventType: string;
+  assetId: string | null;
+  eventType: string | null;
+  category: ProventCategory;
   eventDate: string;
-  amount: number | null;
+  exDate: string | null;
+  recordDate: string | null;
+  announcementDate: string | null;
+  amountPerUnit: number | null;
+  quantity: number | null;
+  expectedGross: number | null;
+  expectedNet: number | null;
+  netIsEstimated: boolean;
+  taxHintKey: string | null;
   status: ProventStatus;
+  source: string | null;
+  sourceUrl: string | null;
+  valueSource: string | null;
+  hasRevision: boolean;
+  revisionNoteKey: string | null;
+  yieldCurrentPct: number | null;
+  yieldOnCostPct: number | null;
 };
 
 const toRecord = (value: unknown): Record<string, unknown> => (
@@ -115,9 +141,95 @@ const formatMonthLabel = (month: string, locale: string) => {
   return parsed.toLocaleDateString(locale, { month: 'long', year: 'numeric', timeZone: 'UTC' });
 };
 
+const normalizeProventCategory = (eventTypeValue: unknown, rawTypeValue: unknown): ProventCategory => {
+  const text = `${String(eventTypeValue || '')} ${String(rawTypeValue || '')}`.toLowerCase();
+  if (!text) return 'other';
+  if (text.includes('jcp') || text.includes('juros')) return 'jcp';
+  if (text.includes('amort')) return 'amortization';
+  if (text.includes('rend')) return 'rendimento';
+  if (text.includes('divid') || text.includes('provent')) return 'dividend';
+  return 'other';
+};
+
+const formatPercent = (value: number | null, locale: string) => (
+  value === null
+    ? '-'
+    : `${value.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`
+);
+
+const sourcePriority = (source: string | null) => {
+  const normalized = String(source || '').toLowerCase();
+  if (normalized.includes('statusinvest')) return 3;
+  if (normalized.includes('fundsexplorer')) return 2;
+  if (normalized) return 1;
+  return 0;
+};
+
+const dedupeFamily = (category: ProventCategory) => {
+  if (category === 'jcp') return 'jcp';
+  if (category === 'amortization') return 'amortization';
+  return 'income';
+};
+
+const dedupeKeyForEvent = (event: Pick<ProventEvent, 'ticker' | 'eventDate' | 'category'>) => (
+  `${event.ticker}|${event.eventDate}|${dedupeFamily(event.category)}`
+);
+
+const dedupeScoreForEvent = (event: ProventEvent) => {
+  let score = 0;
+  if (event.amountPerUnit !== null) score += event.amountPerUnit > 0 ? 200 : 90;
+  if (event.expectedGross !== null && event.expectedGross > 0) score += 10;
+  if (event.exDate) score += 10;
+  if (event.recordDate) score += 6;
+  if (event.announcementDate) score += 4;
+  if (event.valueSource) score += 15;
+  score += sourcePriority(event.source) * 20;
+  const type = String(event.eventType || '').toLowerCase();
+  if (type.includes('payment') || type.includes('dividend') || type.includes('rend') || type.includes('jcp')) {
+    score += 8;
+  }
+  return score;
+};
+
+const frequencyKeyFromDates = (dates: string[]): ProventFrequencyKey => {
+  const sorted = Array.from(new Set(dates)).sort();
+  if (sorted.length < 3) return 'dividends.frequencyValues.insufficient';
+  const intervals: number[] = [];
+  for (let index = 1; index < sorted.length; index += 1) {
+    const prev = new Date(`${sorted[index - 1]}T00:00:00Z`);
+    const next = new Date(`${sorted[index]}T00:00:00Z`);
+    const diffMs = next.getTime() - prev.getTime();
+    if (Number.isFinite(diffMs) && diffMs > 0) {
+      intervals.push(diffMs / 86400000);
+    }
+  }
+  if (intervals.length === 0) return 'dividends.frequencyValues.insufficient';
+  const avgDays = intervals.reduce((sum, value) => sum + value, 0) / intervals.length;
+  if (avgDays <= 45) return 'dividends.frequencyValues.monthly';
+  if (avgDays <= 110) return 'dividends.frequencyValues.quarterly';
+  if (avgDays <= 200) return 'dividends.frequencyValues.semiannual';
+  if (avgDays <= 400) return 'dividends.frequencyValues.annual';
+  return 'dividends.frequencyValues.irregular';
+};
+
+const formatSource = (value: string | null) => {
+  const normalized = String(value || '').trim();
+  if (!normalized) return '-';
+  return normalized
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+};
+
 const DividendsPage = () => {
   const { t, i18n } = useTranslation();
-  const { portfolios, selectedPortfolio, setSelectedPortfolio, assets: portfolioAssets } = usePortfolioData();
+  const {
+    portfolios,
+    selectedPortfolio,
+    setSelectedPortfolio,
+    assets: portfolioAssets,
+    metrics,
+  } = usePortfolioData();
   const [dropdownConfig, setDropdownConfig] = useState<DropdownConfigMap>(() =>
     normalizeDropdownConfig(DEFAULT_DROPDOWN_CONFIG)
   );
@@ -128,7 +240,10 @@ const DividendsPage = () => {
     paid: true,
     provisioned: true,
   });
+  const [selectedCalendarDate, setSelectedCalendarDate] = useState<string | null>(null);
+  const [selectedCalendarEventId, setSelectedCalendarEventId] = useState<string | null>(null);
   const [expandedDates, setExpandedDates] = useState<Record<string, boolean>>({});
+  const calendarSectionRef = useRef<HTMLElement | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [payload, setPayload] = useState<DividendsResponse | null>(null);
@@ -264,74 +379,224 @@ const DividendsPage = () => {
     return map;
   }, [portfolioAssets]);
 
-  const upcomingEvents = useMemo(() => {
-    const source = payload?.calendar_upcoming || [];
-    return source
-      .map((event) => ({
-        ...event,
-        ticker: String(event.ticker || '').toUpperCase(),
-        eventType: String(event.eventType || '').replace(/_/g, ' '),
-        eventDate: normalizeIsoDate(event.eventDate || event.date || event.fetched_at),
-        amountPerUnit: toAmount(toRecord(event.details).value),
-        quantity: quantityByTicker.get(String(event.ticker || '').toUpperCase()) ?? null,
-        assetId: assetIdByTicker.get(String(event.ticker || '').toUpperCase()) ?? null,
-      }))
-      .filter((event) =>
-        event.eventDate
-        && event.eventDate >= todayIso
-        && event.eventDate.startsWith(`${calendarMonth}-`)
-      )
-      .map((event) => ({
-        ...event,
-        expectedTotal:
-          event.amountPerUnit !== null && event.quantity !== null
-            ? event.amountPerUnit * event.quantity
-            : null,
-      }))
-      .sort((left, right) => String(left.eventDate || '').localeCompare(String(right.eventDate || '')));
-  }, [payload?.calendar_upcoming, todayIso, calendarMonth, quantityByTicker, assetIdByTicker]);
+  const currentPriceByTicker = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const asset of portfolioAssets) {
+      const status = String(asset.status || '').toLowerCase();
+      if (status && status !== 'active') continue;
+      const ticker = String(asset.ticker || '').toUpperCase();
+      if (!ticker) continue;
+      const metricQuote = toAmount(metrics?.currentQuotes?.[asset.assetId]);
+      const snapshotQuote = toAmount(asset.currentPrice);
+      const resolved = metricQuote ?? snapshotQuote;
+      if (resolved === null || resolved <= 0 || map.has(ticker)) continue;
+      map.set(ticker, resolved);
+    }
+    return map;
+  }, [metrics?.currentQuotes, portfolioAssets]);
 
-  const calendarSourceEvents = useMemo(() => {
+  const averageCostByTicker = useMemo(() => {
+    const accum = new Map<string, {
+      weightedCost: number;
+      quantity: number;
+      fallbackCostSum: number;
+      fallbackCount: number;
+    }>();
+
+    for (const asset of portfolioAssets) {
+      const status = String(asset.status || '').toLowerCase();
+      if (status && status !== 'active') continue;
+      const ticker = String(asset.ticker || '').toUpperCase();
+      if (!ticker) continue;
+      const avgCost = toAmount(metrics?.averageCosts?.[asset.assetId]);
+      if (avgCost === null || avgCost <= 0) continue;
+      const quantity = Math.max(toAmount(asset.quantity) ?? 0, 0);
+      const current = accum.get(ticker) || {
+        weightedCost: 0,
+        quantity: 0,
+        fallbackCostSum: 0,
+        fallbackCount: 0,
+      };
+      if (quantity > 0) {
+        current.weightedCost += avgCost * quantity;
+        current.quantity += quantity;
+      } else {
+        current.fallbackCostSum += avgCost;
+        current.fallbackCount += 1;
+      }
+      accum.set(ticker, current);
+    }
+
+    const resolved = new Map<string, number>();
+    for (const [ticker, value] of accum.entries()) {
+      if (value.quantity > 0) {
+        resolved.set(ticker, value.weightedCost / value.quantity);
+      } else if (value.fallbackCount > 0) {
+        resolved.set(ticker, value.fallbackCostSum / value.fallbackCount);
+      }
+    }
+    return resolved;
+  }, [metrics?.averageCosts, portfolioAssets]);
+
+  const normalizedRawEvents = useMemo<ProventEvent[]>(() => {
     const combined = [
       ...(payload?.calendar || []),
       ...(payload?.calendar_upcoming || []),
     ];
-    const deduped = new Map<string, typeof combined[number]>();
-    for (const event of combined) {
-      const eventDate = normalizeIsoDate(event.eventDate || event.date || event.fetched_at);
-      if (!eventDate) continue;
-      const key = [
-        String(event.ticker || '').toUpperCase(),
-        String(event.eventType || '').toLowerCase(),
-        eventDate,
-      ].join('|');
-      deduped.set(key, event);
-    }
-    return Array.from(deduped.values());
-  }, [payload?.calendar, payload?.calendar_upcoming]);
+    const normalized: ProventEvent[] = [];
+    combined.forEach((event, index) => {
+      const details = toRecord(event.details);
+      const ticker = String(event.ticker || details.ticker || '').toUpperCase();
+      if (!ticker) return;
 
-  const calendarEvents = useMemo<ProventCalendarItem[]>(() => (
-    calendarSourceEvents
-      .map((event) => {
-        const eventDate = normalizeIsoDate(event.eventDate || event.date || event.fetched_at);
-        if (!eventDate) return null;
-        const details = toRecord(event.details);
-        const amount = toAmount(details.value);
-        const status: ProventStatus = eventDate < todayIso ? 'paid' : 'provisioned';
-        return {
-          ticker: String(event.ticker || '').toUpperCase(),
-          eventType: String(event.eventType || '').replace(/_/g, ' '),
-          eventDate,
-          amount,
-          status,
-        };
-      })
-      .filter((event): event is ProventCalendarItem => Boolean(event))
+      const category = normalizeProventCategory(event.eventType, details.rawType);
+      const eventDate = normalizeIsoDate(
+        details.paymentDate
+        || event.eventDate
+        || event.date
+        || event.fetched_at
+      );
+      if (!eventDate) return;
+
+      const exDate = normalizeIsoDate(details.exDate || details.baseDate || details.base_date);
+      const recordDate = normalizeIsoDate(details.recordDate || details.comDate || details.dataCom || details.data_com);
+      const announcementDate = normalizeIsoDate(
+        details.announcementDate
+        || details.declarationDate
+        || details.approvedDate
+        || details.announcement_date
+      );
+      const amountPerUnit = toAmount(details.value);
+      const quantity = quantityByTicker.get(ticker) ?? null;
+      const expectedGross = amountPerUnit !== null && quantity !== null
+        ? amountPerUnit * quantity
+        : null;
+      const expectedNet = expectedGross === null
+        ? null
+        : category === 'jcp'
+          ? expectedGross * 0.85
+          : expectedGross;
+      const netIsEstimated = category === 'jcp' && expectedGross !== null;
+      const taxHintKey = category === 'jcp' ? 'dividends.hints.jcpWithholding' : null;
+      const currentPrice = currentPriceByTicker.get(ticker) ?? null;
+      const averageCost = averageCostByTicker.get(ticker) ?? null;
+      const yieldCurrentPct =
+        amountPerUnit !== null && currentPrice !== null && currentPrice > 0
+          ? (amountPerUnit / currentPrice) * 100
+          : null;
+      const yieldOnCostPct =
+        amountPerUnit !== null && averageCost !== null && averageCost > 0
+          ? (amountPerUnit / averageCost) * 100
+          : null;
+      const source = String(event.data_source || '').trim() || null;
+      const sourceUrl = String(details.url || '').trim() || null;
+      const valueSource = String(details.value_source || '').trim() || null;
+      const status: ProventStatus = eventDate < todayIso ? 'paid' : 'provisioned';
+      const label = String(details.rawType || event.eventTitle || event.eventType || '').trim();
+
+      normalized.push({
+        id: String(event.eventId || `${ticker}-${eventDate}-${category}-${index}`),
+        ticker,
+        assetId: assetIdByTicker.get(ticker) ?? null,
+        eventType: label.replace(/_/g, ' '),
+        category,
+        eventDate,
+        exDate,
+        recordDate,
+        announcementDate,
+        amountPerUnit,
+        quantity,
+        expectedGross,
+        expectedNet,
+        netIsEstimated,
+        taxHintKey,
+        status,
+        source,
+        sourceUrl,
+        valueSource,
+        hasRevision: Boolean(details.revised),
+        revisionNoteKey: details.revised ? 'dividends.hints.mergedSources' : null,
+        yieldCurrentPct,
+        yieldOnCostPct,
+      });
+    });
+    return normalized.sort((left, right) => (
+      left.eventDate.localeCompare(right.eventDate)
+      || left.ticker.localeCompare(right.ticker)
+    ));
+  }, [
+    payload?.calendar,
+    payload?.calendar_upcoming,
+    quantityByTicker,
+    assetIdByTicker,
+    currentPriceByTicker,
+    averageCostByTicker,
+    todayIso,
+  ]);
+
+  const revisionFlagsByKey = useMemo(() => {
+    const map = new Map<string, { hasRevision: boolean; noteKey: string | null }>();
+    const grouped = new Map<string, {
+      values: Set<string>;
+      sources: Set<string>;
+      overriddenBySource: boolean;
+    }>();
+
+    for (const event of normalizedRawEvents) {
+      const key = dedupeKeyForEvent(event);
+      const current = grouped.get(key) || {
+        values: new Set<string>(),
+        sources: new Set<string>(),
+        overriddenBySource: false,
+      };
+      current.values.add(event.amountPerUnit === null ? '<null>' : event.amountPerUnit.toFixed(8));
+      if (event.source) current.sources.add(event.source);
+      if (event.valueSource && event.source && event.valueSource !== event.source) {
+        current.overriddenBySource = true;
+      }
+      grouped.set(key, current);
+    }
+
+    for (const [key, value] of grouped.entries()) {
+      const hasRevision = value.values.size > 1 || value.overriddenBySource;
+      const noteKey = value.values.size > 1
+        ? 'dividends.hints.valueConflict'
+        : value.overriddenBySource
+          ? 'dividends.hints.sourceOverride'
+          : null;
+      map.set(key, { hasRevision, noteKey });
+    }
+    return map;
+  }, [normalizedRawEvents]);
+
+  const calendarEvents = useMemo<ProventEvent[]>(() => {
+    const deduped = new Map<string, ProventEvent>();
+    for (const event of normalizedRawEvents) {
+      const key = dedupeKeyForEvent(event);
+      const existing = deduped.get(key);
+      if (!existing) {
+        deduped.set(key, event);
+        continue;
+      }
+
+      const existingScore = dedupeScoreForEvent(existing);
+      const candidateScore = dedupeScoreForEvent(event);
+      if (candidateScore > existingScore) {
+        deduped.set(key, event);
+      }
+    }
+
+    return Array.from(deduped.entries())
+      .map(([key, event]) => ({
+        ...event,
+        hasRevision: revisionFlagsByKey.get(key)?.hasRevision ?? false,
+        revisionNoteKey: revisionFlagsByKey.get(key)?.noteKey ?? null,
+      }))
       .sort((left, right) => (
-        String(left.eventDate).localeCompare(String(right.eventDate))
-        || String(left.ticker).localeCompare(String(right.ticker))
-      ))
-  ), [calendarSourceEvents, todayIso]);
+        left.eventDate.localeCompare(right.eventDate)
+        || left.ticker.localeCompare(right.ticker)
+      ));
+  }, [normalizedRawEvents, revisionFlagsByKey]);
 
   const calendarMonthOptions = useMemo(() => {
     const months = new Set(calendarEvents.map((event) => event.eventDate.slice(0, 7)));
@@ -365,18 +630,166 @@ const DividendsPage = () => {
     ))
   ), [calendarEvents, calendarMonth, visibleStatuses]);
 
+  const sortedMonthEvents = useMemo(
+    () => [...calendarMonthEvents].sort((left, right) => (
+      right.eventDate.localeCompare(left.eventDate) || left.ticker.localeCompare(right.ticker)
+    )),
+    [calendarMonthEvents]
+  );
+
+  const listMonthEvents = useMemo(() => {
+    if (selectedCalendarEventId) {
+      return sortedMonthEvents.filter((event) => event.id === selectedCalendarEventId);
+    }
+    if (selectedCalendarDate) {
+      return sortedMonthEvents.filter((event) => event.eventDate === selectedCalendarDate);
+    }
+    return sortedMonthEvents;
+  }, [selectedCalendarDate, selectedCalendarEventId, sortedMonthEvents]);
+
   useEffect(() => {
     setExpandedDates({});
   }, [calendarMonth, selectedPortfolio]);
 
+  useEffect(() => {
+    setSelectedCalendarDate(null);
+    setSelectedCalendarEventId(null);
+  }, [calendarMonth, selectedPortfolio]);
+
+  useEffect(() => {
+    if (!selectedCalendarDate && !selectedCalendarEventId) return;
+
+    const hasSelectedEvent = selectedCalendarEventId
+      ? calendarMonthEvents.some((event) => event.id === selectedCalendarEventId)
+      : false;
+
+    if (selectedCalendarEventId && !hasSelectedEvent) {
+      setSelectedCalendarEventId(null);
+    }
+  }, [calendarMonthEvents, selectedCalendarDate, selectedCalendarEventId]);
+
+  useEffect(() => {
+    if (!selectedCalendarDate && !selectedCalendarEventId) return;
+
+    const onDocumentPointerDown = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (calendarSectionRef.current?.contains(target)) return;
+      setSelectedCalendarDate(null);
+      setSelectedCalendarEventId(null);
+    };
+
+    document.addEventListener('mousedown', onDocumentPointerDown);
+    return () => {
+      document.removeEventListener('mousedown', onDocumentPointerDown);
+    };
+  }, [selectedCalendarDate, selectedCalendarEventId]);
+
   const calendarEventsByDate = useMemo(() => {
-    const grouped = new Map<string, ProventCalendarItem[]>();
+    const grouped = new Map<string, ProventEvent[]>();
     for (const event of calendarMonthEvents) {
       if (!grouped.has(event.eventDate)) grouped.set(event.eventDate, []);
       grouped.get(event.eventDate)?.push(event);
     }
     return grouped;
   }, [calendarMonthEvents]);
+
+  const rolling12mStart = useMemo(() => {
+    const date = new Date(`${todayIso}T00:00:00Z`);
+    if (Number.isNaN(date.getTime())) return todayIso;
+    date.setUTCDate(1);
+    date.setUTCMonth(date.getUTCMonth() - 11);
+    return date.toISOString().slice(0, 10);
+  }, [todayIso]);
+
+  const tickerInsights = useMemo(() => {
+    const grouped = new Map<string, {
+      ticker: string;
+      assetId: string | null;
+      totalGross12m: number;
+      totalPerUnit12m: number;
+      paidCount12m: number;
+      paidDates: string[];
+      currentPrice: number | null;
+      averageCost: number | null;
+      nextPaymentDate: string | null;
+      latestAnnouncementDate: string | null;
+      hasRevisions: boolean;
+    }>();
+
+    for (const event of calendarEvents) {
+      const current = grouped.get(event.ticker) || {
+        ticker: event.ticker,
+        assetId: event.assetId,
+        totalGross12m: 0,
+        totalPerUnit12m: 0,
+        paidCount12m: 0,
+        paidDates: [],
+        currentPrice: event.amountPerUnit !== null ? currentPriceByTicker.get(event.ticker) ?? null : null,
+        averageCost: averageCostByTicker.get(event.ticker) ?? null,
+        nextPaymentDate: null,
+        latestAnnouncementDate: null,
+        hasRevisions: false,
+      };
+
+      if (!current.assetId && event.assetId) current.assetId = event.assetId;
+      if (current.currentPrice === null) current.currentPrice = currentPriceByTicker.get(event.ticker) ?? null;
+      if (current.averageCost === null) current.averageCost = averageCostByTicker.get(event.ticker) ?? null;
+
+      if (event.status === 'paid') {
+        current.paidDates.push(event.eventDate);
+      }
+      if (event.status === 'paid' && event.eventDate >= rolling12mStart) {
+        current.totalGross12m += event.expectedGross ?? 0;
+        current.totalPerUnit12m += event.amountPerUnit ?? 0;
+        current.paidCount12m += 1;
+      }
+      if (
+        event.status === 'provisioned'
+        && event.eventDate >= todayIso
+        && (!current.nextPaymentDate || event.eventDate < current.nextPaymentDate)
+      ) {
+        current.nextPaymentDate = event.eventDate;
+      }
+      if (
+        event.announcementDate
+        && (!current.latestAnnouncementDate || event.announcementDate > current.latestAnnouncementDate)
+      ) {
+        current.latestAnnouncementDate = event.announcementDate;
+      }
+      if (event.hasRevision) current.hasRevisions = true;
+
+      grouped.set(event.ticker, current);
+    }
+
+    return Array.from(grouped.values())
+      .map((entry) => {
+        const yieldCurrent12mPct =
+          entry.currentPrice !== null && entry.currentPrice > 0
+            ? (entry.totalPerUnit12m / entry.currentPrice) * 100
+            : null;
+        const yieldOnCost12mPct =
+          entry.averageCost !== null && entry.averageCost > 0
+            ? (entry.totalPerUnit12m / entry.averageCost) * 100
+            : null;
+
+        return {
+          ...entry,
+          frequencyKey: frequencyKeyFromDates(entry.paidDates),
+          yieldCurrent12mPct,
+          yieldOnCost12mPct,
+        };
+      })
+      .sort((left, right) => (
+        right.totalGross12m - left.totalGross12m
+        || left.ticker.localeCompare(right.ticker)
+      ));
+  }, [calendarEvents, rolling12mStart, todayIso, currentPriceByTicker, averageCostByTicker]);
+
+  const tickerInsightByTicker = useMemo(
+    () => new Map(tickerInsights.map((insight) => [insight.ticker, insight])),
+    [tickerInsights]
+  );
 
   const weekdayLabels = useMemo(() => {
     const sunday = new Date(Date.UTC(2023, 0, 1, 12, 0, 0));
@@ -395,7 +808,7 @@ const DividendsPage = () => {
     const firstDay = new Date(Date.UTC(year, month - 1, 1));
     const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
     const leadDays = firstDay.getUTCDay();
-    const cells: Array<{ date: string | null; day: number | null; events: ProventCalendarItem[] }> = [];
+    const cells: Array<{ date: string | null; day: number | null; events: ProventEvent[] }> = [];
 
     for (let index = 0; index < leadDays; index += 1) {
       cells.push({ date: null, day: null, events: [] });
@@ -422,6 +835,7 @@ const DividendsPage = () => {
   const annualizedIncome = Number(payload?.annualized_income ?? payload?.projected_annual_income ?? (averageMonthlyIncome * 12));
   const yieldOnCostPeriod = Number(payload?.yield_on_cost_realized ?? 0);
   const currentDividendYieldPeriod = Number(payload?.dividend_yield_current ?? 0);
+  const isAllStatusesVisible = visibleStatuses.paid && visibleStatuses.provisioned;
 
   const toggleStatus = (status: ProventStatus) => {
     setVisibleStatuses((previous) => ({
@@ -430,12 +844,60 @@ const DividendsPage = () => {
     }));
   };
 
+  const enableAllStatuses = () => {
+    setVisibleStatuses({ paid: true, provisioned: true });
+  };
+
   const toggleDateExpansion = (date: string) => {
     setExpandedDates((previous) => ({
       ...previous,
       [date]: !previous[date],
     }));
   };
+
+  const selectCalendarDay = (date: string) => {
+    if (selectedCalendarDate === date && !selectedCalendarEventId) {
+      setSelectedCalendarDate(null);
+      setSelectedCalendarEventId(null);
+      return;
+    }
+    setSelectedCalendarDate(date);
+    setSelectedCalendarEventId(null);
+  };
+
+  const selectCalendarEvent = (date: string, eventId: string) => {
+    if (selectedCalendarEventId === eventId) {
+      setSelectedCalendarDate(date);
+      setSelectedCalendarEventId(null);
+      return;
+    }
+    setSelectedCalendarDate(date);
+    setSelectedCalendarEventId(eventId);
+  };
+
+  const activeStatusLabel = isAllStatusesVisible
+    ? t('common.all', { defaultValue: 'All' })
+    : visibleStatuses.paid && !visibleStatuses.provisioned
+      ? t('dividends.calendarStatus.paid', { defaultValue: 'Paid' })
+      : !visibleStatuses.paid && visibleStatuses.provisioned
+        ? t('dividends.calendarStatus.provisioned', { defaultValue: 'Provisioned' })
+        : t('dividends.paymentsScope.none', { defaultValue: 'No statuses selected' });
+
+  const paymentsScopeLabel = selectedCalendarEventId
+    ? t('dividends.paymentsScope.event', {
+      date: selectedCalendarDate ? formatDate(selectedCalendarDate, numberLocale) : '-',
+      defaultValue: 'Showing selected event for {{date}}',
+    })
+    : selectedCalendarDate
+      ? t('dividends.paymentsScope.day', {
+        date: formatDate(selectedCalendarDate, numberLocale),
+        status: activeStatusLabel,
+        defaultValue: 'Showing {{status}} events for {{date}}',
+      })
+      : t('dividends.paymentsScope.month', {
+        status: activeStatusLabel,
+        defaultValue: 'Showing {{status}} events in selected month',
+      });
 
   return (
     <Layout>
@@ -553,7 +1015,7 @@ const DividendsPage = () => {
                 )}
               </section>
 
-              <section className="dividends-card dividends-card--wide">
+              <section className="dividends-card dividends-card--wide" ref={calendarSectionRef}>
                 <header className="dividends-card__header">
                   <h2>{t('dividends.proventsCalendar', { defaultValue: 'Provents Calendar' })}</h2>
                   <div className="provents-calendar__controls">
@@ -569,6 +1031,13 @@ const DividendsPage = () => {
                 </header>
 
                 <div className="provents-calendar__legend">
+                  <button
+                    type="button"
+                    className={`provents-calendar__legend-item provents-calendar__legend-item--all ${isAllStatusesVisible ? '' : 'provents-calendar__legend-item--inactive'}`.trim()}
+                    onClick={enableAllStatuses}
+                  >
+                    {t('common.all', { defaultValue: 'All' })}
+                  </button>
                   <button
                     type="button"
                     className={`provents-calendar__legend-item provents-calendar__legend-item--paid ${visibleStatuses.paid ? '' : 'provents-calendar__legend-item--inactive'}`.trim()}
@@ -599,33 +1068,53 @@ const DividendsPage = () => {
                   {calendarCells.map((cell, index) => (
                     <article
                       key={`${cell.date || 'empty'}-${index}`}
-                      className={`provents-calendar__cell ${cell.date ? '' : 'provents-calendar__cell--placeholder'}`.trim()}
+                      className={`provents-calendar__cell ${cell.date ? '' : 'provents-calendar__cell--placeholder'} ${cell.date && selectedCalendarDate === cell.date ? 'provents-calendar__cell--selected' : ''}`.trim()}
+                      onClick={() => {
+                        if (cell.date) selectCalendarDay(cell.date);
+                      }}
                     >
                       {cell.day ? (
                         <>
                           <header className="provents-calendar__cell-header">
-                            <span className="provents-calendar__cell-day">{cell.day}</span>
+                            <button
+                              type="button"
+                              className={`provents-calendar__cell-day ${cell.date && selectedCalendarDate === cell.date ? 'provents-calendar__cell-day--selected' : ''}`.trim()}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                if (cell.date) selectCalendarDay(cell.date);
+                              }}
+                            >
+                              {cell.day}
+                            </button>
                           </header>
                           <div className="provents-calendar__cell-events">
                             {(cell.date && expandedDates[cell.date] ? cell.events : cell.events.slice(0, 3)).map((entry, eventIndex) => (
-                              <div
+                              <button
+                                type="button"
                                 key={`${cell.date}-${entry.ticker}-${entry.eventType}-${eventIndex}`}
-                                className={`provents-calendar__event provents-calendar__event--${entry.status}`}
-                                title={`${entry.ticker} ${entry.eventType}`}
+                                className={`provents-calendar__event provents-calendar__event--${entry.status} ${selectedCalendarEventId === entry.id ? 'provents-calendar__event--selected' : ''}`.trim()}
+                                title={`${entry.ticker} ${entry.eventType} - ${entry.eventDate}`}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  if (cell.date) selectCalendarEvent(cell.date, entry.id);
+                                }}
                               >
                                 <span className="provents-calendar__event-ticker">{entry.ticker}</span>
-                                {entry.amount !== null && (
+                                {entry.amountPerUnit !== null && (
                                   <span className="provents-calendar__event-amount">
-                                    {formatCurrency(entry.amount, 'BRL', numberLocale)}
+                                    {formatCurrency(entry.amountPerUnit, 'BRL', numberLocale)}
                                   </span>
                                 )}
-                              </div>
+                              </button>
                             ))}
                             {cell.events.length > 3 && (
                               <button
                                 type="button"
                                 className="provents-calendar__more"
-                                onClick={() => cell.date && toggleDateExpansion(cell.date)}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  if (cell.date) toggleDateExpansion(cell.date);
+                                }}
                               >
                                 {cell.date && expandedDates[cell.date]
                                   ? t('common.showLess', { defaultValue: 'Show less' })
@@ -642,41 +1131,121 @@ const DividendsPage = () => {
 
               <section className="dividends-card dividends-card--wide">
                 <header className="dividends-card__header">
-                  <h2>{t('dividends.calendar', { defaultValue: 'Upcoming Payments' })}</h2>
+                  <div className="dividends-card__header-copy">
+                    <h2>{t('dividends.paymentsListTitle', { defaultValue: 'Payment Details' })}</h2>
+                    <p className="dividends-card__subtitle">{paymentsScopeLabel}</p>
+                  </div>
                 </header>
-                {upcomingEvents.length === 0 ? (
-                  <p className="dividends-card__empty">{t('dividends.noUpcoming', { defaultValue: 'No upcoming dividend events.' })}</p>
+                {listMonthEvents.length === 0 ? (
+                  <p className="dividends-card__empty">{t('dividends.noUpcoming', { defaultValue: 'No dividend events for selected filters.' })}</p>
                 ) : (
                   <div className="dividends-list">
-                    {upcomingEvents.slice(0, 30).map((event) => (
-                      <article
-                        key={`${event.ticker || 'asset'}-${event.eventDate || 'date'}-${event.eventType || 'type'}-${JSON.stringify(event.details || '')}`}
-                        className="dividends-list__item"
-                      >
-                        <div className="dividends-list__row">
-                          <Link
-                            to={event.assetId
-                              ? `/assets/${encodeURIComponent(event.assetId)}?portfolioId=${encodeURIComponent(selectedPortfolio)}`
-                              : `/assets?portfolioId=${encodeURIComponent(selectedPortfolio)}&ticker=${encodeURIComponent(event.ticker || '')}`}
-                            className="dividends-list__ticker dividends-list__ticker--link"
-                          >
-                            {event.ticker || '-'}
-                          </Link>
-                          <div className="dividends-list__meta">
-                            <span className="dividends-list__date">
-                              {event.eventDate ? formatDate(event.eventDate, numberLocale) : '-'}
-                            </span>
-                            <span className="dividends-list__amount">
-                              {t('dividends.perUnit', { defaultValue: 'Per unit:' })} {event.amountPerUnit !== null ? formatCurrency(event.amountPerUnit, 'BRL', numberLocale) : '-'}
-                            </span>
-                            <span className="dividends-list__expected">
-                              {t('dividends.youReceive', { defaultValue: 'You receive:' })} {event.expectedTotal !== null ? formatCurrency(event.expectedTotal, 'BRL', numberLocale) : '-'}
-                            </span>
+                    {listMonthEvents.slice(0, 60).map((event) => {
+                      const tickerInsight = tickerInsightByTicker.get(event.ticker);
+                      return (
+                        <article
+                          key={event.id}
+                          className="dividends-list__item"
+                        >
+                          <div className="dividends-list__row">
+                            <Link
+                              to={event.assetId
+                                ? `/assets/${encodeURIComponent(event.assetId)}?portfolioId=${encodeURIComponent(selectedPortfolio)}`
+                                : `/assets?portfolioId=${encodeURIComponent(selectedPortfolio)}&ticker=${encodeURIComponent(event.ticker)}`}
+                              className="dividends-list__ticker dividends-list__ticker--link"
+                            >
+                              {event.ticker}
+                            </Link>
+                            <div className="dividends-list__meta">
+                              <span className="dividends-list__date">
+                                {formatDate(event.eventDate, numberLocale)}
+                              </span>
+                              <span className={`dividends-list__status dividends-list__status--${event.status}`}>
+                                {event.status === 'paid'
+                                  ? t('dividends.calendarStatus.paid')
+                                  : t('dividends.calendarStatus.provisioned')}
+                              </span>
+                              <span className={`dividends-list__category dividends-list__category--${event.category}`}>
+                                {t(`dividends.categories.${event.category}`)}
+                              </span>
+                              {event.hasRevision && (
+                                <span className="dividends-list__revision">
+                                  {t('dividends.revision')}
+                                </span>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                        <div className="dividends-list__type">{String(event.eventType || '-').replace(/_/g, ' ')}</div>
-                      </article>
-                    ))}
+
+                          <div className="dividends-list__groups">
+                            <section className="dividends-list__group">
+                              <h3 className="dividends-list__group-title">{t('dividends.groups.event')}</h3>
+                              <div className="dividends-list__group-items">
+                                <div className="dividends-list__kv"><span>{t('dividends.paymentDate')}</span><strong>{formatDate(event.eventDate, numberLocale)}</strong></div>
+                                <div className="dividends-list__kv"><span>{t('dividends.exDate')}</span><strong>{event.exDate ? formatDate(event.exDate, numberLocale) : '-'}</strong></div>
+                                <div className="dividends-list__kv"><span>{t('dividends.recordDate')}</span><strong>{event.recordDate ? formatDate(event.recordDate, numberLocale) : '-'}</strong></div>
+                                <div className="dividends-list__kv"><span>{t('dividends.announcementDate')}</span><strong>{event.announcementDate ? formatDate(event.announcementDate, numberLocale) : '-'}</strong></div>
+                                <div className="dividends-list__kv"><span>{t('dividends.type')}</span><strong>{event.eventType || t(`dividends.categories.${event.category}`)}</strong></div>
+                              </div>
+                            </section>
+
+                            <section className="dividends-list__group">
+                              <h3 className="dividends-list__group-title">{t('dividends.groups.cashYield')}</h3>
+                              <div className="dividends-list__group-items">
+                                <div className="dividends-list__kv"><span>{t('dividends.perUnit')}</span><strong>{event.amountPerUnit !== null ? formatCurrency(event.amountPerUnit, 'BRL', numberLocale) : '-'}</strong></div>
+                                <div className="dividends-list__kv"><span>{t('dividends.quantity')}</span><strong>{event.quantity !== null ? event.quantity.toLocaleString(numberLocale) : '-'}</strong></div>
+                                <div className="dividends-list__kv"><span>{t('dividends.grossReceive')}</span><strong>{event.expectedGross !== null ? formatCurrency(event.expectedGross, 'BRL', numberLocale) : '-'}</strong></div>
+                                <div className="dividends-list__kv"><span>{t('dividends.netReceive')}</span><strong>{event.expectedNet !== null ? formatCurrency(event.expectedNet, 'BRL', numberLocale) : '-'}</strong></div>
+                                <div className="dividends-list__kv"><span>{t('dividends.yieldCurrentEvent')}</span><strong>{formatPercent(event.yieldCurrentPct, numberLocale)}</strong></div>
+                                <div className="dividends-list__kv"><span>{t('dividends.yieldOnCostEvent')}</span><strong>{formatPercent(event.yieldOnCostPct, numberLocale)}</strong></div>
+                              </div>
+                            </section>
+
+                            <section className="dividends-list__group">
+                              <h3 className="dividends-list__group-title">{t('dividends.groups.ticker12m')}</h3>
+                              <div className="dividends-list__group-items">
+                                <div className="dividends-list__kv"><span>{t('dividends.frequency')}</span><strong>{tickerInsight ? t(tickerInsight.frequencyKey) : '-'}</strong></div>
+                                <div className="dividends-list__kv"><span>{t('dividends.gross12m')}</span><strong>{tickerInsight ? formatCurrency(tickerInsight.totalGross12m, 'BRL', numberLocale) : '-'}</strong></div>
+                                <div className="dividends-list__kv"><span>{t('dividends.events12m')}</span><strong>{tickerInsight ? tickerInsight.paidCount12m.toLocaleString(numberLocale) : '-'}</strong></div>
+                                <div className="dividends-list__kv"><span>{t('dividends.yieldCurrent12m')}</span><strong>{tickerInsight ? formatPercent(tickerInsight.yieldCurrent12mPct, numberLocale) : '-'}</strong></div>
+                                <div className="dividends-list__kv"><span>{t('dividends.yieldCost12m')}</span><strong>{tickerInsight ? formatPercent(tickerInsight.yieldOnCost12mPct, numberLocale) : '-'}</strong></div>
+                                <div className="dividends-list__kv"><span>{t('dividends.nextPayment')}</span><strong>{tickerInsight?.nextPaymentDate ? formatDate(tickerInsight.nextPaymentDate, numberLocale) : '-'}</strong></div>
+                                <div className="dividends-list__kv"><span>{t('dividends.latestAnnouncement')}</span><strong>{tickerInsight?.latestAnnouncementDate ? formatDate(tickerInsight.latestAnnouncementDate, numberLocale) : '-'}</strong></div>
+                                <div className="dividends-list__kv"><span>{t('dividends.revisions')}</span><strong>{tickerInsight ? (tickerInsight.hasRevisions ? t('common.yes') : t('common.no')) : '-'}</strong></div>
+                              </div>
+                            </section>
+
+                            <section className="dividends-list__group">
+                              <h3 className="dividends-list__group-title">{t('dividends.groups.sourceQuality')}</h3>
+                              <div className="dividends-list__group-items">
+                                <div className="dividends-list__kv">
+                                  <span>{t('dividends.source')}</span>
+                                  <strong>
+                                    {event.sourceUrl ? (
+                                      <a href={event.sourceUrl} target="_blank" rel="noreferrer" className="dividends-list__source-link">
+                                        {formatSource(event.source)}
+                                      </a>
+                                    ) : (
+                                      formatSource(event.source)
+                                    )}
+                                  </strong>
+                                </div>
+                                <div className="dividends-list__kv"><span>{t('dividends.valueSource')}</span><strong>{formatSource(event.valueSource)}</strong></div>
+                                <div className="dividends-list__kv"><span>{t('dividends.revision')}</span><strong>{event.hasRevision ? t('common.yes') : t('common.no')}</strong></div>
+                              </div>
+                              {event.taxHintKey && (
+                                <div className="dividends-list__hint">
+                                  {t(event.taxHintKey)}
+                                  {event.netIsEstimated ? ` ${t('dividends.estimated')}` : ''}
+                                </div>
+                              )}
+                              {event.hasRevision && event.revisionNoteKey && (
+                                <div className="dividends-list__hint">{t(event.revisionNoteKey)}</div>
+                              )}
+                            </section>
+                          </div>
+                        </article>
+                      );
+                    })}
                   </div>
                 )}
               </section>

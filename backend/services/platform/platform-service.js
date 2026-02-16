@@ -701,8 +701,8 @@ class PlatformService {
 		const realizedYield = costTotalBrl > 0 ? (totalInPeriod / costTotalBrl) * 100 : 0;
 		const currentDividendYield = currentValueBrl > 0 ? (totalInPeriod / currentValueBrl) * 100 : 0;
 
-		const calendarByTicker = await Promise.all(
-			Array.from(activeIncomeTickers).map(async (ticker) => {
+			const calendarByTicker = await Promise.all(
+				Array.from(activeIncomeTickers).map(async (ticker) => {
 				const events = await this.#queryAll({
 					TableName: this.tableName,
 					KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
@@ -711,23 +711,120 @@ class PlatformService {
 						':sk': 'DATE#',
 					},
 				});
-				return events
-					.filter((event) => this.#isDividendEventType(event.eventType))
-					.map((event) => ({
+					return events
+						.filter((event) => this.#isDividendEventType(event.eventType))
+						.map((event) => ({
+							...event,
+							ticker: String(event.ticker || ticker).toUpperCase(),
+							eventDate: normalizeDate(event.eventDate || event.date) || normalizeDate(event.fetched_at) || null,
+						}));
+				})
+			);
+			const classifyDividendFamily = (eventType) => {
+				const normalizedType = String(eventType || '').toLowerCase();
+				if (normalizedType.includes('jcp') || normalizedType.includes('juros')) return 'jcp';
+				if (normalizedType.includes('amort')) return 'amortization';
+				return 'income';
+			};
+			const sourceWeight = (source) => {
+				const normalized = String(source || '').toLowerCase();
+				if (normalized.includes('statusinvest')) return 3;
+				if (normalized.includes('fundsexplorer')) return 2;
+				if (normalized) return 1;
+				return 0;
+			};
+			const readDetails = (event) => (
+				event?.details && typeof event.details === 'object' ? { ...event.details } : {}
+			);
+			const readDetailValue = (event) => toNumberOrNull(readDetails(event).value);
+			const eventQualityScore = (event) => {
+				const details = readDetails(event);
+				const value = toNumberOrNull(details.value);
+				let score = 0;
+				if (value !== null) score += value > 0 ? 200 : 90;
+				if (normalizeDate(details.paymentDate)) score += 20;
+				if (normalizeDate(details.exDate)) score += 10;
+				if (normalizeDate(details.recordDate || details.comDate || details.dataCom)) score += 6;
+				if (normalizeDate(details.announcementDate || details.declarationDate)) score += 4;
+				if (details.value_source) score += 15;
+				score += sourceWeight(event.data_source) * 20;
+				const type = String(event.eventType || '').toLowerCase();
+				if (type.includes('payment') || type.includes('dividend') || type.includes('jcp') || type.includes('rend')) {
+					score += 8;
+				}
+				return score;
+			};
+
+			const flattenedCalendars = calendarByTicker
+				.flat()
+				.filter((event) =>
+					event.eventDate
+					&& activeIncomeTickers.has(String(event.ticker || '').toUpperCase())
+				);
+			const dedupedCalendars = new Map();
+			for (const event of flattenedCalendars) {
+				const ticker = String(event.ticker || '').toUpperCase();
+				const eventDate = normalizeDate(event.eventDate || event.date);
+				if (!ticker || !eventDate) continue;
+				const key = `${ticker}|${eventDate}|${classifyDividendFamily(event.eventType)}`;
+				const existing = dedupedCalendars.get(key);
+				const eventDetails = readDetails(event);
+
+				if (!existing) {
+					const sourceCandidates = Array.from(new Set([String(event.data_source || '').trim()].filter(Boolean)));
+					dedupedCalendars.set(key, {
 						...event,
-						ticker: String(event.ticker || ticker).toUpperCase(),
-						eventDate: normalizeDate(event.eventDate || event.date) || normalizeDate(event.fetched_at) || null,
-					}));
-			})
-		);
-		const calendars = calendarByTicker
-			.flat()
-			.filter((event) =>
-				event.eventDate
-				&& activeIncomeTickers.has(String(event.ticker || '').toUpperCase())
-			)
-			.sort((left, right) => String(left.eventDate || '').localeCompare(String(right.eventDate || '')));
-		const upcoming = calendars.filter((event) => String(event.eventDate || '') >= today);
+						eventDate,
+						details: {
+							...eventDetails,
+							source_candidates: sourceCandidates,
+						},
+					});
+					continue;
+				}
+
+				const existingDetails = readDetails(existing);
+				const existingValue = readDetailValue(existing);
+				const candidateValue = readDetailValue(event);
+				const existingSources = Array.isArray(existingDetails.source_candidates)
+					? existingDetails.source_candidates.map((value) => String(value || '').trim()).filter(Boolean)
+					: [];
+				const mergedSources = Array.from(new Set([
+					...existingSources,
+					String(existing.data_source || '').trim(),
+					String(event.data_source || '').trim(),
+				].filter(Boolean)));
+
+				const existingScore = eventQualityScore(existing);
+				const candidateScore = eventQualityScore(event);
+				const selected = candidateScore > existingScore ? event : existing;
+				const selectedDetails = readDetails(selected);
+				const selectedValue = selected === event ? candidateValue : existingValue;
+				const otherValue = selected === event ? existingValue : candidateValue;
+				const valueCandidates = Array.from(new Set(
+					[selectedValue, otherValue]
+						.filter((value) => value !== null && Number.isFinite(value))
+						.map((value) => Number(value).toFixed(8))
+				));
+
+				dedupedCalendars.set(key, {
+					...selected,
+					eventDate,
+					details: {
+						...selectedDetails,
+						source_candidates: mergedSources,
+						value_candidates: valueCandidates.length > 0 ? valueCandidates : undefined,
+						revised: valueCandidates.length > 1 || mergedSources.length > 1,
+					},
+				});
+			}
+
+			const calendars = Array.from(dedupedCalendars.values())
+				.sort((left, right) =>
+					String(left.eventDate || '').localeCompare(String(right.eventDate || ''))
+					|| String(left.ticker || '').localeCompare(String(right.ticker || ''))
+				);
+			const upcoming = calendars.filter((event) => String(event.eventDate || '') >= today);
 
 		return {
 			portfolioId,
@@ -2218,7 +2315,9 @@ class PlatformService {
 			details: {
 				ticker: normalizedTicker,
 				exDate: row.exDate || null,
-				paymentDate: row.eventDate,
+				recordDate: row.recordDate || null,
+				announcementDate: row.announcementDate || null,
+				paymentDate: row.paymentDate || row.eventDate,
 				value: row.value ?? null,
 				valueText: row.valueText || null,
 				rawType: row.type || null,
@@ -2356,6 +2455,10 @@ class PlatformService {
 				targetDetails.value_source = extra.data_source || target.data_source;
 			}
 			if (!targetDetails.exDate && extraDetails.exDate) targetDetails.exDate = extraDetails.exDate;
+			if (!targetDetails.recordDate && extraDetails.recordDate) targetDetails.recordDate = extraDetails.recordDate;
+			if (!targetDetails.announcementDate && extraDetails.announcementDate) {
+				targetDetails.announcementDate = extraDetails.announcementDate;
+			}
 			if (!targetDetails.paymentDate && extraDetails.paymentDate) targetDetails.paymentDate = extraDetails.paymentDate;
 			target.details = targetDetails;
 		}
@@ -2379,18 +2482,41 @@ class PlatformService {
 			}
 			if (cells.length < 3) continue;
 
-			const dateMatches = cells
-				.map((cell) => cell.match(/\b\d{2}\/\d{2}\/\d{4}\b/)?.[0] || null)
-				.filter(Boolean);
-			if (dateMatches.length < 2) continue;
+				const dateMatches = cells
+					.map((cell) => cell.match(/\b\d{2}\/\d{2}\/\d{4}\b/)?.[0] || null)
+					.filter(Boolean);
+				if (dateMatches.length < 2) continue;
 
-			const exDate = normalizeDate(dateMatches[0]);
-			const eventDate = normalizeDate(dateMatches[1]) || exDate;
-			if (!eventDate) continue;
+				const findDateByKeyword = (keywords) => {
+					const loweredKeywords = Array.isArray(keywords) ? keywords : [];
+					for (const cell of cells) {
+						const lowered = String(cell || '').toLowerCase();
+						if (!loweredKeywords.some((keyword) => lowered.includes(keyword))) continue;
+						const matched = lowered.match(/\b\d{2}\/\d{2}\/\d{4}\b/)?.[0];
+						if (matched) return normalizeDate(matched);
+					}
+					return null;
+				};
 
-			const valueText =
-				cells.find(
-					(cell) =>
+				const exDate =
+					findDateByKeyword(['ex', 'base'])
+					|| normalizeDate(dateMatches[0]);
+				const recordDate =
+					findDateByKeyword(['record', 'com', 'data com'])
+					|| null;
+				const announcementDate =
+					findDateByKeyword(['anunc', 'declar', 'aprova'])
+					|| null;
+				const paymentDate =
+					findDateByKeyword(['pag', 'payment', 'credito'])
+					|| normalizeDate(dateMatches[dateMatches.length - 1])
+					|| exDate;
+				const eventDate = paymentDate || exDate;
+				if (!eventDate) continue;
+
+				const valueText =
+					cells.find(
+						(cell) =>
 						(/[R$]|\d+[.,]\d+/.test(cell))
 						&& !/\b\d{2}\/\d{2}\/\d{4}\b/.test(cell)
 				) || null;
@@ -2402,23 +2528,30 @@ class PlatformService {
 						.replace(',', '.')
 				)
 				: null;
-			const type = cells[0] || 'Dividend';
-			const normalizedType = String(type).toLowerCase();
-			const eventType =
-				normalizedType.includes('jcp') || normalizedType.includes('juros')
-					? 'jcp'
-					: 'dividend';
+				const type = cells[0] || 'Dividend';
+				const normalizedType = String(type).toLowerCase();
+				const eventType =
+					normalizedType.includes('jcp') || normalizedType.includes('juros')
+						? 'jcp'
+						: normalizedType.includes('amort')
+							? 'amortization'
+							: normalizedType.includes('rend')
+								? 'rendimento'
+						: 'dividend';
 
 			if (!valueText && !/divid|rend|juro|provent|amort/i.test(cells.join(' '))) continue;
 
-			parsed.push({
-				type,
-				eventType,
-				exDate,
-				eventDate,
-				value,
-				valueText,
-			});
+				parsed.push({
+					type,
+					eventType,
+					exDate,
+					recordDate,
+					announcementDate,
+					paymentDate,
+					eventDate,
+					value,
+					valueText,
+				});
 		}
 
 		const dedupe = new Map();
@@ -2518,7 +2651,8 @@ class PlatformService {
 			|| type.includes('provento')
 			|| type.includes('jcp')
 			|| type.includes('juros')
-			|| type.includes('rendimento');
+			|| type.includes('rendimento')
+			|| type.includes('amort');
 	}
 
 	async #resolveAssetsForTickerOrPortfolio(ticker, portfolioId) {
