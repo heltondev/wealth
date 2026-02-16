@@ -1175,28 +1175,66 @@ class PlatformService {
 
 		const portfolioId = await this.#resolvePortfolioId(userId, options.portfolioId);
 		const assets = await this.#listPortfolioAssets(portfolioId);
-		const assetById = new Map(assets.map((asset) => [String(asset.assetId || ''), asset]));
+		const activeAssets = assets.filter((asset) =>
+			String(asset.status || 'active').toLowerCase() === 'active'
+		);
+		const assetById = new Map(activeAssets.map((asset) => [String(asset.assetId || ''), asset]));
 		const assetIdByTicker = new Map(
-			assets.map((asset) => [String(asset.ticker || '').toUpperCase(), String(asset.assetId || '')])
+			activeAssets.map((asset) => [String(asset.ticker || '').toUpperCase(), String(asset.assetId || '')])
 		);
 		const metrics = await this.priceHistoryService.getPortfolioMetrics(userId, {
 			portfolioId,
 			method: options.method || 'fifo',
 		});
+		const fxRates = await this.#getLatestFxMap();
+		const metricsByAssetId = new Map(
+			(metrics.assets || [])
+				.filter((metric) => assetById.has(String(metric.assetId || '')))
+				.map((metric) => [String(metric.assetId || ''), metric])
+		);
 
 		const currentByClass = {};
 		const currentByAsset = {};
 		const assetByClass = {};
-		for (const metric of metrics.assets) {
-			const assetId = String(metric.assetId || '');
+		for (const asset of activeAssets) {
+			const assetId = String(asset.assetId || '');
 			if (!assetId) continue;
-			const asset = assetById.get(assetId) || {};
+			const metric = metricsByAssetId.get(assetId) || {};
+			const currency = String(metric.currency || asset.currency || 'BRL').toUpperCase();
+			const fxRate = currency === 'BRL' ? 1 : numeric(fxRates[`${currency}/BRL`], 0);
+			const metricMarketValue = toNumberOrNull(metric.market_value);
+			const metricQuantity = toNumberOrNull(metric.quantity_current);
+			const metricCurrentPrice = toNumberOrNull(metric.current_price);
+			const snapshotCurrentValue = toNumberOrNull(asset.currentValue);
+			const snapshotCurrentPrice = toNumberOrNull(asset.currentPrice);
+			const hasOpenQuantity =
+				metricQuantity !== null && Math.abs(metricQuantity) > Number.EPSILON;
+			const usableMetricMarketValue =
+				metricMarketValue !== null &&
+				(!hasOpenQuantity || Math.abs(metricMarketValue) > Number.EPSILON)
+					? metricMarketValue
+					: null;
+			const fallbackPrice = metricCurrentPrice ?? snapshotCurrentPrice;
+			const derivedMarketValue =
+				(fallbackPrice !== null && metricQuantity !== null)
+					? fallbackPrice * metricQuantity
+					: null;
+			const marketValue =
+				usableMetricMarketValue ??
+				snapshotCurrentValue ??
+				derivedMarketValue ??
+				0;
+			const marketValueBrl = fxRate > 0 ? marketValue * fxRate : marketValue;
 			const assetClass = String(asset.assetClass || 'unknown').toLowerCase();
-			const marketValue = numeric(metric.market_value, 0);
-			currentByClass[assetClass] = (currentByClass[assetClass] || 0) + marketValue;
-			currentByAsset[assetId] = marketValue;
+			currentByClass[assetClass] = (currentByClass[assetClass] || 0) + marketValueBrl;
+			currentByAsset[assetId] = marketValueBrl;
 			if (!assetByClass[assetClass]) assetByClass[assetClass] = [];
-			assetByClass[assetClass].push({ asset, metric, assetId });
+			assetByClass[assetClass].push({
+				asset,
+				metric,
+				assetId,
+				market_value_brl: marketValueBrl,
+			});
 		}
 
 		const targets = await this.#queryAll({
@@ -1235,7 +1273,7 @@ class PlatformService {
 			currentByScope = currentByAsset;
 			if (Object.keys(targetByScope).length === 0) {
 				const assetsWithValue = Object.entries(currentByAsset)
-					.filter(([, value]) => numeric(value, 0) > 0)
+					.filter(([, value]) => Math.abs(numeric(value, 0)) > Number.EPSILON)
 					.map(([assetId]) => assetId);
 				const base = assetsWithValue.length > 0
 					? assetsWithValue
@@ -1247,7 +1285,9 @@ class PlatformService {
 			targetByScope = { ...targetByClass };
 			currentByScope = currentByClass;
 			if (Object.keys(targetByScope).length === 0) {
-				const classes = Object.keys(currentByClass);
+				const classes = Object.entries(currentByClass)
+					.filter(([, value]) => Math.abs(numeric(value, 0)) > Number.EPSILON)
+					.map(([cls]) => cls);
 				const equalWeight = classes.length ? 1 / classes.length : 0;
 				for (const cls of classes) targetByScope[cls] = equalWeight;
 			}
@@ -1322,7 +1362,7 @@ class PlatformService {
 			const cls = key;
 			const bucket = assetByClass[cls] || [];
 			const selected = bucket
-				.sort((left, right) => numeric(right.metric.market_value, 0) - numeric(left.metric.market_value, 0))[0];
+				.sort((left, right) => numeric(right.market_value_brl, 0) - numeric(left.market_value_brl, 0))[0];
 			suggestions.push({
 				scope: 'assetClass',
 				assetClass: cls,
