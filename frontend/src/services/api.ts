@@ -282,6 +282,78 @@ export interface BenchmarksResponse {
   fetched_at: string;
 }
 
+export interface MultiCurrencyPortfolioSummary {
+  start_value_brl: number;
+  end_value_brl: number;
+  start_value_original_brl: number;
+  end_value_original_brl: number;
+  return_brl_pct: number;
+  return_original_pct: number;
+  fx_impact_pct: number;
+  fx_impact_brl: number;
+  foreign_exposure_pct: number;
+}
+
+export interface MultiCurrencyEvolutionPoint {
+  date: string;
+  value_brl: number;
+  value_original_brl: number;
+  fx_impact_brl: number;
+}
+
+export interface MultiCurrencyByCurrencyItem {
+  currency: string;
+  start_value_brl: number;
+  end_value_brl: number;
+  start_value_original_brl: number;
+  end_value_original_brl: number;
+  fx_start: number;
+  fx_current: number;
+  weight_pct: number;
+  return_brl_pct: number;
+  return_original_pct: number;
+  fx_impact_pct: number;
+  fx_impact_brl: number;
+}
+
+export interface MultiCurrencyByAssetItem {
+  assetId: string;
+  ticker: string;
+  name: string;
+  asset_class: string;
+  currency: string;
+  quantity: number;
+  fx_start: number;
+  fx_current: number;
+  start_value_native: number;
+  end_value_native: number;
+  start_value_brl: number;
+  end_value_brl: number;
+  start_value_original_brl: number;
+  end_value_original_brl: number;
+  return_brl_pct: number;
+  return_original_pct: number;
+  fx_impact_pct: number;
+  fx_impact_brl: number;
+}
+
+export interface MultiCurrencyResponse {
+  portfolioId: string;
+  period: string;
+  from: string;
+  to: string;
+  portfolio: MultiCurrencyPortfolioSummary;
+  evolution: MultiCurrencyEvolutionPoint[];
+  by_currency: MultiCurrencyByCurrencyItem[];
+  by_asset: MultiCurrencyByAssetItem[];
+  fx_rates: {
+    latest: Record<string, number>;
+    start: Record<string, number>;
+    end: Record<string, number>;
+  };
+  fetched_at: string;
+}
+
 export interface RiskResponse {
   portfolioId: string;
   concentration: RiskConcentrationItem[];
@@ -457,6 +529,10 @@ export const api = {
   },
   getBenchmarks: (portfolioId: string, benchmark = 'IBOV', period = '1A') =>
     request<BenchmarksResponse>(`/portfolios/${portfolioId}/benchmarks?benchmark=${encodeURIComponent(benchmark)}&period=${encodeURIComponent(period)}`),
+  getMultiCurrency: (portfolioId: string, period = '1Y', method = 'fifo') =>
+    request<MultiCurrencyResponse>(
+      `/portfolios/${portfolioId}/multi-currency?period=${encodeURIComponent(period)}&method=${encodeURIComponent(method)}`
+    ),
 
   // Contributions
   createContribution: (portfolioId: string, data: ContributionPayload) =>

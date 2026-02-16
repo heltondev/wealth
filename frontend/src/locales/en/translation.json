@@ -7,6 +7,7 @@
     "rebalance": "Rebalance",
     "risk": "Risk",
     "benchmarks": "Benchmarks",
+    "multiCurrency": "Multi-currency",
     "tax": "Tax",
     "platform": "Platform",
     "documents": "Documents",
@@ -308,6 +309,50 @@
       "IFIX": "IFIX",
       "POUPANCA": "Savings",
       "TSX": "TSX"
+    },
+    "periods": {
+      "1M": "1M",
+      "3M": "3M",
+      "6M": "6M",
+      "1Y": "1Y",
+      "2Y": "2Y",
+      "5Y": "5Y",
+      "MAX": "MAX"
+    }
+  },
+  "multiCurrency": {
+    "title": "Multi-currency Intelligence",
+    "selectPortfolio": "Select portfolio",
+    "selectPeriod": "Select period",
+    "loadError": "Failed to load multi-currency analytics.",
+    "noSeries": "No data available for this section.",
+    "kpis": {
+      "returnBrl": "Return in BRL",
+      "returnOriginal": "Return in Original Currency",
+      "fxImpact": "Isolated FX Impact",
+      "foreignExposure": "Foreign Exposure",
+      "range": "Range"
+    },
+    "sections": {
+      "evolution": "Portfolio Evolution: BRL vs Original Currency",
+      "currencyFxImpact": "FX Impact by Currency",
+      "currencyReturns": "Return by Currency",
+      "assets": "FX Impact by Asset"
+    },
+    "series": {
+      "valueBrl": "Portfolio Value (BRL)",
+      "valueOriginal": "Portfolio Value (Original Currency)"
+    },
+    "table": {
+      "asset": "Asset",
+      "class": "Class",
+      "currency": "Currency",
+      "endValueNative": "Current Value (Native)",
+      "endValueBrl": "Current Value (BRL)",
+      "returnOriginal": "Return (Original)",
+      "returnBrl": "Return (BRL)",
+      "fxImpactBrl": "FX Impact (BRL)",
+      "fxImpactPct": "FX Impact %"
     },
     "periods": {
       "1M": "1M",

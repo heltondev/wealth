@@ -7,6 +7,7 @@
     "rebalance": "Rebalanceamento",
     "risk": "Risco",
     "benchmarks": "Benchmarks",
+    "multiCurrency": "Multi-moeda",
     "tax": "Imposto",
     "platform": "Plataforma",
     "documents": "Documentos",
@@ -308,6 +309,50 @@
       "IFIX": "IFIX",
       "POUPANCA": "Poupança",
       "TSX": "TSX"
+    },
+    "periods": {
+      "1M": "1M",
+      "3M": "3M",
+      "6M": "6M",
+      "1Y": "1A",
+      "2Y": "2A",
+      "5Y": "5A",
+      "MAX": "MAX"
+    }
+  },
+  "multiCurrency": {
+    "title": "Inteligência Multi-moeda",
+    "selectPortfolio": "Selecionar portfólio",
+    "selectPeriod": "Selecionar período",
+    "loadError": "Falha ao carregar analytics multi-moeda.",
+    "noSeries": "Sem dados para esta seção.",
+    "kpis": {
+      "returnBrl": "Rentabilidade em BRL",
+      "returnOriginal": "Rentabilidade na Moeda Original",
+      "fxImpact": "Impacto Cambial Isolado",
+      "foreignExposure": "Exposição Internacional",
+      "range": "Intervalo"
+    },
+    "sections": {
+      "evolution": "Evolução da Carteira: BRL vs Moeda Original",
+      "currencyFxImpact": "Impacto Cambial por Moeda",
+      "currencyReturns": "Rentabilidade por Moeda",
+      "assets": "Impacto Cambial por Ativo"
+    },
+    "series": {
+      "valueBrl": "Valor da Carteira (BRL)",
+      "valueOriginal": "Valor da Carteira (Moeda Original)"
+    },
+    "table": {
+      "asset": "Ativo",
+      "class": "Classe",
+      "currency": "Moeda",
+      "endValueNative": "Valor Atual (Moeda)",
+      "endValueBrl": "Valor Atual (BRL)",
+      "returnOriginal": "Retorno (Moeda)",
+      "returnBrl": "Retorno (BRL)",
+      "fxImpactBrl": "Impacto Cambial (BRL)",
+      "fxImpactPct": "Impacto Cambial %"
     },
     "periods": {
       "1M": "1M",

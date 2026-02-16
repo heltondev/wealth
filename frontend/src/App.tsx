@@ -12,6 +12,7 @@ const DividendsPage = lazy(() => import('./pages/DividendsPage'));
 const RebalancePage = lazy(() => import('./pages/RebalancePage'));
 const RiskPage = lazy(() => import('./pages/RiskPage'));
 const BenchmarksPage = lazy(() => import('./pages/BenchmarksPage'));
+const MultiCurrencyPage = lazy(() => import('./pages/MultiCurrencyPage'));
 const TaxPage = lazy(() => import('./pages/TaxPage'));
 const DocumentsPage = lazy(() => import('./pages/DocumentsPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
@@ -96,6 +97,16 @@ function App() {
             <Suspense fallback={routeFallback}>
               <ProtectedRoute allowedRoles={ALL_ROLES}>
                 <BenchmarksPage />
+              </ProtectedRoute>
+            </Suspense>
+          }
+        />
+        <Route
+          path="/multi-currency"
+          element={
+            <Suspense fallback={routeFallback}>
+              <ProtectedRoute allowedRoles={ALL_ROLES}>
+                <MultiCurrencyPage />
               </ProtectedRoute>
             </Suspense>
           }

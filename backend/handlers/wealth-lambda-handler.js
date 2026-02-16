@@ -965,6 +965,15 @@ async function handleBenchmarks(method, portfolioId, userId, query = {}) {
 	return platformService.getBenchmarkComparison(userId, benchmark, period, { portfolioId });
 }
 
+async function handleMultiCurrency(method, portfolioId, userId, query = {}) {
+	if (method !== 'GET') throw errorResponse(405, 'Method not allowed');
+	const period = query.period || '1Y';
+	return platformService.getMultiCurrencyAnalytics(userId, period, {
+		portfolioId,
+		method: query.method || 'fifo',
+	});
+}
+
 async function handleContributions(method, portfolioId, userId, body) {
 	if (method === 'POST') {
 		return platformService.recordContribution(userId, parseBody(body), { portfolioId });
@@ -1254,6 +1263,8 @@ exports.handler = async (event) => {
 				body = await handleRisk(httpMethod, id, userId, queryStringParameters || {});
 			} else if (subResource === 'benchmarks') {
 				body = await handleBenchmarks(httpMethod, id, userId, queryStringParameters || {});
+			} else if (subResource === 'multi-currency') {
+				body = await handleMultiCurrency(httpMethod, id, userId, queryStringParameters || {});
 			} else if (subResource === 'contributions') {
 				body = await handleContributions(httpMethod, id, userId, requestBody);
 			} else if (subResource === 'transactions') {

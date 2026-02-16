@@ -2202,6 +2202,347 @@ class PlatformService {
 		};
 	}
 
+	async getMultiCurrencyAnalytics(userId, period = '1Y', options = {}) {
+		const portfolioId = await this.#resolvePortfolioId(userId, options.portfolioId);
+		const assets = await this.#listPortfolioAssets(portfolioId);
+		const activeAssets = assets.filter((asset) =>
+			String(asset.status || 'active').toLowerCase() === 'active'
+		);
+		const latestFxMap = await this.#getLatestFxMap();
+		const periodKey = String(period || '1Y').toUpperCase();
+		const periodDays = Object.prototype.hasOwnProperty.call(PERIOD_TO_DAYS, periodKey)
+			? PERIOD_TO_DAYS[periodKey]
+			: PERIOD_TO_DAYS['1Y'];
+		const today = nowIso().slice(0, 10);
+
+		const normalizedAssets = activeAssets
+			.map((asset) => {
+				const ticker = String(asset.ticker || '').toUpperCase();
+				const currency = String(asset.currency || 'BRL').toUpperCase();
+				const quantity = toNumberOrNull(asset.quantity) ?? 0;
+				const snapshotCurrentPrice = toNumberOrNull(asset.currentPrice);
+				const fallbackPrice = snapshotCurrentPrice;
+				const snapshotCurrentValue = toNumberOrNull(asset.currentValue);
+				const derivedMarketValue =
+					(fallbackPrice !== null && Number.isFinite(quantity))
+						? fallbackPrice * quantity
+						: null;
+				const marketValueNative =
+					snapshotCurrentValue ??
+					derivedMarketValue ??
+					0;
+				const hasExposure =
+					Math.abs(quantity) > Number.EPSILON
+					|| Math.abs(marketValueNative) > Number.EPSILON;
+				if (!hasExposure) return null;
+
+				return {
+					assetId: asset.assetId,
+					ticker,
+					name: String(asset.name || '').trim() || ticker,
+					assetClass: String(asset.assetClass || 'unknown').toLowerCase(),
+					currency,
+					quantity,
+					marketValueNative,
+					fallbackPrice,
+				};
+			})
+			.filter(Boolean);
+
+		if (normalizedAssets.length === 0) {
+			return {
+				portfolioId,
+				period: periodKey,
+				from: today,
+				to: today,
+				portfolio: {
+					start_value_brl: 0,
+					end_value_brl: 0,
+					start_value_original_brl: 0,
+					end_value_original_brl: 0,
+					return_brl_pct: 0,
+					return_original_pct: 0,
+					fx_impact_pct: 0,
+					fx_impact_brl: 0,
+					foreign_exposure_pct: 0,
+				},
+				evolution: [{ date: today, value_brl: 0, value_original_brl: 0, fx_impact_brl: 0 }],
+				by_currency: [],
+				by_asset: [],
+				fx_rates: {
+					latest: latestFxMap,
+					start: { BRL: 1 },
+					end: { BRL: 1 },
+				},
+				fetched_at: nowIso(),
+			};
+		}
+
+		const priceRowsByAssetId = new Map(
+			await Promise.all(
+				normalizedAssets.map(async (asset) => [
+					asset.assetId,
+					await this.#listAssetPriceRows(portfolioId, asset.assetId),
+				])
+			)
+		);
+
+		const allDates = new Set();
+		for (const rows of priceRowsByAssetId.values()) {
+			for (const row of rows) {
+				if (row?.date) allDates.add(row.date);
+			}
+		}
+		let dates = Array.from(allDates).sort();
+		if (Number.isFinite(periodDays) && periodDays !== null && periodDays > 0 && dates.length > 0) {
+			const latestDate = dates[dates.length - 1];
+			const cutoffDate = addDays(latestDate, -(periodDays - 1));
+			dates = dates.filter((date) => date >= cutoffDate);
+		}
+		if (dates.length === 0) dates = [today];
+		if (dates[dates.length - 1] !== today) dates.push(today);
+		const fromDate = dates[0];
+		const toDate = dates[dates.length - 1];
+
+		const currencies = Array.from(
+			new Set(normalizedAssets.map((asset) => String(asset.currency || 'BRL').toUpperCase()))
+		).sort();
+		const fxRowsByCurrency = new Map(
+			await Promise.all(
+				currencies.map(async (currency) => [
+					currency,
+					await this.#listFxHistory(currency),
+				])
+			)
+		);
+
+		const startFxByCurrency = {};
+		const endFxByCurrency = {};
+		const fxTrackByCurrency = new Map();
+		for (const currency of currencies) {
+			const fallback =
+				currency === 'BRL'
+					? 1
+					: numeric(latestFxMap[`${currency}/BRL`], 0) || 1;
+			const rows = fxRowsByCurrency.get(currency) || [];
+			const startRate = this.#resolveFxRateAtDate(rows, fromDate, fallback, currency);
+			const endRate = this.#resolveFxRateAtDate(rows, toDate, fallback, currency);
+			startFxByCurrency[currency] = startRate;
+			endFxByCurrency[currency] = endRate;
+			fxTrackByCurrency.set(currency, {
+				rows,
+				index: 0,
+				lastRate: startRate,
+				fallback,
+			});
+		}
+
+		const priceTrackByAssetId = new Map();
+		for (const asset of normalizedAssets) {
+			priceTrackByAssetId.set(asset.assetId, {
+				rows: priceRowsByAssetId.get(asset.assetId) || [],
+				index: 0,
+				lastClose: null,
+			});
+		}
+
+		const byAssetState = new Map(
+			normalizedAssets.map((asset) => [
+				asset.assetId,
+				{
+					assetId: asset.assetId,
+					ticker: asset.ticker,
+					name: asset.name,
+					asset_class: asset.assetClass,
+					currency: asset.currency,
+					quantity: asset.quantity,
+					fx_start: startFxByCurrency[asset.currency] || 1,
+					fx_current: endFxByCurrency[asset.currency] || 1,
+					start_value_native: null,
+					end_value_native: null,
+					start_value_brl: null,
+					end_value_brl: null,
+					start_value_original_brl: null,
+					end_value_original_brl: null,
+				},
+			])
+		);
+
+		const evolution = [];
+		for (const [dateIndex, date] of dates.entries()) {
+			for (const tracker of fxTrackByCurrency.values()) {
+				while (tracker.index < tracker.rows.length && tracker.rows[tracker.index].date <= date) {
+					const candidate = numeric(tracker.rows[tracker.index].rate, 0);
+					if (candidate > 0) tracker.lastRate = candidate;
+					tracker.index += 1;
+				}
+			}
+
+			let valueBrl = 0;
+			let valueOriginalBrl = 0;
+			for (const asset of normalizedAssets) {
+				const tracker = priceTrackByAssetId.get(asset.assetId);
+				while (tracker.index < tracker.rows.length && tracker.rows[tracker.index].date <= date) {
+					const close = toNumberOrNull(tracker.rows[tracker.index].close);
+					if (close !== null && Math.abs(close) > Number.EPSILON) {
+						tracker.lastClose = close;
+					}
+					tracker.index += 1;
+				}
+
+				const quantity = Number.isFinite(asset.quantity) ? asset.quantity : 0;
+				const nativeValue = (
+					Math.abs(quantity) > Number.EPSILON
+					&& tracker.lastClose !== null
+					&& Math.abs(tracker.lastClose) > Number.EPSILON
+				)
+					? quantity * tracker.lastClose
+					: asset.marketValueNative;
+				const currency = asset.currency;
+				const fxStart = startFxByCurrency[currency] || 1;
+				const fxTracker = fxTrackByCurrency.get(currency);
+				const fxCurrent = currency === 'BRL'
+					? 1
+					: (fxTracker?.lastRate && fxTracker.lastRate > 0
+						? fxTracker.lastRate
+						: (fxTracker?.fallback || 1));
+				const assetValueBrl = nativeValue * fxCurrent;
+				const assetValueOriginalBrl = nativeValue * fxStart;
+
+				valueBrl += assetValueBrl;
+				valueOriginalBrl += assetValueOriginalBrl;
+
+				const snapshot = byAssetState.get(asset.assetId);
+				if (snapshot) {
+					if (dateIndex === 0) {
+						snapshot.start_value_native = nativeValue;
+						snapshot.start_value_brl = assetValueBrl;
+						snapshot.start_value_original_brl = assetValueOriginalBrl;
+					}
+					snapshot.end_value_native = nativeValue;
+					snapshot.end_value_brl = assetValueBrl;
+					snapshot.end_value_original_brl = assetValueOriginalBrl;
+					snapshot.fx_current = fxCurrent;
+				}
+			}
+
+			evolution.push({
+				date,
+				value_brl: valueBrl,
+				value_original_brl: valueOriginalBrl,
+				fx_impact_brl: valueBrl - valueOriginalBrl,
+			});
+		}
+
+		const portfolioSeriesBrl = evolution.map((row) => ({ date: row.date, value: numeric(row.value_brl, 0) }));
+		const portfolioSeriesOriginal = evolution.map((row) => ({ date: row.date, value: numeric(row.value_original_brl, 0) }));
+		const portfolioReturnBrl = this.#seriesReturnPct(portfolioSeriesBrl);
+		const portfolioReturnOriginal = this.#seriesReturnPct(portfolioSeriesOriginal);
+		const portfolioStartBrl = numeric(evolution[0]?.value_brl, 0);
+		const portfolioEndBrl = numeric(evolution[evolution.length - 1]?.value_brl, 0);
+		const portfolioStartOriginal = numeric(evolution[0]?.value_original_brl, 0);
+		const portfolioEndOriginal = numeric(evolution[evolution.length - 1]?.value_original_brl, 0);
+		const portfolioFxImpactBrl = portfolioEndBrl - portfolioEndOriginal;
+		const foreignEndValue = normalizedAssets.reduce((sum, asset) => {
+			if (asset.currency === 'BRL') return sum;
+			const snapshot = byAssetState.get(asset.assetId);
+			return sum + numeric(snapshot?.end_value_brl, 0);
+		}, 0);
+		const foreignExposurePct = portfolioEndBrl > 0
+			? (foreignEndValue / portfolioEndBrl) * 100
+			: 0;
+
+		const byAsset = Array.from(byAssetState.values())
+			.map((asset) => {
+				const startValueBrl = numeric(asset.start_value_brl, 0);
+				const endValueBrl = numeric(asset.end_value_brl, 0);
+				const startOriginal = numeric(asset.start_value_original_brl, 0);
+				const endOriginal = numeric(asset.end_value_original_brl, 0);
+				return {
+					...asset,
+					start_value_native: numeric(asset.start_value_native, 0),
+					end_value_native: numeric(asset.end_value_native, 0),
+					start_value_brl: startValueBrl,
+					end_value_brl: endValueBrl,
+					start_value_original_brl: startOriginal,
+					end_value_original_brl: endOriginal,
+					return_brl_pct: startValueBrl > 0 ? ((endValueBrl / startValueBrl) - 1) * 100 : 0,
+					return_original_pct: startOriginal > 0 ? ((endOriginal / startOriginal) - 1) * 100 : 0,
+					fx_impact_pct:
+						(startValueBrl > 0 && startOriginal > 0)
+							? ((((endValueBrl / startValueBrl) - 1) - ((endOriginal / startOriginal) - 1)) * 100)
+							: 0,
+					fx_impact_brl: endValueBrl - endOriginal,
+				};
+			})
+			.sort((left, right) => Math.abs(right.fx_impact_brl) - Math.abs(left.fx_impact_brl));
+
+		const byCurrencyMap = new Map();
+		for (const asset of byAsset) {
+			if (!byCurrencyMap.has(asset.currency)) {
+				byCurrencyMap.set(asset.currency, {
+					currency: asset.currency,
+					start_value_brl: 0,
+					end_value_brl: 0,
+					start_value_original_brl: 0,
+					end_value_original_brl: 0,
+					fx_start: startFxByCurrency[asset.currency] || 1,
+					fx_current: endFxByCurrency[asset.currency] || 1,
+				});
+			}
+			const row = byCurrencyMap.get(asset.currency);
+			row.start_value_brl += numeric(asset.start_value_brl, 0);
+			row.end_value_brl += numeric(asset.end_value_brl, 0);
+			row.start_value_original_brl += numeric(asset.start_value_original_brl, 0);
+			row.end_value_original_brl += numeric(asset.end_value_original_brl, 0);
+		}
+		const byCurrency = Array.from(byCurrencyMap.values())
+			.map((row) => {
+				const startBrl = numeric(row.start_value_brl, 0);
+				const endBrl = numeric(row.end_value_brl, 0);
+				const startOriginal = numeric(row.start_value_original_brl, 0);
+				const endOriginal = numeric(row.end_value_original_brl, 0);
+				const returnBrlPct = startBrl > 0 ? ((endBrl / startBrl) - 1) * 100 : 0;
+				const returnOriginalPct = startOriginal > 0 ? ((endOriginal / startOriginal) - 1) * 100 : 0;
+				return {
+					...row,
+					weight_pct: portfolioEndBrl > 0 ? (endBrl / portfolioEndBrl) * 100 : 0,
+					return_brl_pct: returnBrlPct,
+					return_original_pct: returnOriginalPct,
+					fx_impact_pct: returnBrlPct - returnOriginalPct,
+					fx_impact_brl: endBrl - endOriginal,
+				};
+			})
+			.sort((left, right) => right.end_value_brl - left.end_value_brl);
+
+		return {
+			portfolioId,
+			period: periodKey,
+			from: fromDate,
+			to: toDate,
+			portfolio: {
+				start_value_brl: portfolioStartBrl,
+				end_value_brl: portfolioEndBrl,
+				start_value_original_brl: portfolioStartOriginal,
+				end_value_original_brl: portfolioEndOriginal,
+				return_brl_pct: portfolioReturnBrl,
+				return_original_pct: portfolioReturnOriginal,
+				fx_impact_pct: portfolioReturnBrl - portfolioReturnOriginal,
+				fx_impact_brl: portfolioFxImpactBrl,
+				foreign_exposure_pct: foreignExposurePct,
+			},
+			evolution,
+			by_currency: byCurrency,
+			by_asset: byAsset,
+			fx_rates: {
+				latest: latestFxMap,
+				start: startFxByCurrency,
+				end: endFxByCurrency,
+			},
+			fetched_at: nowIso(),
+		};
+	}
+
 	async getCostAnalysis(userId, options = {}) {
 		const portfolioId = await this.#resolvePortfolioId(userId, options.portfolioId);
 		const transactions = await this.#listPortfolioTransactions(portfolioId);
@@ -2638,6 +2979,44 @@ class PlatformService {
 		}
 		map['BRL/BRL'] = 1;
 		return map;
+	}
+
+	async #listFxHistory(currency) {
+		const normalizedCurrency = String(currency || '').toUpperCase();
+		if (!normalizedCurrency || normalizedCurrency === 'BRL') return [];
+
+		const rows = await this.#queryAll({
+			TableName: this.tableName,
+			KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
+			ExpressionAttributeValues: {
+				':pk': `FX#${normalizedCurrency}#BRL`,
+				':sk': 'RATE#',
+			},
+		});
+
+		return rows
+			.map((row) => ({
+				date: normalizeDate(row.date || String(row.SK || '').replace('RATE#', '')),
+				rate: numeric(row.rate, 0),
+			}))
+			.filter((row) => row.date && row.rate > 0)
+			.sort((left, right) => left.date.localeCompare(right.date));
+	}
+
+	#resolveFxRateAtDate(rows, date, fallbackRate = 1, currency = 'BRL') {
+		const normalizedCurrency = String(currency || 'BRL').toUpperCase();
+		if (normalizedCurrency === 'BRL') return 1;
+		const normalizedDate = normalizeDate(date);
+		const fallback = fallbackRate > 0 ? fallbackRate : 1;
+		if (!normalizedDate || !Array.isArray(rows) || rows.length === 0) return fallback;
+
+		for (let index = rows.length - 1; index >= 0; index -= 1) {
+			const row = rows[index];
+			if (String(row.date || '') > normalizedDate) continue;
+			const rate = numeric(row.rate, 0);
+			if (rate > 0) return rate;
+		}
+		return fallback;
 	}
 
 	async #fetchStatusInvestDividendEvents(ticker, assetClass = 'fii') {
