@@ -6,6 +6,7 @@
     "dividends": "Proventos",
     "rebalance": "Rebalanceamento",
     "risk": "Risco",
+    "benchmarks": "Benchmarks",
     "tax": "Imposto",
     "platform": "Plataforma",
     "documents": "Documentos",
@@ -272,6 +273,51 @@
       "ariaLabel": "Seções de risco"
     },
     "sensitivityUnavailable": "Sensibilidade a juros e câmbio ainda não possui API no backend."
+  },
+  "benchmarks": {
+    "title": "Comparativo de Benchmarks",
+    "selectPortfolio": "Selecionar portfólio",
+    "selectBenchmark": "Selecionar benchmark",
+    "selectPeriod": "Selecionar período",
+    "loadError": "Falha ao carregar dados de benchmark.",
+    "noSeries": "Sem dados de benchmark disponíveis.",
+    "noNormalizedSeries": "Sem séries normalizadas para os filtros selecionados.",
+    "missingSeries": "Sem série normalizada para: {{list}}.",
+    "portfolioSeries": "Carteira",
+    "kpis": {
+      "portfolioReturn": "Retorno da Carteira",
+      "selectedBenchmarkReturn": "Retorno do Benchmark Selecionado",
+      "alpha": "Alpha",
+      "range": "Intervalo"
+    },
+    "sections": {
+      "normalized": "Comparação Normalizada (Base 100)",
+      "returns": "Comparação de Retorno",
+      "details": "Detalhes dos Benchmarks"
+    },
+    "table": {
+      "benchmark": "Benchmark",
+      "returnPct": "Retorno %",
+      "alphaVsPortfolio": "Alpha vs Carteira"
+    },
+    "options": {
+      "IBOV": "IBOV",
+      "CDI": "CDI",
+      "IPCA": "IPCA+",
+      "SNP500": "S&P 500",
+      "IFIX": "IFIX",
+      "POUPANCA": "Poupança",
+      "TSX": "TSX"
+    },
+    "periods": {
+      "1M": "1M",
+      "3M": "3M",
+      "6M": "6M",
+      "1Y": "1A",
+      "2Y": "2A",
+      "5Y": "5A",
+      "MAX": "MAX"
+    }
   },
   "tax": {
     "title": "Imposto de Renda",

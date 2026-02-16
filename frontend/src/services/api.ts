@@ -255,6 +255,33 @@ export interface RiskFxExposureItem {
   weight_pct: number;
 }
 
+export interface BenchmarkReturnItem {
+  benchmark: string;
+  symbol?: string;
+  return_pct: number;
+}
+
+export interface BenchmarkNormalizedPoint {
+  date: string;
+  value: number;
+}
+
+export interface BenchmarksResponse {
+  portfolioId: string;
+  period: string;
+  from: string;
+  to: string;
+  portfolio_return_pct: number;
+  benchmarks: BenchmarkReturnItem[];
+  selected_benchmark: BenchmarkReturnItem | null;
+  alpha: number | null;
+  normalized_series: {
+    portfolio: BenchmarkNormalizedPoint[];
+    benchmarks: Record<string, BenchmarkNormalizedPoint[]>;
+  };
+  fetched_at: string;
+}
+
 export interface RiskResponse {
   portfolioId: string;
   concentration: RiskConcentrationItem[];
@@ -429,7 +456,7 @@ export const api = {
     return request<RiskResponse>(`/portfolios/${portfolioId}/risk${suffix}`);
   },
   getBenchmarks: (portfolioId: string, benchmark = 'IBOV', period = '1A') =>
-    request(`/portfolios/${portfolioId}/benchmarks?benchmark=${encodeURIComponent(benchmark)}&period=${encodeURIComponent(period)}`),
+    request<BenchmarksResponse>(`/portfolios/${portfolioId}/benchmarks?benchmark=${encodeURIComponent(benchmark)}&period=${encodeURIComponent(period)}`),
 
   // Contributions
   createContribution: (portfolioId: string, data: ContributionPayload) =>

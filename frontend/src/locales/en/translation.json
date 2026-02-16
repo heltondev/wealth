@@ -6,6 +6,7 @@
     "dividends": "Dividends",
     "rebalance": "Rebalance",
     "risk": "Risk",
+    "benchmarks": "Benchmarks",
     "tax": "Tax",
     "platform": "Platform",
     "documents": "Documents",
@@ -272,6 +273,51 @@
       "ariaLabel": "Risk sections"
     },
     "sensitivityUnavailable": "Interest-rate and exchange-rate sensitivity does not have a backend API yet."
+  },
+  "benchmarks": {
+    "title": "Benchmark Comparison",
+    "selectPortfolio": "Select portfolio",
+    "selectBenchmark": "Select benchmark",
+    "selectPeriod": "Select period",
+    "loadError": "Failed to load benchmark comparison data.",
+    "noSeries": "No benchmark data available.",
+    "noNormalizedSeries": "No normalized series available for the selected inputs.",
+    "missingSeries": "No normalized series returned for: {{list}}.",
+    "portfolioSeries": "Portfolio",
+    "kpis": {
+      "portfolioReturn": "Portfolio Return",
+      "selectedBenchmarkReturn": "Selected Benchmark Return",
+      "alpha": "Alpha",
+      "range": "Range"
+    },
+    "sections": {
+      "normalized": "Normalized Comparison (Base 100)",
+      "returns": "Return Comparison",
+      "details": "Benchmark Details"
+    },
+    "table": {
+      "benchmark": "Benchmark",
+      "returnPct": "Return %",
+      "alphaVsPortfolio": "Alpha vs Portfolio"
+    },
+    "options": {
+      "IBOV": "IBOV",
+      "CDI": "CDI",
+      "IPCA": "IPCA+",
+      "SNP500": "S&P 500",
+      "IFIX": "IFIX",
+      "POUPANCA": "Savings",
+      "TSX": "TSX"
+    },
+    "periods": {
+      "1M": "1M",
+      "3M": "3M",
+      "6M": "6M",
+      "1Y": "1Y",
+      "2Y": "2Y",
+      "5Y": "5Y",
+      "MAX": "MAX"
+    }
   },
   "tax": {
     "title": "Tax (IR)",
