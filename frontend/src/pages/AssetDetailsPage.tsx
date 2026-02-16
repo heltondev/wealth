@@ -48,14 +48,22 @@ type AssetInsightsSnapshot = {
   marketCap: number | null;
   averageVolume: number | null;
   currentPrice: number | null;
+  graham: number | null;
+  bazin: number | null;
   fairPrice: number | null;
   marginOfSafetyPct: number | null;
   pe: number | null;
   pb: number | null;
   roe: number | null;
+  roa: number | null;
+  roic: number | null;
   payout: number | null;
   evEbitda: number | null;
+  netDebtEbitda: number | null;
+  lpa: number | null;
+  vpa: number | null;
   netMargin: number | null;
+  ebitMargin: number | null;
   statusInvestUrl: string | null;
   b3Url: string | null;
   clubeFiiUrl: string | null;
@@ -166,14 +174,22 @@ const createEmptyInsightsSnapshot = (
   marketCap: null,
   averageVolume: null,
   currentPrice: null,
+  graham: null,
+  bazin: null,
   fairPrice: null,
   marginOfSafetyPct: null,
   pe: null,
   pb: null,
   roe: null,
+  roa: null,
+  roic: null,
   payout: null,
   evEbitda: null,
+  netDebtEbitda: null,
+  lpa: null,
+  vpa: null,
   netMargin: null,
+  ebitMargin: null,
   ...buildAssetExternalLinks(ticker, assetClass),
   errorMessage: null,
 });
@@ -450,6 +466,8 @@ const AssetDetailsPage = () => {
         latestPrice.volume,
       ),
       currentPrice: firstFiniteNumber(fair.current_price, latestPrice.close, quote.currentPrice, asset.currentPrice),
+      graham: firstFiniteNumber(fair.graham),
+      bazin: firstFiniteNumber(fair.bazin),
       fairPrice: firstFiniteNumber(fair.fair_price),
       marginOfSafetyPct: firstFiniteNumber(fair.margin_of_safety_pct),
       pe: firstFiniteNumber(
@@ -476,6 +494,22 @@ const AssetDetailsPage = () => {
         primaryInfo.roe,
         fundamentals.roe,
       ),
+      roa: firstFiniteNumber(
+        fairFundamentals.roa,
+        finalInfo.returnOnAssets,
+        finalInfo.roa,
+        primaryInfo.returnOnAssets,
+        primaryInfo.roa,
+        fundamentals.roa,
+      ),
+      roic: firstFiniteNumber(
+        fairFundamentals.roic,
+        finalInfo.returnOnInvestedCapital,
+        finalInfo.roic,
+        primaryInfo.returnOnInvestedCapital,
+        primaryInfo.roic,
+        fundamentals.roic,
+      ),
       payout: firstFiniteNumber(
         fairFundamentals.payout,
         finalInfo.payoutRatio,
@@ -490,6 +524,32 @@ const AssetDetailsPage = () => {
         primaryInfo.enterpriseToEbitda,
         fundamentals.evEbitda,
       ),
+      netDebtEbitda: firstFiniteNumber(
+        fairFundamentals.netDebtEbitda,
+        finalInfo.netDebtToEbitda,
+        finalInfo.netDebtEbitda,
+        primaryInfo.netDebtToEbitda,
+        primaryInfo.netDebtEbitda,
+        fundamentals.netDebtEbitda,
+      ),
+      lpa: firstFiniteNumber(
+        fairFundamentals.lpa,
+        finalInfo.trailingEps,
+        finalInfo.epsTrailingTwelveMonths,
+        finalInfo.lpa,
+        primaryInfo.trailingEps,
+        primaryInfo.epsTrailingTwelveMonths,
+        primaryInfo.lpa,
+        fundamentals.lpa,
+      ),
+      vpa: firstFiniteNumber(
+        fairFundamentals.vpa,
+        finalInfo.bookValue,
+        finalInfo.vpa,
+        primaryInfo.bookValue,
+        primaryInfo.vpa,
+        fundamentals.vpa,
+      ),
       netMargin: firstFiniteNumber(
         fairFundamentals.netMargin,
         finalInfo.profitMargins,
@@ -497,6 +557,14 @@ const AssetDetailsPage = () => {
         primaryInfo.profitMargins,
         primaryInfo.netMargin,
         fundamentals.netMargin,
+      ),
+      ebitMargin: firstFiniteNumber(
+        fairFundamentals.ebitMargin,
+        finalInfo.operatingMargins,
+        finalInfo.ebitMargin,
+        primaryInfo.operatingMargins,
+        primaryInfo.ebitMargin,
+        fundamentals.ebitMargin,
       ),
       errorMessage: null,
     };
@@ -1255,6 +1323,33 @@ const AssetDetailsPage = () => {
         title: t('assets.modal.insights.groups.valuation', { defaultValue: 'Valuation' }),
         fields: [
           {
+            key: 'currentPrice',
+            label: t('assets.modal.insights.currentPrice', { defaultValue: 'Current Price' }),
+            value: renderInsightsValue(
+              assetInsights?.currentPrice != null
+                ? formatCurrency(assetInsights.currentPrice, selectedAsset.currency || 'BRL', numberLocale)
+                : formatDetailValue(null)
+            ),
+          },
+          {
+            key: 'graham',
+            label: t('assets.modal.insights.graham', { defaultValue: 'Graham Price' }),
+            value: renderInsightsValue(
+              assetInsights?.graham != null
+                ? formatCurrency(assetInsights.graham, selectedAsset.currency || 'BRL', numberLocale)
+                : formatDetailValue(null)
+            ),
+          },
+          {
+            key: 'bazin',
+            label: t('assets.modal.insights.bazin', { defaultValue: 'Bazin Price' }),
+            value: renderInsightsValue(
+              assetInsights?.bazin != null
+                ? formatCurrency(assetInsights.bazin, selectedAsset.currency || 'BRL', numberLocale)
+                : formatDetailValue(null)
+            ),
+          },
+          {
             key: 'fairPrice',
             label: t('assets.modal.insights.fairPrice', { defaultValue: 'Fair Price' }),
             value: renderInsightsValue(
@@ -1298,9 +1393,42 @@ const AssetDetailsPage = () => {
             value: renderInsightsValue(formatRatioAsPercent(assetInsights?.roe ?? null, true)),
           },
           {
+            key: 'roa',
+            label: t('assets.modal.insights.roa', { defaultValue: 'ROA' }),
+            value: renderInsightsValue(formatRatioAsPercent(assetInsights?.roa ?? null, true)),
+          },
+          {
+            key: 'roic',
+            label: t('assets.modal.insights.roic', { defaultValue: 'ROIC' }),
+            value: renderInsightsValue(formatRatioAsPercent(assetInsights?.roic ?? null, true)),
+          },
+          {
+            key: 'lpa',
+            label: t('assets.modal.insights.lpa', { defaultValue: 'LPA (EPS)' }),
+            value: renderInsightsValue(
+              assetInsights?.lpa != null
+                ? assetInsights.lpa.toLocaleString(numberLocale, { maximumFractionDigits: 4 })
+                : formatDetailValue(null)
+            ),
+          },
+          {
+            key: 'vpa',
+            label: t('assets.modal.insights.vpa', { defaultValue: 'VPA (Book Value)' }),
+            value: renderInsightsValue(
+              assetInsights?.vpa != null
+                ? assetInsights.vpa.toLocaleString(numberLocale, { maximumFractionDigits: 4 })
+                : formatDetailValue(null)
+            ),
+          },
+          {
             key: 'netMargin',
             label: t('assets.modal.insights.netMargin', { defaultValue: 'Net Margin' }),
             value: renderInsightsValue(formatRatioAsPercent(assetInsights?.netMargin ?? null, true)),
+          },
+          {
+            key: 'ebitMargin',
+            label: t('assets.modal.insights.ebitMargin', { defaultValue: 'EBIT Margin' }),
+            value: renderInsightsValue(formatRatioAsPercent(assetInsights?.ebitMargin ?? null, true)),
           },
           {
             key: 'payout',
@@ -1313,6 +1441,15 @@ const AssetDetailsPage = () => {
             value: renderInsightsValue(
               assetInsights?.evEbitda != null
                 ? assetInsights.evEbitda.toLocaleString(numberLocale, { maximumFractionDigits: 2 })
+                : formatDetailValue(null)
+            ),
+          },
+          {
+            key: 'netDebtEbitda',
+            label: t('assets.modal.insights.netDebtEbitda', { defaultValue: 'Net Debt / EBITDA' }),
+            value: renderInsightsValue(
+              assetInsights?.netDebtEbitda != null
+                ? assetInsights.netDebtEbitda.toLocaleString(numberLocale, { maximumFractionDigits: 2 })
                 : formatDetailValue(null)
             ),
           },
