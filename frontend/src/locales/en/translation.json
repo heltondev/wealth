@@ -5,6 +5,7 @@
     "transactions": "Transactions",
     "dividends": "Dividends",
     "rebalance": "Rebalance",
+    "risk": "Risk",
     "tax": "Tax",
     "platform": "Platform",
     "documents": "Documents",
@@ -184,6 +185,81 @@
       "emptySuggestion": "No contribution suggestions for current filters.",
       "emptyDrift": "No drift data available for current targets."
     }
+  },
+  "risk": {
+    "title": "Risk & Exposure",
+    "selectPortfolio": "Select portfolio",
+    "concentrationThreshold": "Concentration Threshold",
+    "thresholdOption": "Over {{value}}%",
+    "chartPeriod": "Chart Period",
+    "loadError": "Failed to load risk and exposure data.",
+    "noSeries": "No data available for this section.",
+    "kpis": {
+      "portfolioVolatility": "Portfolio Volatility (Annualized)",
+      "maxDrawdown": "Portfolio Max Drawdown",
+      "concentrationAlerts": "Concentration Alerts",
+      "largestPosition": "Largest Position"
+    },
+    "sections": {
+      "concentration": "Concentration by Asset",
+      "correlation": "Asset Correlation Matrix",
+      "fxExposure": "Real FX Exposure",
+      "drawdownByAsset": "Drawdown by Asset",
+      "riskReturn": "Risk vs Return",
+      "purchasingPower": "Purchasing Power vs IPCA",
+      "sensitivity": "Rate / FX Sensitivity"
+    },
+    "table": {
+      "ticker": "Ticker",
+      "marketValue": "Market Value",
+      "weight": "Weight",
+      "alert": "Alert",
+      "drawdown": "Max Drawdown",
+      "volatility": "Volatility",
+      "returnPct": "Return %",
+      "correlation": "Correlation"
+    },
+    "alerts": {
+      "overLimit": "Above {{limit}}%",
+      "withinLimit": "Within limit"
+    },
+    "fx": {
+      "totalBrlExposure": "Total Exposure (BRL)",
+      "foreignExposure": "Foreign Exposure (BRL)",
+      "foreignShare": "Foreign Share",
+      "dominantCurrency": "Dominant Currency",
+      "byCurrencyChart": "Exposure by Currency",
+      "localVsForeign": "Local vs Foreign",
+      "localLabel": "Local (BRL)",
+      "foreignLabel": "Foreign"
+    },
+    "returnFilter": {
+      "ariaLabel": "Return sign filter",
+      "all": "All",
+      "positive": "Positive",
+      "negative": "Negative",
+      "neutral": "Neutral"
+    },
+    "legend": {
+      "positive": "Positive Return",
+      "negative": "Negative Return",
+      "neutral": "Neutral Return"
+    },
+    "inflation": {
+      "nominalValue": "Nominal Value",
+      "realValue": "Real Value (IPCA adjusted)"
+    },
+    "periods": {
+      "1M": "1M",
+      "3M": "3M",
+      "6M": "6M",
+      "1Y": "1Y",
+      "MAX": "MAX"
+    },
+    "tabs": {
+      "ariaLabel": "Risk sections"
+    },
+    "sensitivityUnavailable": "Interest-rate and exchange-rate sensitivity does not have a backend API yet."
   },
   "tax": {
     "title": "Tax (IR)",

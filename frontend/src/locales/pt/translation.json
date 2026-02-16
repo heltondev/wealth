@@ -5,6 +5,7 @@
     "transactions": "Transações",
     "dividends": "Proventos",
     "rebalance": "Rebalanceamento",
+    "risk": "Risco",
     "tax": "Imposto",
     "platform": "Plataforma",
     "documents": "Documentos",
@@ -184,6 +185,81 @@
       "emptySuggestion": "Sem sugestões de aporte para os filtros atuais.",
       "emptyDrift": "Sem dados de desvio para os alvos atuais."
     }
+  },
+  "risk": {
+    "title": "Risco e Exposição",
+    "selectPortfolio": "Selecionar portfólio",
+    "concentrationThreshold": "Limite de Concentração",
+    "thresholdOption": "Acima de {{value}}%",
+    "chartPeriod": "Período do Gráfico",
+    "loadError": "Falha ao carregar dados de risco e exposição.",
+    "noSeries": "Sem dados para esta seção.",
+    "kpis": {
+      "portfolioVolatility": "Volatilidade da Carteira (Anualizada)",
+      "maxDrawdown": "Drawdown Máximo da Carteira",
+      "concentrationAlerts": "Alertas de Concentração",
+      "largestPosition": "Maior Posição"
+    },
+    "sections": {
+      "concentration": "Concentração por Ativo",
+      "correlation": "Matriz de Correlação",
+      "fxExposure": "Exposição Cambial Real",
+      "drawdownByAsset": "Drawdown por Ativo",
+      "riskReturn": "Risco vs Retorno",
+      "purchasingPower": "Poder de Compra vs IPCA",
+      "sensitivity": "Sensibilidade a Juros / Câmbio"
+    },
+    "table": {
+      "ticker": "Ticker",
+      "marketValue": "Valor de Mercado",
+      "weight": "Peso",
+      "alert": "Alerta",
+      "drawdown": "Drawdown Máximo",
+      "volatility": "Volatilidade",
+      "returnPct": "Retorno %",
+      "correlation": "Correlação"
+    },
+    "alerts": {
+      "overLimit": "Acima de {{limit}}%",
+      "withinLimit": "Dentro do limite"
+    },
+    "fx": {
+      "totalBrlExposure": "Exposição Total (BRL)",
+      "foreignExposure": "Exposição Externa (BRL)",
+      "foreignShare": "Parcela Externa",
+      "dominantCurrency": "Moeda Dominante",
+      "byCurrencyChart": "Exposição por Moeda",
+      "localVsForeign": "Local vs Externo",
+      "localLabel": "Local (BRL)",
+      "foreignLabel": "Externo"
+    },
+    "returnFilter": {
+      "ariaLabel": "Filtro de sinal do retorno",
+      "all": "Todos",
+      "positive": "Positivo",
+      "negative": "Negativo",
+      "neutral": "Neutro"
+    },
+    "legend": {
+      "positive": "Retorno Positivo",
+      "negative": "Retorno Negativo",
+      "neutral": "Retorno Neutro"
+    },
+    "inflation": {
+      "nominalValue": "Valor Nominal",
+      "realValue": "Valor Real (ajustado pelo IPCA)"
+    },
+    "periods": {
+      "1M": "1M",
+      "3M": "3M",
+      "6M": "6M",
+      "1Y": "1A",
+      "MAX": "MAX"
+    },
+    "tabs": {
+      "ariaLabel": "Seções de risco"
+    },
+    "sensitivityUnavailable": "Sensibilidade a juros e câmbio ainda não possui API no backend."
   },
   "tax": {
     "title": "Imposto de Renda",

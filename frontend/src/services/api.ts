@@ -225,6 +225,51 @@ export interface RebalanceSuggestionResponse {
   fetched_at?: string;
 }
 
+export interface RiskConcentrationItem {
+  assetId: string;
+  ticker: string;
+  market_value: number;
+  weight_pct: number;
+}
+
+export interface RiskCorrelationItem {
+  left: string;
+  right: string;
+  correlation: number;
+}
+
+export interface RiskScatterItem {
+  ticker: string;
+  volatility: number;
+  return_pct: number;
+}
+
+export interface RiskInflationAdjustedPoint {
+  date: string;
+  nominal_value: number;
+  real_value: number;
+}
+
+export interface RiskFxExposureItem {
+  value: number;
+  weight_pct: number;
+}
+
+export interface RiskResponse {
+  portfolioId: string;
+  concentration: RiskConcentrationItem[];
+  concentration_alerts: RiskConcentrationItem[];
+  volatility_by_asset: Record<string, number>;
+  drawdown_by_asset: Record<string, number>;
+  portfolio_drawdown: number;
+  portfolio_volatility: number;
+  correlation_matrix: RiskCorrelationItem[];
+  risk_return_scatter: RiskScatterItem[];
+  fx_exposure: Record<string, RiskFxExposureItem>;
+  inflation_adjusted_value: RiskInflationAdjustedPoint[];
+  fetched_at: string;
+}
+
 export interface AlertEvent {
   eventId: string;
   ruleId?: string;
@@ -371,8 +416,18 @@ export const api = {
     ),
   setRebalanceTargets: (portfolioId: string, targets: RebalanceTarget[]) =>
     request<RebalanceTargetsResponse>(`/portfolios/${portfolioId}/rebalance/targets`, { method: 'POST', body: JSON.stringify({ targets }) }),
-  getRisk: (portfolioId: string) =>
-    request(`/portfolios/${portfolioId}/risk`),
+  getRisk: (portfolioId: string, params?: { concentrationThreshold?: number }) => {
+    const query = new URLSearchParams();
+    if (
+      typeof params?.concentrationThreshold === 'number' &&
+      Number.isFinite(params.concentrationThreshold) &&
+      params.concentrationThreshold > 0
+    ) {
+      query.set('concentrationThreshold', String(params.concentrationThreshold));
+    }
+    const suffix = query.toString() ? `?${query.toString()}` : '';
+    return request<RiskResponse>(`/portfolios/${portfolioId}/risk${suffix}`);
+  },
   getBenchmarks: (portfolioId: string, benchmark = 'IBOV', period = '1A') =>
     request(`/portfolios/${portfolioId}/benchmarks?benchmark=${encodeURIComponent(benchmark)}&period=${encodeURIComponent(period)}`),
 

@@ -241,40 +241,58 @@ class PlatformService {
 		const results = [];
 		for (const seriesId of seriesIds) {
 			const cursor = await this.#getCursor('economic-indicators', `sgs-${seriesId}`);
-			const data = await this.#fetchSgsSeries(seriesId, cursor?.lastDate || null);
-			let persisted = 0;
-			let latestDate = cursor?.lastDate || null;
-			for (const point of data) {
-				await this.dynamo.send(
-					new PutCommand({
-						TableName: this.tableName,
-						Item: {
-							PK: `ECON#${seriesId}`,
-							SK: `DATE#${point.date}`,
-							entityType: 'ECON_INDICATOR',
-							seriesId,
-							date: point.date,
-							value: point.value,
-							currency: 'BRL',
-							data_source: 'bcb_sgs',
-							fetched_at: nowIso(),
-							is_scraped: false,
-							updatedAt: nowIso(),
-						},
+			try {
+				const data = await this.#fetchSgsSeries(seriesId, cursor?.lastDate || null);
+				let persisted = 0;
+				let latestDate = cursor?.lastDate || null;
+				for (const point of data) {
+					await this.dynamo.send(
+						new PutCommand({
+							TableName: this.tableName,
+							Item: {
+								PK: `ECON#${seriesId}`,
+								SK: `DATE#${point.date}`,
+								entityType: 'ECON_INDICATOR',
+								seriesId,
+								date: point.date,
+								value: point.value,
+								currency: 'BRL',
+								data_source: 'bcb_sgs',
+								fetched_at: nowIso(),
+								is_scraped: false,
+								updatedAt: nowIso(),
+							},
+						})
+					);
+					persisted += 1;
+					latestDate = point.date;
+				}
+
+				if (latestDate) {
+					await this.#setCursor('economic-indicators', `sgs-${seriesId}`, {
+						lastDate: latestDate,
+						updatedAt: nowIso(),
+					});
+				}
+
+				results.push({ seriesId, fetched: data.length, persisted, latestDate });
+			} catch (error) {
+				this.logger.warn(
+					JSON.stringify({
+						event: 'economic_series_fetch_failed',
+						seriesId,
+						error: error.message,
+						fetched_at: nowIso(),
 					})
 				);
-				persisted += 1;
-				latestDate = point.date;
-			}
-
-			if (latestDate) {
-				await this.#setCursor('economic-indicators', `sgs-${seriesId}`, {
-					lastDate: latestDate,
-					updatedAt: nowIso(),
+				results.push({
+					seriesId,
+					fetched: 0,
+					persisted: 0,
+					latestDate: cursor?.lastDate || null,
+					error: error.message,
 				});
 			}
-
-			results.push({ seriesId, fetched: data.length, persisted, latestDate });
 		}
 
 		const fx = await this.#refreshFxRates();
@@ -1204,11 +1222,16 @@ class PlatformService {
 			const fxRate = currency === 'BRL' ? 1 : numeric(fxRates[`${currency}/BRL`], 0);
 			const metricMarketValue = toNumberOrNull(metric.market_value);
 			const metricQuantity = toNumberOrNull(metric.quantity_current);
+			const snapshotQuantity = toNumberOrNull(asset.quantity);
 			const metricCurrentPrice = toNumberOrNull(metric.current_price);
 			const snapshotCurrentValue = toNumberOrNull(asset.currentValue);
 			const snapshotCurrentPrice = toNumberOrNull(asset.currentPrice);
+			const resolvedQuantity =
+				(metricQuantity !== null && Math.abs(metricQuantity) > Number.EPSILON)
+					? metricQuantity
+					: snapshotQuantity;
 			const hasOpenQuantity =
-				metricQuantity !== null && Math.abs(metricQuantity) > Number.EPSILON;
+				resolvedQuantity !== null && Math.abs(resolvedQuantity) > Number.EPSILON;
 			const usableMetricMarketValue =
 				metricMarketValue !== null &&
 				(!hasOpenQuantity || Math.abs(metricMarketValue) > Number.EPSILON)
@@ -1216,8 +1239,8 @@ class PlatformService {
 					: null;
 			const fallbackPrice = metricCurrentPrice ?? snapshotCurrentPrice;
 			const derivedMarketValue =
-				(fallbackPrice !== null && metricQuantity !== null)
-					? fallbackPrice * metricQuantity
+				(fallbackPrice !== null && resolvedQuantity !== null)
+					? fallbackPrice * resolvedQuantity
 					: null;
 			const marketValue =
 				usableMetricMarketValue ??
@@ -1982,15 +2005,63 @@ class PlatformService {
 	async getPortfolioRisk(userId, options = {}) {
 		const portfolioId = await this.#resolvePortfolioId(userId, options.portfolioId);
 		const assets = await this.#listPortfolioAssets(portfolioId);
+		const activeAssets = assets.filter((asset) =>
+			String(asset.status || 'active').toLowerCase() === 'active'
+		);
 		const metrics = await this.priceHistoryService.getPortfolioMetrics(userId, { portfolioId });
-		const totalValue = Math.max(numeric(metrics.consolidated.total_market_value, 0), 1);
+		const activeAssetById = new Map(activeAssets.map((asset) => [asset.assetId, asset]));
+		const activeMetrics = metrics.assets.filter((metric) => activeAssetById.has(metric.assetId));
+		const fxRates = await this.#getLatestFxMap();
+		const fxRateByAssetId = {};
+		const fallbackBrlByAssetId = {};
+		const normalizedActiveMetrics = activeMetrics.map((metric) => {
+			const asset = activeAssetById.get(metric.assetId) || {};
+			const currency = String(metric.currency || asset.currency || 'BRL').toUpperCase();
+			const fxRate = currency === 'BRL' ? 1 : numeric(fxRates[`${currency}/BRL`], 0);
+			const metricMarketValue = toNumberOrNull(metric.market_value);
+			const metricQuantity = toNumberOrNull(metric.quantity_current);
+			const metricCurrentPrice = toNumberOrNull(metric.current_price);
+			const snapshotCurrentValue = toNumberOrNull(asset.currentValue);
+			const snapshotCurrentPrice = toNumberOrNull(asset.currentPrice);
+			const hasOpenQuantity =
+				metricQuantity !== null && Math.abs(metricQuantity) > Number.EPSILON;
+			const usableMetricMarketValue =
+				metricMarketValue !== null &&
+				(!hasOpenQuantity || Math.abs(metricMarketValue) > Number.EPSILON)
+					? metricMarketValue
+					: null;
+			const fallbackPrice = metricCurrentPrice ?? snapshotCurrentPrice;
+			const derivedMarketValue =
+				(fallbackPrice !== null && metricQuantity !== null)
+					? fallbackPrice * metricQuantity
+					: null;
+			const marketValue =
+				usableMetricMarketValue ??
+				snapshotCurrentValue ??
+				derivedMarketValue ??
+				0;
+			const marketValueBrl = fxRate > 0 ? marketValue * fxRate : marketValue;
+			fxRateByAssetId[metric.assetId] = fxRate > 0 ? fxRate : 1;
+			fallbackBrlByAssetId[metric.assetId] = marketValueBrl;
+			return {
+				...metric,
+				ticker: String(metric.ticker || asset.ticker || '').toUpperCase(),
+				currency,
+				market_value: marketValue,
+				market_value_brl: marketValueBrl,
+			};
+		});
+		const totalValue = Math.max(
+			normalizedActiveMetrics.reduce((sum, metric) => sum + numeric(metric.market_value_brl, 0), 0),
+			1
+		);
 
-		const concentration = metrics.assets
+		const concentration = normalizedActiveMetrics
 			.map((metric) => ({
 				assetId: metric.assetId,
-				ticker: metric.ticker,
-				market_value: numeric(metric.market_value, 0),
-				weight_pct: (numeric(metric.market_value, 0) / totalValue) * 100,
+				ticker: String(metric.ticker || activeAssetById.get(metric.assetId)?.ticker || '').toUpperCase(),
+				market_value: numeric(metric.market_value_brl, 0),
+				weight_pct: (numeric(metric.market_value_brl, 0) / totalValue) * 100,
 			}))
 			.sort((left, right) => right.weight_pct - left.weight_pct);
 
@@ -1998,13 +2069,15 @@ class PlatformService {
 		const volatilityByAsset = {};
 		const drawdownByAsset = {};
 
-		for (const asset of assets) {
+		for (const asset of activeAssets) {
+			const ticker = String(asset.ticker || '').toUpperCase();
+			if (!ticker) continue;
 			const rows = await this.#listAssetPriceRows(portfolioId, asset.assetId);
 			const returns = this.#toReturns(rows);
-			byAssetReturns[asset.ticker] = returns;
+			byAssetReturns[ticker] = returns;
 			const onlyReturns = returns.map((item) => item.returnPct / 100);
-			volatilityByAsset[asset.ticker] = stdDev(onlyReturns) * Math.sqrt(252) * 100;
-			drawdownByAsset[asset.ticker] = this.#maxDrawdown(rows.map((row) => numeric(row.close, 0)));
+			volatilityByAsset[ticker] = stdDev(onlyReturns) * Math.sqrt(252) * 100;
+			drawdownByAsset[ticker] = this.#maxDrawdown(rows.map((row) => numeric(row.close, 0)));
 		}
 
 		const correlationMatrix = [];
@@ -2021,7 +2094,15 @@ class PlatformService {
 			}
 		}
 
-		const series = await this.#buildPortfolioValueSeries(portfolioId, metrics.assets, 365);
+		const series = await this.#buildPortfolioValueSeries(
+			portfolioId,
+			normalizedActiveMetrics,
+			365,
+			{
+				fxRateByAssetId,
+				fallbackBrlByAssetId,
+			}
+		);
 		const portfolioValues = series.map((point) => numeric(point.value, 0));
 		const portfolioDrawdown = this.#maxDrawdown(portfolioValues);
 		const portfolioReturns = [];
@@ -2031,7 +2112,7 @@ class PlatformService {
 			if (prev > 0) portfolioReturns.push((curr / prev) - 1);
 		}
 
-		const fxExposure = this.#buildFxExposure(metrics.assets);
+		const fxExposure = this.#buildFxExposure(normalizedActiveMetrics);
 		const ipcaDeflatedSeries = await this.#buildIpcaDeflatedSeries(series);
 
 		return {
@@ -2043,11 +2124,17 @@ class PlatformService {
 			portfolio_drawdown: portfolioDrawdown,
 			portfolio_volatility: stdDev(portfolioReturns) * Math.sqrt(252) * 100,
 			correlation_matrix: correlationMatrix,
-			risk_return_scatter: metrics.assets.map((asset) => ({
-				ticker: asset.ticker,
-				volatility: volatilityByAsset[asset.ticker] || 0,
-				return_pct: numeric(asset.percent_return, 0),
-			})),
+			risk_return_scatter: normalizedActiveMetrics
+				.map((asset) => {
+					const ticker = String(asset.ticker || activeAssetById.get(asset.assetId)?.ticker || '').toUpperCase();
+					if (!ticker) return null;
+					return {
+						ticker,
+						volatility: volatilityByAsset[ticker] || 0,
+						return_pct: numeric(asset.percent_return, 0),
+					};
+				})
+				.filter(Boolean),
 			fx_exposure: fxExposure,
 			inflation_adjusted_value: ipcaDeflatedSeries,
 			fetched_at: nowIso(),
@@ -2416,30 +2503,52 @@ class PlatformService {
 	}
 
 	async #fetchSgsSeries(seriesId, startDate = null) {
-		const url = new URL(`https://api.bcb.gov.br/dados/serie/bcdata.sgs.${seriesId}/dados`);
-		url.searchParams.set('formato', 'json');
-		if (startDate) {
-			const brDate = toBrDate(startDate);
-			if (brDate) url.searchParams.set('dataInicial', brDate);
+		const fallbackStartDate = addDays(nowIso().slice(0, 10), -3650);
+		const effectiveStartDate = startDate || fallbackStartDate;
+		const endpoints = [];
+
+		const rangedUrl = new URL(`https://api.bcb.gov.br/dados/serie/bcdata.sgs.${seriesId}/dados`);
+		rangedUrl.searchParams.set('formato', 'json');
+		const brDate = toBrDate(effectiveStartDate);
+		if (brDate) rangedUrl.searchParams.set('dataInicial', brDate);
+		endpoints.push(rangedUrl.toString());
+
+		const latestUrl = new URL(`https://api.bcb.gov.br/dados/serie/bcdata.sgs.${seriesId}/dados/ultimos/180`);
+		latestUrl.searchParams.set('formato', 'json');
+		endpoints.push(latestUrl.toString());
+
+		let lastError = null;
+		for (const endpoint of endpoints) {
+			try {
+				const response = await withRetry(
+					() => fetchWithTimeout(endpoint, { timeoutMs: 20000 }),
+					{ retries: 2, baseDelayMs: 500, factor: 2 }
+				);
+				if (!response.ok) {
+					const body = await response.text().catch(() => '');
+					lastError = new Error(
+						`BCB SGS series ${seriesId} responded with ${response.status}${
+							body ? ` (${String(body).slice(0, 200)})` : ''
+						}`
+					);
+					continue;
+				}
+				const rows = await response.json();
+				if (!Array.isArray(rows)) return [];
+
+				return rows
+					.map((row) => ({
+						date: normalizeDate(row.data),
+						value: numeric(String(row.valor || '').replace(',', '.'), null),
+					}))
+					.filter((row) => row.date && row.value !== null)
+					.sort((left, right) => left.date.localeCompare(right.date));
+			} catch (error) {
+				lastError = error;
+			}
 		}
 
-		const response = await withRetry(
-			() => fetchWithTimeout(url.toString(), { timeoutMs: 20000 }),
-			{ retries: 2, baseDelayMs: 500, factor: 2 }
-		);
-		if (!response.ok) {
-			throw new Error(`BCB SGS series ${seriesId} responded with ${response.status}`);
-		}
-		const rows = await response.json();
-		if (!Array.isArray(rows)) return [];
-
-		return rows
-			.map((row) => ({
-				date: normalizeDate(row.data),
-				value: numeric(row.valor, null),
-			}))
-			.filter((row) => row.date && row.value !== null)
-			.sort((left, right) => left.date.localeCompare(right.date));
+		throw lastError || new Error(`Unable to fetch BCB SGS series ${seriesId}`);
 	}
 
 	async #refreshFxRates() {
@@ -3064,7 +3173,7 @@ class PlatformService {
 		const byCurrency = { BRL: 0, USD: 0, CAD: 0 };
 		let total = 0;
 		for (const asset of assetsMetrics) {
-			const value = numeric(asset.market_value, 0);
+			const value = numeric(asset.market_value_brl, numeric(asset.market_value, 0));
 			const currency = String(asset.currency || 'BRL').toUpperCase();
 			if (!(currency in byCurrency)) byCurrency[currency] = 0;
 			byCurrency[currency] += value;
@@ -3082,8 +3191,8 @@ class PlatformService {
 
 	async #buildIpcaDeflatedSeries(series) {
 		if (!Array.isArray(series) || !series.length) return [];
-		const fromDate = series[0].date;
-		const toDate = series[series.length - 1].date;
+		const fromMonth = String(series[0]?.date || '').slice(0, 7);
+		const toMonth = String(series[series.length - 1]?.date || '').slice(0, 7);
 		const ipcaRows = await this.#queryAll({
 			TableName: this.tableName,
 			KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
@@ -3094,23 +3203,46 @@ class PlatformService {
 		});
 		const ipcaByMonth = new Map(
 			ipcaRows
-				.filter((row) => row.date >= fromDate && row.date <= toDate)
-				.map((row) => [String(row.date).slice(0, 7), numeric(row.value, 0)])
+				.map((row) => ({
+					month: String(row.date || '').slice(0, 7),
+					monthlyRate:
+						numeric(
+							typeof row.value === 'string'
+								? row.value.replace(',', '.')
+								: row.value,
+							0
+						) / 100,
+				}))
+				.filter((row) => row.month && row.month >= fromMonth && row.month <= toMonth)
+				.map((row) => [row.month, row.monthlyRate])
 		);
-
-		let inflationFactor = 1;
-		const output = [];
-		for (const point of series) {
-			const month = point.date.slice(0, 7);
-			const ipca = numeric(ipcaByMonth.get(month), 0) / 100;
-			inflationFactor *= 1 + ipca;
-			output.push({
-				date: point.date,
-				real_value: inflationFactor > 0 ? numeric(point.value, 0) / inflationFactor : numeric(point.value, 0),
-				nominal_value: numeric(point.value, 0),
-			});
+		if (ipcaByMonth.size === 0) return [];
+		const seriesMonths = Array.from(
+			new Set(
+				series
+					.map((point) => String(point.date || '').slice(0, 7))
+					.filter(Boolean)
+			)
+		).sort();
+		const indexByMonth = new Map();
+		let cumulativeIndex = 1;
+		for (const month of seriesMonths) {
+			cumulativeIndex *= 1 + numeric(ipcaByMonth.get(month), 0);
+			indexByMonth.set(month, cumulativeIndex);
 		}
-		return output;
+		const baseMonth = String(series[0]?.date || '').slice(0, 7);
+		const baseIndex = numeric(indexByMonth.get(baseMonth), 1);
+
+		return series.map((point) => {
+			const nominal = numeric(point.value, 0);
+			const month = String(point.date || '').slice(0, 7);
+			const currentIndex = numeric(indexByMonth.get(month), baseIndex);
+			return {
+				date: point.date,
+				real_value: currentIndex > 0 ? nominal * (baseIndex / currentIndex) : nominal,
+				nominal_value: nominal,
+			};
+		});
 	}
 
 	async #buildPortfolioValueSeries(portfolioId, metricsAssets, days = 365, options = {}) {
