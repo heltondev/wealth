@@ -1064,11 +1064,10 @@ async function handleAssetTools(method, id, body, userId, query = {}) {
 	}
 	if (query.action === 'financials') {
 		if (method !== 'GET') throw errorResponse(405, 'Method not allowed');
-		const details = await platformService.getAssetDetails(id, {
+		return platformService.getAssetFinancialStatements(id, {
 			userId,
 			portfolioId: query.portfolioId || null,
 		});
-		return details.financial_statements;
 	}
 	if (method !== 'GET') throw errorResponse(405, 'Method not allowed');
 	return platformService.getFairPrice(id, {

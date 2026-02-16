@@ -17,7 +17,16 @@ const {
 	toNumberOrNull,
 	nowIso,
 } = require('../market-data/utils');
+const { extractJsonScriptContent } = require('../market-data/fallback/extractors');
 const { resolveAssetMarket, resolveYahooSymbol } = require('../market-data/symbol-resolver');
+const { YahooApiProvider } = require('../market-data/providers/yahoo-api-provider');
+const { YahooFinanceScraper } = require('../market-data/fallback/scrapers/yahoo-finance-scraper');
+const { GoogleFinanceScraper } = require('../market-data/fallback/scrapers/google-finance-scraper');
+const { StatusInvestScraper } = require('../market-data/fallback/scrapers/status-invest-scraper');
+const { StatusInvestStructuredProvider } = require('../market-data/fallback/structured/status-invest-provider');
+const {
+	B3FinancialStatementsProvider,
+} = require('../market-data/fallback/structured/b3-financial-statements-provider');
 const {
 	buildAwsClientConfig,
 	resolveS3BucketName,
@@ -68,6 +77,478 @@ const TAX_RATE_BY_CLASS = {
 const numeric = (value, fallback = 0) => {
 	const parsed = toNumberOrNull(value);
 	return parsed === null ? fallback : parsed;
+};
+
+const FINANCIAL_STATEMENT_KEYS = [
+	'financials',
+	'quarterly_financials',
+	'balance_sheet',
+	'quarterly_balance_sheet',
+	'cashflow',
+	'quarterly_cashflow',
+];
+
+const FINANCIAL_DOCUMENT_LINK_KEY_HINTS = [
+	'url',
+	'link',
+	'href',
+	'download',
+	'viewer',
+];
+
+const FINANCIAL_DOCUMENT_TITLE_KEY_HINTS = [
+	'describletype',
+	'typename',
+	'label',
+	'arialabel',
+	'title',
+	'name',
+	'eventtitle',
+	'documenttype',
+	'reporttype',
+	'type',
+];
+
+const FINANCIAL_DOCUMENT_REFERENCE_DATE_KEY_HINTS = [
+	'referencedate',
+	'period',
+	'date',
+	'competencia',
+];
+
+const FINANCIAL_DOCUMENT_DELIVERY_DATE_KEY_HINTS = [
+	'deliverydate',
+	'publishdate',
+	'publishedat',
+	'createdat',
+	'updatedat',
+];
+
+const FINANCIAL_DOCUMENT_STATUS_KEY_HINTS = [
+	'status',
+	'situacao',
+];
+
+const FINANCIAL_DOCUMENT_TYPE_KEY_HINTS = [
+	'tipo',
+	'type',
+	'documenttype',
+	'reporttype',
+	'kind',
+	'classe',
+];
+
+const FINANCIAL_DOCUMENT_ID_KEY_HINTS = [
+	'id',
+	'idmain',
+	'idfnet',
+	'idcem',
+	'documentid',
+	'reportid',
+];
+
+const FINANCIAL_DOCUMENT_TITLE_KEYWORDS = [
+	'comunicado',
+	'relatorio',
+	'informe',
+	'fato relevante',
+	'assembleia',
+	'ata',
+	'document',
+	'filing',
+	'demonstrativo',
+	'demonstracao',
+	'resultado',
+];
+
+const createEmptyFinancialStatements = () => ({
+	financials: null,
+	quarterly_financials: null,
+	balance_sheet: null,
+	quarterly_balance_sheet: null,
+	cashflow: null,
+	quarterly_cashflow: null,
+});
+
+const isPopulatedStatement = (value) => {
+	if (Array.isArray(value)) return value.length > 0;
+	if (value && typeof value === 'object') return Object.keys(value).length > 0;
+	return false;
+};
+
+const hasAnyFinancialStatements = (statements) =>
+	FINANCIAL_STATEMENT_KEYS.some((key) => isPopulatedStatement(statements?.[key]));
+
+const mergeFinancialStatements = (base, incoming) => {
+	const merged = {
+		...createEmptyFinancialStatements(),
+		...(base || {}),
+	};
+	for (const key of FINANCIAL_STATEMENT_KEYS) {
+		if (!isPopulatedStatement(merged[key]) && isPopulatedStatement(incoming?.[key])) {
+			merged[key] = incoming[key];
+		}
+	}
+	return merged;
+};
+
+const normalizeRecordKey = (value) =>
+	String(value || '')
+		.normalize('NFD')
+		.replace(/[\u0300-\u036f]/g, '')
+		.toLowerCase()
+		.replace(/[^a-z0-9]/g, '');
+
+const isObjectRecord = (value) =>
+	value !== null && typeof value === 'object' && !Array.isArray(value);
+
+const normalizeDocumentUrl = (value) => {
+	const text = String(value || '').trim();
+	if (!text) return null;
+	if (/^https?:\/\//i.test(text)) return text;
+	if (text.startsWith('//')) return `https:${text}`;
+	if (text.startsWith('/')) return `https://sistemaswebb3-listados.b3.com.br${text}`;
+	if (/^[a-z0-9.-]+\.[a-z]{2,}\/?/i.test(text)) return `https://${text}`;
+	return null;
+};
+
+const looksLikeFinancialDocumentUrl = (url) => {
+	const normalized = String(url || '').toLowerCase();
+	if (!normalized) return false;
+	if (normalized.includes('.pdf')) return true;
+	if (normalized.includes('fundosnet')) return true;
+	if (normalized.includes('rad.cvm.gov.br')) return true;
+	if (normalized.includes('/download')) return true;
+	if (normalized.includes('document') || normalized.includes('comunicado')) return true;
+	return false;
+};
+
+const inferFinancialDocumentType = (title, fallback = null) => {
+	const normalized = String(title || fallback || '').toLowerCase();
+	if (!normalized) return null;
+	if (normalized.includes('comunicado')) return 'comunicado';
+	if (normalized.includes('fato relevante')) return 'fato_relevante';
+	if (normalized.includes('relatorio')) return 'relatorio';
+	if (normalized.includes('informe')) return 'informe';
+	if (normalized.includes('ata')) return 'ata';
+	if (normalized.includes('assembleia')) return 'assembleia';
+	if (normalized.includes('resultado')) return 'resultado';
+	if (normalized.includes('balanc') || normalized.includes('dre')) return 'demonstrativo';
+	return null;
+};
+
+const findRecordValueByHints = (record, hints) => {
+	if (!isObjectRecord(record)) return null;
+	for (const [key, value] of Object.entries(record)) {
+		const normalized = normalizeRecordKey(key);
+		if (!normalized) continue;
+		if (!hints.some((hint) => normalized.includes(hint))) continue;
+		if (value === null || value === undefined || String(value).trim() === '') continue;
+		return value;
+	}
+	return null;
+};
+
+const readFinancialDocumentLinksFromRecord = (record) => {
+	if (!isObjectRecord(record)) {
+		return {
+			primary: null,
+			viewer: null,
+			download: null,
+			all: [],
+		};
+	}
+
+	const urls = [];
+	for (const [key, value] of Object.entries(record)) {
+		const normalized = normalizeRecordKey(key);
+		if (!normalized) continue;
+		if (!FINANCIAL_DOCUMENT_LINK_KEY_HINTS.some((hint) => normalized.includes(hint))) continue;
+		const normalizedUrl = normalizeDocumentUrl(value);
+		if (!normalizedUrl) continue;
+		urls.push({ key: normalized, url: normalizedUrl });
+	}
+
+	const viewer = urls.find((item) => item.key.includes('viewer'))?.url || null;
+	const download = urls.find((item) => item.key.includes('download'))?.url || null;
+	const primary = viewer || download || urls[0]?.url || null;
+	const all = Array.from(new Set(urls.map((item) => item.url)));
+
+	return {
+		primary,
+		viewer,
+		download,
+		all,
+	};
+};
+
+const readFinancialDocumentsFromPayload = (payload, sourceHint) => {
+	const root = isObjectRecord(payload) ? payload : {};
+	const fundamentals = isObjectRecord(root.fundamentals) ? root.fundamentals : {};
+	const raw = isObjectRecord(root.raw) ? root.raw : {};
+
+	const sourceValue =
+		String(
+			root.data_source ||
+				root.source ||
+				fundamentals.data_source ||
+				raw.data_source ||
+				sourceHint ||
+				'financial_source'
+		)
+			.trim()
+			.toLowerCase() || 'financial_source';
+
+	const dedupe = new Set();
+	const documents = [];
+
+	const pushDocument = (record, context = {}) => {
+		if (!isObjectRecord(record)) return;
+
+		const links = readFinancialDocumentLinksFromRecord(record);
+		if (!links.primary) return;
+
+		const titleCandidateRaw =
+			context.title ||
+			findRecordValueByHints(record, FINANCIAL_DOCUMENT_TITLE_KEY_HINTS) ||
+			null;
+		const title = String(titleCandidateRaw || '').trim() || 'Financial filing';
+
+		const referenceDate =
+			normalizeDate(context.referenceDate) ||
+			normalizeDate(findRecordValueByHints(record, FINANCIAL_DOCUMENT_REFERENCE_DATE_KEY_HINTS)) ||
+			null;
+		const deliveryDate =
+			normalizeDate(context.deliveryDate) ||
+			normalizeDate(findRecordValueByHints(record, FINANCIAL_DOCUMENT_DELIVERY_DATE_KEY_HINTS)) ||
+			null;
+		const statusRaw =
+			context.status ||
+			findRecordValueByHints(record, FINANCIAL_DOCUMENT_STATUS_KEY_HINTS) ||
+			null;
+		const status = statusRaw ? String(statusRaw).trim() : null;
+
+		const categoryRaw =
+			context.category ||
+			findRecordValueByHints(record, ['category', 'tipo']) ||
+			null;
+		const category = categoryRaw ? String(categoryRaw).trim() : null;
+
+		const documentTypeRaw =
+			context.documentType ||
+			findRecordValueByHints(record, FINANCIAL_DOCUMENT_TYPE_KEY_HINTS) ||
+			inferFinancialDocumentType(title, category) ||
+			null;
+		const documentType = documentTypeRaw ? String(documentTypeRaw).trim() : null;
+
+		const titleKey = normalizeRecordKey(titleCandidateRaw || '');
+		const categoryKey = normalizeRecordKey(category || '');
+		const isFilingLike =
+			Boolean(context.forceInclude) ||
+			looksLikeFinancialDocumentUrl(links.primary) ||
+			FINANCIAL_DOCUMENT_TITLE_KEYWORDS.some((keyword) => {
+				const normalizedKeyword = normalizeRecordKey(keyword);
+				return titleKey.includes(normalizedKeyword) || categoryKey.includes(normalizedKeyword);
+			});
+		if (!isFilingLike) return;
+
+		const idRaw =
+			context.documentId ||
+			findRecordValueByHints(record, FINANCIAL_DOCUMENT_ID_KEY_HINTS) ||
+			null;
+		const id = idRaw ? String(idRaw).trim() : null;
+
+		const dedupeKey = [
+			sourceValue,
+			links.primary,
+			links.viewer || '',
+			links.download || '',
+			referenceDate || '',
+			deliveryDate || '',
+			title,
+		].join('|');
+		if (dedupe.has(dedupeKey)) return;
+		dedupe.add(dedupeKey);
+
+		documents.push({
+			id,
+			source: sourceValue,
+			title,
+			category,
+			document_type: documentType,
+			reference_date: referenceDate,
+			delivery_date: deliveryDate,
+			status,
+			url: links.primary,
+			url_viewer: links.viewer,
+			url_download: links.download,
+			url_alternatives: links.all.filter((url) => url !== links.primary),
+		});
+	};
+
+	const reportRows = Array.isArray(raw.reports) ? raw.reports : [];
+	for (const report of reportRows) {
+		if (!isObjectRecord(report)) continue;
+		const reportTitle =
+			report.typeLabel ||
+			report.label ||
+			report.typeName ||
+			findRecordValueByHints(report, FINANCIAL_DOCUMENT_TITLE_KEY_HINTS) ||
+			null;
+		const reportStatus = findRecordValueByHints(report, FINANCIAL_DOCUMENT_STATUS_KEY_HINTS);
+		const reportId = findRecordValueByHints(report, FINANCIAL_DOCUMENT_ID_KEY_HINTS);
+		const rowEntries = Array.isArray(report.rows) ? report.rows : [];
+
+		if (rowEntries.length === 0) {
+			pushDocument(report, {
+				title: reportTitle,
+				documentType: inferFinancialDocumentType(reportTitle),
+				status: reportStatus,
+				documentId: reportId,
+				forceInclude: true,
+			});
+			continue;
+		}
+
+		for (const row of rowEntries) {
+			pushDocument(row, {
+				title: reportTitle,
+				documentType: inferFinancialDocumentType(reportTitle),
+				status: reportStatus,
+				documentId: reportId,
+				forceInclude: true,
+			});
+		}
+	}
+
+	const directCandidates = [
+		root,
+		fundamentals,
+		raw,
+		raw.detail,
+		fundamentals.b3,
+	];
+
+	for (const candidate of directCandidates) {
+		pushDocument(candidate);
+	}
+
+	const listCandidates = [
+		root.documents,
+		root.communications,
+		root.comunicados,
+		root.notices,
+		root.filings,
+		root.reports,
+		fundamentals.documents,
+		fundamentals.communications,
+		fundamentals.comunicados,
+		fundamentals.notices,
+		fundamentals.filings,
+		fundamentals.reports,
+		raw.documents,
+		raw.communications,
+		raw.comunicados,
+		raw.notices,
+		raw.filings,
+	];
+
+	for (const candidate of listCandidates) {
+		if (!Array.isArray(candidate)) continue;
+		for (const row of candidate) {
+			pushDocument(row);
+		}
+	}
+
+	return documents;
+};
+
+const mergeFinancialDocuments = (base, incoming) => {
+	const dedupe = new Set();
+	const merged = [];
+	const append = (entry) => {
+		if (!isObjectRecord(entry)) return;
+		const url = String(entry.url || '').trim();
+		if (!url) return;
+		const key = [
+			url,
+			String(entry.reference_date || ''),
+			String(entry.delivery_date || ''),
+			String(entry.title || ''),
+		].join('|');
+		if (dedupe.has(key)) return;
+		dedupe.add(key);
+		merged.push(entry);
+	};
+
+	for (const entry of Array.isArray(base) ? base : []) append(entry);
+	for (const entry of Array.isArray(incoming) ? incoming : []) append(entry);
+
+	return merged.sort((left, right) => {
+		const leftDate = normalizeDate(left.reference_date || left.delivery_date || null) || '0000-00-00';
+		const rightDate = normalizeDate(right.reference_date || right.delivery_date || null) || '0000-00-00';
+		return rightDate.localeCompare(leftDate);
+	});
+};
+
+const readFinancialStatementsFromPayload = (payload) => {
+	const root = payload && typeof payload === 'object' ? payload : {};
+	const fundamentals = root.fundamentals && typeof root.fundamentals === 'object' ? root.fundamentals : {};
+	const raw = root.raw && typeof root.raw === 'object' ? root.raw : {};
+	const quoteSummary = raw.quote_summary && typeof raw.quote_summary === 'object' ? raw.quote_summary : {};
+	const rawFinal = raw.final_payload && typeof raw.final_payload === 'object' ? raw.final_payload : {};
+	const rawPrimary = raw.primary_payload && typeof raw.primary_payload === 'object' ? raw.primary_payload : {};
+
+	return {
+		financials:
+			root.financials ??
+			fundamentals.financials ??
+			raw.financials ??
+			rawFinal.financials ??
+			rawPrimary.financials ??
+			quoteSummary.financials ??
+			null,
+		quarterly_financials:
+			root.quarterly_financials ??
+			fundamentals.quarterly_financials ??
+			raw.quarterly_financials ??
+			rawFinal.quarterly_financials ??
+			rawPrimary.quarterly_financials ??
+			quoteSummary.quarterly_financials ??
+			null,
+		balance_sheet:
+			root.balance_sheet ??
+			fundamentals.balance_sheet ??
+			raw.balance_sheet ??
+			rawFinal.balance_sheet ??
+			rawPrimary.balance_sheet ??
+			quoteSummary.balance_sheet ??
+			null,
+		quarterly_balance_sheet:
+			root.quarterly_balance_sheet ??
+			fundamentals.quarterly_balance_sheet ??
+			raw.quarterly_balance_sheet ??
+			rawFinal.quarterly_balance_sheet ??
+			rawPrimary.quarterly_balance_sheet ??
+			quoteSummary.quarterly_balance_sheet ??
+			null,
+		cashflow:
+			root.cashflow ??
+			fundamentals.cashflow ??
+			raw.cashflow ??
+			rawFinal.cashflow ??
+			rawPrimary.cashflow ??
+			quoteSummary.cashflow ??
+			null,
+		quarterly_cashflow:
+			root.quarterly_cashflow ??
+			fundamentals.quarterly_cashflow ??
+			raw.quarterly_cashflow ??
+			rawFinal.quarterly_cashflow ??
+			rawPrimary.quarterly_cashflow ??
+			quoteSummary.quarterly_cashflow ??
+			null,
+	};
 };
 
 const normalizeDate = (value) => {
@@ -216,6 +697,14 @@ class PlatformService {
 		this.logger = options.logger || console;
 		this.marketDataService = options.marketDataService;
 		this.priceHistoryService = options.priceHistoryService;
+		this.yahooApiProvider = options.yahooApiProvider || new YahooApiProvider(options);
+		this.yahooFinanceScraper = options.yahooFinanceScraper || new YahooFinanceScraper(options);
+		this.googleFinanceScraper = options.googleFinanceScraper || new GoogleFinanceScraper(options);
+		this.statusInvestStructuredProvider =
+			options.statusInvestStructuredProvider || new StatusInvestStructuredProvider(options);
+		this.statusInvestScraper = options.statusInvestScraper || new StatusInvestScraper(options);
+		this.b3FinancialStatementsProvider =
+			options.b3FinancialStatementsProvider || new B3FinancialStatementsProvider(options);
 		this.runtimeEnv = resolveRuntimeEnvironment();
 		this.reportsLocalDir =
 			options.reportsLocalDir ||
@@ -1825,29 +2314,171 @@ class PlatformService {
 			portfolioId: context.portfolioId,
 			method: options.method || 'fifo',
 		});
+		const financialStatements = this.#extractFinancialStatementsFromDetail(detail);
 
 		return {
 			asset: context.asset,
 			detail: detail || null,
 			latest_price: prices.length ? prices[prices.length - 1] : null,
 			average_cost: averageCost,
-			financial_statements: {
-				financials: detail?.raw?.final_payload?.financials || detail?.raw?.primary_payload?.financials || null,
-				quarterly_financials:
-					detail?.raw?.final_payload?.quarterly_financials ||
-					detail?.raw?.primary_payload?.quarterly_financials ||
-					null,
-				balance_sheet: detail?.raw?.final_payload?.balance_sheet || detail?.raw?.primary_payload?.balance_sheet || null,
-				quarterly_balance_sheet:
-					detail?.raw?.final_payload?.quarterly_balance_sheet ||
-					detail?.raw?.primary_payload?.quarterly_balance_sheet ||
-					null,
-				cashflow: detail?.raw?.final_payload?.cashflow || detail?.raw?.primary_payload?.cashflow || null,
-				quarterly_cashflow:
-					detail?.raw?.final_payload?.quarterly_cashflow ||
-					detail?.raw?.primary_payload?.quarterly_cashflow ||
-					null,
-			},
+			financial_statements: financialStatements,
+			fetched_at: nowIso(),
+		};
+	}
+
+	async getAssetFinancialStatements(ticker, options = {}) {
+		const details = await this.getAssetDetails(ticker, options);
+		const current = mergeFinancialStatements(createEmptyFinancialStatements(), details.financial_statements);
+		let documents = readFinancialDocumentsFromPayload(details.detail, 'cached_asset_detail');
+		const sourcesWithData = new Set();
+		const attemptedSources = [];
+		const errors = [];
+
+		if (hasAnyFinancialStatements(current)) {
+			sourcesWithData.add('cached_asset_detail');
+		}
+
+		const market = resolveAssetMarket(details.asset);
+		const sourceAsset = {
+			...details.asset,
+			market,
+		};
+		const yahooSymbol = resolveYahooSymbol(details.asset.ticker, market);
+
+		const candidates = [];
+		if (yahooSymbol && market !== 'TESOURO') {
+			candidates.push({
+				source: 'yahoo_quote_summary_api',
+				load: async () => {
+					const payload = await this.yahooApiProvider.fetch(yahooSymbol, { historyDays: 5 });
+					return {
+						statements: readFinancialStatementsFromPayload(payload),
+						documents: readFinancialDocumentsFromPayload(payload, 'yahoo_quote_summary_api'),
+						error: payload?.raw?.quote_summary_error || null,
+					};
+				},
+			});
+			candidates.push({
+				source: 'yahoo_finance_scraper',
+				load: async () => {
+					const payload = await this.yahooFinanceScraper.scrape(sourceAsset);
+					return {
+						statements: readFinancialStatementsFromPayload(payload),
+						documents: readFinancialDocumentsFromPayload(payload, 'yahoo_finance_scraper'),
+						error: null,
+					};
+				},
+			});
+		}
+
+		if (market === 'BR') {
+			candidates.push({
+				source: 'b3_direct_financials',
+				load: async () => {
+					const payload = await this.b3FinancialStatementsProvider.fetch(sourceAsset);
+					return {
+						statements: readFinancialStatementsFromPayload(payload),
+						documents: readFinancialDocumentsFromPayload(payload, 'b3_direct_financials'),
+						error: payload?.raw?.error || null,
+					};
+				},
+			});
+			candidates.push({
+				source: 'statusinvest_structured',
+				load: async () => {
+					const payload = await this.statusInvestStructuredProvider.fetch(sourceAsset);
+					return {
+						statements: readFinancialStatementsFromPayload(payload),
+						documents: readFinancialDocumentsFromPayload(payload, 'statusinvest_structured'),
+						error: null,
+					};
+				},
+			});
+			candidates.push({
+				source: 'statusinvest_scraper',
+				load: async () => {
+					const payload = await this.statusInvestScraper.scrape(sourceAsset);
+					return {
+						statements: readFinancialStatementsFromPayload(payload),
+						documents: readFinancialDocumentsFromPayload(payload, 'statusinvest_scraper'),
+						error: null,
+					};
+				},
+			});
+		}
+
+		if (['BR', 'US', 'CA'].includes(market)) {
+			candidates.push({
+				source: 'google_finance_scraper',
+				load: async () => {
+					const payload = await this.googleFinanceScraper.scrape(sourceAsset);
+					return {
+						statements: readFinancialStatementsFromPayload(payload),
+						documents: readFinancialDocumentsFromPayload(payload, 'google_finance_scraper'),
+						error: null,
+					};
+				},
+			});
+		}
+
+		let merged = current;
+		for (const candidate of candidates) {
+			attemptedSources.push(candidate.source);
+			try {
+				const loaded = await candidate.load();
+				const candidateStatements = loaded?.statements || createEmptyFinancialStatements();
+				documents = mergeFinancialDocuments(documents, loaded?.documents);
+				if (loaded?.error?.message) {
+					errors.push({
+						source: candidate.source,
+						message: loaded.error.message,
+					});
+				}
+				if (hasAnyFinancialStatements(candidateStatements)) {
+					sourcesWithData.add(candidate.source);
+				}
+
+				const nextMerged = mergeFinancialStatements(merged, candidateStatements);
+				merged = nextMerged;
+				if (FINANCIAL_STATEMENT_KEYS.every((key) => isPopulatedStatement(merged[key]))) {
+					break;
+				}
+			} catch (error) {
+				errors.push({
+					source: candidate.source,
+					message: error.message,
+				});
+			}
+		}
+
+		const normalizedAssetClass = String(details.asset.assetClass || '').toLowerCase();
+		if (market === 'BR' && ['fii', 'stock'].includes(normalizedAssetClass)) {
+			attemptedSources.push('statusinvest_communications');
+			try {
+				const communications = await this.#fetchStatusInvestFilingDocuments(
+					details.asset.ticker,
+					details.asset.assetClass
+				);
+				documents = mergeFinancialDocuments(documents, communications);
+				if (Array.isArray(communications) && communications.length > 0) {
+					sourcesWithData.add('statusinvest_communications');
+				}
+			} catch (error) {
+				errors.push({
+					source: 'statusinvest_communications',
+					message: error.message,
+				});
+			}
+		}
+
+		return {
+			...merged,
+			ticker: details.asset.ticker,
+			portfolioId: details.asset.portfolioId,
+			sources: Array.from(sourcesWithData),
+			attempted_sources: attemptedSources,
+			documents,
+			errors,
 			fetched_at: nowIso(),
 		};
 	}
@@ -3019,13 +3650,17 @@ class PlatformService {
 		return fallback;
 	}
 
-	async #fetchStatusInvestDividendEvents(ticker, assetClass = 'fii') {
+	#buildStatusInvestAssetUrl(ticker, assetClass = 'fii') {
 		const rawTicker = String(ticker || '').toLowerCase().replace(/\.sa$/i, '');
 		const slug = rawTicker.replace(/[^a-z0-9]/g, '');
-		if (!slug) return [];
-
+		if (!slug) return null;
 		const category = String(assetClass || '').toLowerCase() === 'fii' ? 'fundos-imobiliarios' : 'acoes';
-		const sourceUrl = `https://statusinvest.com.br/${category}/${slug}`;
+		return `https://statusinvest.com.br/${category}/${slug}`;
+	}
+
+	async #fetchStatusInvestDividendEvents(ticker, assetClass = 'fii') {
+		const sourceUrl = this.#buildStatusInvestAssetUrl(ticker, assetClass);
+		if (!sourceUrl) return [];
 		const timeoutMs = Number(process.env.MARKET_DATA_STATUSINVEST_TIMEOUT_MS || 9000);
 		let response;
 		try {
@@ -3064,6 +3699,236 @@ class PlatformService {
 			data_source: 'statusinvest_proventos',
 			is_scraped: true,
 		}));
+	}
+
+	async #fetchStatusInvestFilingDocuments(ticker, assetClass = 'fii') {
+		const sourceUrl = this.#buildStatusInvestAssetUrl(ticker, assetClass);
+		if (!sourceUrl) return [];
+		const timeoutMs = Number(process.env.MARKET_DATA_STATUSINVEST_TIMEOUT_MS || 9000);
+
+		let response;
+		try {
+			response = await withRetry(
+				() =>
+					fetchWithTimeout(sourceUrl, {
+						timeoutMs,
+						headers: { Accept: 'text/html,*/*' },
+					}),
+				{ retries: 0, baseDelayMs: 400, factor: 2 }
+			);
+		} catch {
+			return [];
+		}
+		if (!response?.ok) return [];
+
+		const html = await response.text();
+		const htmlRows = this.#extractStatusInvestFilingsFromHtml(html, sourceUrl);
+		const jsonRows = this.#extractStatusInvestFilingsFromNextData(html, sourceUrl);
+		return mergeFinancialDocuments(htmlRows, jsonRows).slice(0, 200);
+	}
+
+	#extractStatusInvestFilingsFromHtml(html, sourceUrl) {
+		const content = String(html || '');
+		if (!content) return [];
+
+		const rows = content.match(/<tr[\s\S]*?<\/tr>/gi) || [];
+		const extracted = [];
+
+		for (const row of rows) {
+			const linkMatches = Array.from(
+				row.matchAll(/<a[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)
+			);
+			if (linkMatches.length === 0) continue;
+
+			const links = linkMatches
+				.map((match) => ({
+					url: this.#resolveAbsoluteUrl(sourceUrl, match[1]),
+					label: this.#htmlToPlainText(match[2] || ''),
+				}))
+				.filter((entry) => Boolean(entry.url));
+			if (links.length === 0) continue;
+
+			const selectedLink = links.find((entry) => looksLikeFinancialDocumentUrl(entry.url)) || links[0];
+			if (!selectedLink?.url) continue;
+
+			const cells = [];
+			const cellRegex = /<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi;
+			let cellMatch;
+			while ((cellMatch = cellRegex.exec(row)) !== null) {
+				const text = this.#htmlToPlainText(cellMatch[1] || '');
+				if (text) cells.push(text);
+			}
+
+			const rowText = this.#htmlToPlainText(row);
+			const rowTextLower = rowText.toLowerCase();
+			const hasFilingKeyword = FINANCIAL_DOCUMENT_TITLE_KEYWORDS.some((keyword) =>
+				rowTextLower.includes(keyword)
+			);
+			if (!hasFilingKeyword && !looksLikeFinancialDocumentUrl(selectedLink.url)) continue;
+
+			const dateMatches = rowText.match(/\b\d{2}\/\d{2}\/\d{4}\b/g) || [];
+			const firstDate = normalizeDate(dateMatches[0] || null);
+			const secondDate = normalizeDate(dateMatches[1] || null);
+
+			const nonDateCells = cells.filter((cell) => !/\b\d{2}\/\d{2}\/\d{4}\b/.test(cell));
+			const title =
+				selectedLink.label ||
+				nonDateCells.find((cell) => cell.length >= 3) ||
+				'Comunicado';
+			const categoryCandidate = nonDateCells.find(
+				(cell) => cell !== title && FINANCIAL_DOCUMENT_TITLE_KEYWORDS.some((keyword) => cell.toLowerCase().includes(keyword))
+			);
+			const category = categoryCandidate || null;
+			const documentType = inferFinancialDocumentType(title, category);
+
+			extracted.push({
+				id: null,
+				source: 'statusinvest_communications',
+				title,
+				category,
+				document_type: documentType,
+				reference_date: secondDate || firstDate || null,
+				delivery_date: firstDate || secondDate || null,
+				status: null,
+				url: selectedLink.url,
+				url_viewer: null,
+				url_download: selectedLink.url,
+				url_alternatives: links
+					.map((entry) => entry.url)
+					.filter((url) => url && url !== selectedLink.url),
+			});
+		}
+
+		return extracted;
+	}
+
+	#extractStatusInvestFilingsFromNextData(html, sourceUrl) {
+		const content = String(html || '');
+		if (!content) return [];
+
+		const script = extractJsonScriptContent(content, '__NEXT_DATA__');
+		if (!script) return [];
+
+		let payload;
+		try {
+			payload = JSON.parse(script);
+		} catch {
+			return [];
+		}
+
+		const rows = [];
+		const visited = new Set();
+		const dedupe = new Set();
+
+		const pushCandidate = (entry, path) => {
+			if (!isObjectRecord(entry)) return;
+			const urls = [];
+			for (const [rawKey, rawValue] of Object.entries(entry)) {
+				const normalizedKey = normalizeRecordKey(rawKey);
+				if (!normalizedKey) continue;
+				if (!FINANCIAL_DOCUMENT_LINK_KEY_HINTS.some((hint) => normalizedKey.includes(hint))) continue;
+				const normalizedUrl = this.#resolveAbsoluteUrl(sourceUrl, rawValue);
+				if (!normalizedUrl) continue;
+				urls.push(normalizedUrl);
+			}
+			if (urls.length === 0) return;
+
+			const titleRaw =
+				findRecordValueByHints(entry, FINANCIAL_DOCUMENT_TITLE_KEY_HINTS) ||
+				findRecordValueByHints(entry, ['description', 'descricao', 'subject']) ||
+				null;
+			const categoryRaw =
+				findRecordValueByHints(entry, ['category', 'categoria', 'classe']) ||
+				null;
+			const keysText = Object.keys(entry).map((key) => normalizeRecordKey(key)).join(' ');
+			const pathText = path.map((segment) => normalizeRecordKey(segment)).join(' ');
+			const contextText = normalizeRecordKey(
+				`${keysText} ${pathText} ${String(titleRaw || '')} ${String(categoryRaw || '')}`
+			);
+			const hasFilingKeyword = FINANCIAL_DOCUMENT_TITLE_KEYWORDS.some((keyword) =>
+				contextText.includes(normalizeRecordKey(keyword))
+			);
+
+			const primaryUrl = urls.find((url) => looksLikeFinancialDocumentUrl(url)) || urls[0];
+			if (!primaryUrl) return;
+			if (!hasFilingKeyword && !looksLikeFinancialDocumentUrl(primaryUrl)) return;
+
+			const title = String(titleRaw || '').trim() || 'Comunicado';
+			const category = categoryRaw ? String(categoryRaw).trim() : null;
+			const documentTypeRaw =
+				findRecordValueByHints(entry, FINANCIAL_DOCUMENT_TYPE_KEY_HINTS) ||
+				inferFinancialDocumentType(title, category);
+			const documentType = documentTypeRaw ? String(documentTypeRaw).trim() : null;
+			const statusRaw = findRecordValueByHints(entry, FINANCIAL_DOCUMENT_STATUS_KEY_HINTS);
+			const status = statusRaw ? String(statusRaw).trim() : null;
+			const idRaw = findRecordValueByHints(entry, FINANCIAL_DOCUMENT_ID_KEY_HINTS);
+			const id = idRaw ? String(idRaw).trim() : null;
+			const referenceDate = normalizeDate(
+				findRecordValueByHints(entry, FINANCIAL_DOCUMENT_REFERENCE_DATE_KEY_HINTS)
+			);
+			const deliveryDate = normalizeDate(
+				findRecordValueByHints(entry, FINANCIAL_DOCUMENT_DELIVERY_DATE_KEY_HINTS)
+			);
+
+			const key = `${primaryUrl}|${referenceDate || ''}|${deliveryDate || ''}|${title}`;
+			if (dedupe.has(key)) return;
+			dedupe.add(key);
+
+			rows.push({
+				id,
+				source: 'statusinvest_communications',
+				title,
+				category,
+				document_type: documentType,
+				reference_date: referenceDate || null,
+				delivery_date: deliveryDate || null,
+				status,
+				url: primaryUrl,
+				url_viewer: primaryUrl,
+				url_download: urls.find((url) => url !== primaryUrl) || null,
+				url_alternatives: urls.filter((url) => url !== primaryUrl),
+			});
+		};
+
+		const walk = (node, path = []) => {
+			if (node === null || node === undefined) return;
+			if (Array.isArray(node)) {
+				for (let index = 0; index < node.length; index += 1) {
+					walk(node[index], [...path, String(index)]);
+				}
+				return;
+			}
+			if (!isObjectRecord(node)) return;
+
+			if (visited.has(node)) return;
+			visited.add(node);
+
+			pushCandidate(node, path);
+			for (const [key, value] of Object.entries(node)) {
+				if (value && typeof value === 'object') {
+					walk(value, [...path, key]);
+				}
+			}
+		};
+
+		walk(payload, []);
+		return rows;
+	}
+
+	#resolveAbsoluteUrl(baseUrl, value) {
+		const text = String(value || '').trim();
+		if (!text) return null;
+		if (/^https?:\/\//i.test(text)) return text;
+		if (text.startsWith('//')) return `https:${text}`;
+		if (text.startsWith('/')) {
+			try {
+				return new URL(text, baseUrl).toString();
+			} catch {
+				return null;
+			}
+		}
+		if (/^[a-z0-9.-]+\.[a-z]{2,}\/?/i.test(text)) return `https://${text}`;
+		return null;
 	}
 
 	async #fetchFundsExplorerDividendEvents(ticker) {
@@ -3486,6 +4351,12 @@ class PlatformService {
 			})
 		);
 		return response.Item || null;
+	}
+
+	#extractFinancialStatementsFromDetail(detail) {
+		if (!detail) return createEmptyFinancialStatements();
+		const extracted = readFinancialStatementsFromPayload(detail);
+		return mergeFinancialStatements(createEmptyFinancialStatements(), extracted);
 	}
 
 	async #listAssetPriceRows(portfolioId, assetId) {

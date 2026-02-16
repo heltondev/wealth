@@ -556,6 +556,7 @@
           "valuation": "Valuation",
           "fundamentals": "Fundamentos",
           "profile": "Perfil da Empresa",
+          "profileSource": "Perfil da Empresa & Qualidade dos Dados",
           "source": "Qualidade dos Dados"
         },
         "sector": "Setor",
@@ -585,6 +586,63 @@
           "b3": "B3",
           "clubeFii": "Clube FII",
           "fiis": "FIIs.com.br"
+        }
+      },
+      "financials": {
+        "title": "Demonstrativos Financeiros",
+        "loadError": "Falha ao carregar os demonstrativos financeiros.",
+        "empty": "Sem demonstrativos financeiros disponíveis para este ativo.",
+        "metric": "Métrica",
+        "noMetric": "Sem métricas disponíveis",
+        "period": "Período",
+        "evolutionTitle": "Evolução de {{metric}}",
+        "latest": "Atual",
+        "previous": "Anterior",
+        "delta": "Variação",
+        "statement": {
+          "label": "Demonstrativo",
+          "income": "DRE",
+          "balance": "Balanço Patrimonial",
+          "cashflow": "Fluxo de Caixa"
+        },
+        "frequency": {
+          "label": "Frequência",
+          "annual": "Anual",
+          "quarterly": "Trimestral"
+        }
+      },
+      "documents": {
+        "title": "Comunicados e Arquivos",
+        "count_one": "{{count}} documento",
+        "count_other": "{{count}} documentos",
+        "empty": "Nenhum documento regulatório foi retornado para este ativo ainda.",
+        "emptyFiltered": "Nenhum documento corresponde aos filtros selecionados.",
+        "untitled": "Arquivo financeiro",
+        "open": "Abrir",
+        "category": "Categoria",
+        "source": "Fonte",
+        "referenceDate": "Data de Referência",
+        "deliveryDate": "Data de Entrega",
+        "status": "Status",
+        "filters": {
+          "all": "Todos",
+          "category": "Filtro de categoria",
+          "type": "Filtro de tipo"
+        },
+        "columns": {
+          "date": "Data",
+          "category": "Categoria",
+          "type": "Tipo",
+          "title": "Documento",
+          "source": "Fonte",
+          "status": "Status",
+          "action": "Ação"
+        },
+        "fallback": {
+          "statusInvest": "Página no Status Invest",
+          "b3": "Página de FIIs listados na B3",
+          "clubeFii": "Página no Clube FII",
+          "fiis": "Página no FIIs.com.br"
         }
       },
       "provents": {

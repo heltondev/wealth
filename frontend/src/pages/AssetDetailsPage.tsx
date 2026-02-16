@@ -1,8 +1,18 @@
 import { useTranslation } from 'react-i18next';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import Layout from '../components/Layout';
 import ExpandableText from '../components/ExpandableText';
+import SharedDropdown from '../components/SharedDropdown';
 import { api, type Asset, type Transaction } from '../services/api';
 import { usePortfolioData } from '../context/PortfolioDataContext';
 import { formatCurrency, formatDate } from '../utils/formatters';
@@ -39,6 +49,8 @@ type AssetPriceSeriesPoint = {
 };
 
 type ChartPeriodPreset = 'MAX' | '5A' | '2A' | '1A' | '6M' | '3M' | '1M' | 'CUSTOM';
+type FinancialStatementKind = 'income' | 'balance' | 'cashflow';
+type FinancialFrequency = 'annual' | 'quarterly';
 type AssetInsightsSnapshot = {
   status: 'loading' | 'ready' | 'error';
   source: string | null;
@@ -71,6 +83,47 @@ type AssetInsightsSnapshot = {
   errorMessage: string | null;
 };
 
+type AssetFinancialStatements = {
+  financials?: unknown;
+  quarterly_financials?: unknown;
+  balance_sheet?: unknown;
+  quarterly_balance_sheet?: unknown;
+  cashflow?: unknown;
+  quarterly_cashflow?: unknown;
+  documents?: unknown;
+};
+
+type AssetFinancialDocument = {
+  id: string | null;
+  source: string | null;
+  title: string | null;
+  category: string | null;
+  documentType: string | null;
+  referenceDate: string | null;
+  deliveryDate: string | null;
+  status: string | null;
+  url: string;
+  viewerUrl: string | null;
+  downloadUrl: string | null;
+};
+
+type ParsedFinancialRow = {
+  key: string;
+  label: string;
+  valuesByPeriod: Record<string, number | null>;
+};
+
+type ParsedFinancialStatement = {
+  periods: string[];
+  rows: ParsedFinancialRow[];
+};
+
+type FinancialSeriesPoint = {
+  period: string;
+  label: string;
+  value: number | null;
+};
+
 const COUNTRY_FLAG_MAP: Record<string, string> = {
   BR: '🇧🇷',
   US: '🇺🇸',
@@ -94,6 +147,24 @@ const CHART_PERIOD_DAYS: Partial<Record<ChartPeriodPreset, number>> = {
   '1A': 365,
   '2A': 730,
   '5A': 1825,
+};
+
+const FINANCIAL_STATEMENT_KEY_MAP: Record<
+FinancialStatementKind,
+Record<FinancialFrequency, keyof AssetFinancialStatements>
+> = {
+  income: {
+    annual: 'financials',
+    quarterly: 'quarterly_financials',
+  },
+  balance: {
+    annual: 'balance_sheet',
+    quarterly: 'quarterly_balance_sheet',
+  },
+  cashflow: {
+    annual: 'cashflow',
+    quarterly: 'quarterly_cashflow',
+  },
 };
 
 const toIsoDate = (value: string) => {
@@ -143,6 +214,33 @@ const toTickerSlug = (ticker: string): string => (
     .replace(/\.sa$/i, '')
     .replace(/[^a-z0-9]/g, '')
 );
+
+const toDisplayLabel = (value: string): string => (
+  String(value || '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1).toLowerCase()}`)
+    .join(' ')
+);
+
+const splitFieldsIntoColumns = <T,>(fields: T[], columnCount = 2): T[][] => {
+  if (!Array.isArray(fields) || fields.length === 0) {
+    return Array.from({ length: Math.max(1, columnCount) }, () => []);
+  }
+  const safeColumnCount = Math.max(1, columnCount);
+  const rowsPerColumn = Math.ceil(fields.length / safeColumnCount);
+  const columns: T[][] = [];
+
+  for (let index = 0; index < safeColumnCount; index += 1) {
+    const start = index * rowsPerColumn;
+    const end = start + rowsPerColumn;
+    columns.push(fields.slice(start, end));
+  }
+
+  return columns;
+};
 
 const buildAssetExternalLinks = (ticker: string, assetClass: string) => {
   const normalizedTicker = String(ticker || '').toUpperCase();
@@ -218,6 +316,347 @@ const summarizeSourceValue = (value: unknown): string | null => {
   return null;
 };
 
+const normalizeFinancialKey = (value: string): string => (
+  String(value || '')
+    .replace(/[\s_-]/g, '')
+    .toLowerCase()
+);
+
+const FINANCIAL_PERIOD_KEY_TOKENS = new Set([
+  'date',
+  'asofdate',
+  'period',
+  'enddate',
+  'fiscaldateending',
+  'reporteddate',
+]);
+
+const FINANCIAL_META_KEY_TOKENS = new Set([
+  ...FINANCIAL_PERIOD_KEY_TOKENS,
+  'currency',
+  'currencycode',
+  'reportedcurrency',
+  'maxage',
+]);
+
+const FINANCIAL_ACRONYMS = new Set([
+  'EBIT',
+  'EBITDA',
+  'EPS',
+  'LPA',
+  'VPA',
+  'ROE',
+  'ROA',
+  'ROIC',
+  'PPE',
+  'CAPEX',
+  'FFO',
+  'AFFO',
+]);
+
+const normalizeFinancialPeriod = (value: unknown): string | null => {
+  const text = String(value || '').trim();
+  if (!text) return null;
+
+  const quarterYearFirst = text.match(/^(\d{4})[-/ ]?Q([1-4])$/i);
+  if (quarterYearFirst) {
+    return `${quarterYearFirst[1]}-Q${quarterYearFirst[2]}`;
+  }
+
+  const quarterLabelFirst = text.match(/^Q([1-4])[-/ ]?(\d{4})$/i);
+  if (quarterLabelFirst) {
+    return `${quarterLabelFirst[2]}-Q${quarterLabelFirst[1]}`;
+  }
+
+  const isoMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+  }
+
+  const yearMonthMatch = text.match(/^(\d{4})-(\d{2})$/);
+  if (yearMonthMatch) {
+    return `${yearMonthMatch[1]}-${yearMonthMatch[2]}-01`;
+  }
+
+  const yearMatch = text.match(/^(\d{4})$/);
+  if (yearMatch) {
+    return `${yearMatch[1]}-12-31`;
+  }
+
+  const parsed = new Date(text);
+  if (!Number.isFinite(parsed.getTime())) return null;
+  return parsed.toISOString().slice(0, 10);
+};
+
+const isFinancialMetaKey = (key: string): boolean => FINANCIAL_META_KEY_TOKENS.has(normalizeFinancialKey(key));
+
+const resolveFinancialPeriodFromRecord = (value: unknown): string | null => {
+  const record = toObjectRecord(value);
+  const entries = Object.entries(record);
+  if (entries.length === 0) return null;
+
+  for (const [key, fieldValue] of entries) {
+    if (!FINANCIAL_PERIOD_KEY_TOKENS.has(normalizeFinancialKey(key))) continue;
+    const normalized = normalizeFinancialPeriod(fieldValue);
+    if (normalized) return normalized;
+  }
+
+  for (const key of Object.keys(record)) {
+    const normalized = normalizeFinancialPeriod(key);
+    if (normalized) return normalized;
+  }
+
+  return null;
+};
+
+const toFinancialPeriodSortKey = (period: string): number => {
+  const quarterMatch = period.match(/^(\d{4})-Q([1-4])$/);
+  if (quarterMatch) {
+    const year = Number(quarterMatch[1]);
+    const quarter = Number(quarterMatch[2]);
+    return Date.UTC(year, (quarter - 1) * 3, 1);
+  }
+
+  const isoMatch = period.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoMatch) {
+    return Date.UTC(Number(isoMatch[1]), Number(isoMatch[2]) - 1, Number(isoMatch[3]));
+  }
+
+  return Number.NEGATIVE_INFINITY;
+};
+
+const toFinancialMetricLabel = (key: string): string => {
+  const normalized = String(key || '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!normalized) return key;
+
+  return normalized
+    .split(' ')
+    .map((word) => {
+      const upper = word.toUpperCase();
+      if (FINANCIAL_ACRONYMS.has(upper)) return upper;
+      if (upper.length <= 3 && word === upper) return upper;
+      return `${word.charAt(0).toUpperCase()}${word.slice(1).toLowerCase()}`;
+    })
+    .join(' ');
+};
+
+const extractFinancialNumericValue = (value: unknown): number | null => {
+  const direct = toNumericValue(value);
+  if (direct !== null) return direct;
+
+  const record = toObjectRecord(value);
+  if (Object.keys(record).length === 0) return null;
+
+  const reportedValue = toObjectRecord(record.reportedValue);
+  const firstCandidate = firstFiniteNumber(
+    record.raw,
+    record.value,
+    record.amount,
+    record.net,
+    reportedValue.raw,
+    reportedValue.value,
+  );
+  if (firstCandidate !== null) return firstCandidate;
+
+  for (const nested of Object.values(record)) {
+    const nestedRecord = toObjectRecord(nested);
+    if (Object.keys(nestedRecord).length === 0) continue;
+    const nestedValue = firstFiniteNumber(
+      nestedRecord.raw,
+      nestedRecord.value,
+      nestedRecord.amount,
+    );
+    if (nestedValue !== null) return nestedValue;
+  }
+
+  return null;
+};
+
+const parseFinancialStatementPayload = (payload: unknown): ParsedFinancialStatement => {
+  const periodsSet = new Set<string>();
+  const rowsMap = new Map<string, ParsedFinancialRow>();
+
+  const registerValue = (metricKey: string, period: string, rawValue: unknown) => {
+    if (isFinancialMetaKey(metricKey)) return;
+
+    const normalizedMetric = String(metricKey || '').trim();
+    const normalizedPeriod = normalizeFinancialPeriod(period);
+    if (!normalizedMetric || !normalizedPeriod) return;
+
+    const numeric = extractFinancialNumericValue(rawValue);
+    if (numeric === null) return;
+
+    periodsSet.add(normalizedPeriod);
+    const existing = rowsMap.get(normalizedMetric);
+    if (existing) {
+      existing.valuesByPeriod[normalizedPeriod] = numeric;
+      return;
+    }
+
+    rowsMap.set(normalizedMetric, {
+      key: normalizedMetric,
+      label: toFinancialMetricLabel(normalizedMetric),
+      valuesByPeriod: {
+        [normalizedPeriod]: numeric,
+      },
+    });
+  };
+
+  const parsePeriodRecord = (period: string, value: unknown) => {
+    const record = toObjectRecord(value);
+    for (const [metricKey, metricValue] of Object.entries(record)) {
+      registerValue(metricKey, period, metricValue);
+    }
+  };
+
+  const parseMetricRecord = (metricKey: string, value: unknown) => {
+    const record = toObjectRecord(value);
+    const entries = Object.entries(record);
+    if (entries.length === 0) return;
+
+    let foundPeriod = false;
+    for (const [periodKey, periodValue] of entries) {
+      const normalizedPeriod = normalizeFinancialPeriod(periodKey);
+      if (!normalizedPeriod) continue;
+      foundPeriod = true;
+      registerValue(metricKey, normalizedPeriod, periodValue);
+    }
+
+    if (foundPeriod) return;
+
+    const period = resolveFinancialPeriodFromRecord(record);
+    if (period) {
+      registerValue(metricKey, period, record.value ?? record.raw ?? record);
+    }
+  };
+
+  const parseRowsArray = (rows: unknown[]) => {
+    for (const row of rows) {
+      const rowRecord = toObjectRecord(row);
+      if (Object.keys(rowRecord).length === 0) continue;
+      const period = resolveFinancialPeriodFromRecord(rowRecord);
+      if (!period) continue;
+      for (const [metricKey, metricValue] of Object.entries(rowRecord)) {
+        registerValue(metricKey, period, metricValue);
+      }
+    }
+  };
+
+  if (Array.isArray(payload)) {
+    parseRowsArray(payload);
+  } else {
+    const root = toObjectRecord(payload);
+    const rootEntries = Object.entries(root);
+
+    const periodLikeRootEntries = rootEntries.reduce((count, [key, value]) => {
+      const period = normalizeFinancialPeriod(key);
+      if (!period || typeof value !== 'object' || value === null) return count;
+      return count + 1;
+    }, 0);
+
+    if (
+      rootEntries.length > 0
+      && periodLikeRootEntries > 0
+      && periodLikeRootEntries >= Math.ceil(rootEntries.length / 2)
+    ) {
+      for (const [periodKey, periodPayload] of rootEntries) {
+        const normalizedPeriod = normalizeFinancialPeriod(periodKey);
+        if (!normalizedPeriod) continue;
+        parsePeriodRecord(normalizedPeriod, periodPayload);
+      }
+    } else {
+      for (const [metricKey, metricPayload] of rootEntries) {
+        if (Array.isArray(metricPayload)) {
+          parseRowsArray(metricPayload);
+          continue;
+        }
+        parseMetricRecord(metricKey, metricPayload);
+      }
+    }
+  }
+
+  const periods = Array.from(periodsSet)
+    .sort((left, right) => toFinancialPeriodSortKey(left) - toFinancialPeriodSortKey(right));
+
+  const rows = Array.from(rowsMap.values())
+    .filter((row) => periods.some((period) => row.valuesByPeriod[period] !== undefined));
+
+  return {
+    periods,
+    rows,
+  };
+};
+
+const normalizeFinancialDocumentUrl = (value: unknown): string | null => {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  if (/^https?:\/\//i.test(text)) return text;
+  if (text.startsWith('//')) return `https:${text}`;
+  if (/^[a-z0-9.-]+\.[a-z]{2,}\/?/i.test(text)) return `https://${text}`;
+  return null;
+};
+
+const parseFinancialDocumentPayload = (payload: unknown): AssetFinancialDocument[] => {
+  if (!Array.isArray(payload)) return [];
+
+  const dedupe = new Set<string>();
+  const rows: AssetFinancialDocument[] = [];
+
+  for (const rawEntry of payload) {
+    const entry = toObjectRecord(rawEntry);
+    if (Object.keys(entry).length === 0) continue;
+
+    const primaryUrl = normalizeFinancialDocumentUrl(
+      entry.url
+      ?? entry.url_viewer
+      ?? entry.urlViewer
+      ?? entry.url_download
+      ?? entry.urlDownload
+      ?? null
+    );
+    if (!primaryUrl) continue;
+
+    const title = toNonEmptyString(entry.title) || null;
+    const source = toNonEmptyString(entry.source) || null;
+    const referenceDate = toIsoDate(String(entry.reference_date || entry.referenceDate || '')) || null;
+    const deliveryDate = toIsoDate(String(entry.delivery_date || entry.deliveryDate || '')) || null;
+    const status = toNonEmptyString(entry.status) || null;
+    const category = toNonEmptyString(entry.category) || null;
+    const documentType = toNonEmptyString(entry.document_type ?? entry.documentType) || null;
+    const id = toNonEmptyString(entry.id) || null;
+    const viewerUrl = normalizeFinancialDocumentUrl(entry.url_viewer ?? entry.urlViewer ?? null);
+    const downloadUrl = normalizeFinancialDocumentUrl(entry.url_download ?? entry.urlDownload ?? null);
+
+    const dedupeKey = `${source || ''}|${primaryUrl}|${referenceDate || ''}|${deliveryDate || ''}|${title || ''}`;
+    if (dedupe.has(dedupeKey)) continue;
+    dedupe.add(dedupeKey);
+
+    rows.push({
+      id,
+      source,
+      title,
+      category,
+      documentType,
+      referenceDate,
+      deliveryDate,
+      status,
+      url: primaryUrl,
+      viewerUrl,
+      downloadUrl,
+    });
+  }
+
+  return rows.sort((left, right) => {
+    const leftDate = left.referenceDate || left.deliveryDate || '';
+    const rightDate = right.referenceDate || right.deliveryDate || '';
+    return rightDate.localeCompare(leftDate);
+  });
+};
+
 const AssetDetailsPage = () => {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
@@ -246,6 +685,14 @@ const AssetDetailsPage = () => {
   const [customRangeStart, setCustomRangeStart] = useState('');
   const [customRangeEnd, setCustomRangeEnd] = useState('');
   const [assetInsights, setAssetInsights] = useState<AssetInsightsSnapshot | null>(null);
+  const [assetFinancials, setAssetFinancials] = useState<AssetFinancialStatements | null>(null);
+  const [assetFinancialsLoading, setAssetFinancialsLoading] = useState(false);
+  const [assetFinancialsError, setAssetFinancialsError] = useState<string | null>(null);
+  const [selectedFinancialStatement, setSelectedFinancialStatement] = useState<FinancialStatementKind>('income');
+  const [selectedFinancialFrequency, setSelectedFinancialFrequency] = useState<FinancialFrequency>('annual');
+  const [selectedFinancialMetric, setSelectedFinancialMetric] = useState('');
+  const [selectedDocumentCategory, setSelectedDocumentCategory] = useState('all');
+  const [selectedDocumentType, setSelectedDocumentType] = useState('all');
 
   const numberLocale = i18n.language?.startsWith('pt') ? 'pt-BR' : 'en-US';
 
@@ -642,6 +1089,13 @@ const AssetDetailsPage = () => {
     setChartPeriod('MAX');
     setCustomRangeStart('');
     setCustomRangeEnd('');
+    setAssetFinancials(null);
+    setAssetFinancialsError(null);
+    setSelectedFinancialStatement('income');
+    setSelectedFinancialFrequency('annual');
+    setSelectedFinancialMetric('');
+    setSelectedDocumentCategory('all');
+    setSelectedDocumentType('all');
     if (selectedAsset) {
       setAssetInsights(createEmptyInsightsSnapshot('loading', selectedAsset.ticker, selectedAsset.assetClass));
     } else {
@@ -696,24 +1150,43 @@ const AssetDetailsPage = () => {
   useEffect(() => {
     if (!selectedAsset || !portfolioId) return;
     let cancelled = false;
+    setAssetFinancialsLoading(true);
+    setAssetFinancialsError(null);
 
-    const directCurrentPrice = Number(selectedAsset.currentPrice);
-    const quantity = Number(selectedAsset.quantity);
-    const hasOpenPosition = Number.isFinite(quantity) && Math.abs(quantity) > Number.EPSILON;
-    if (Number.isFinite(directCurrentPrice) && (!hasOpenPosition || Math.abs(directCurrentPrice) > Number.EPSILON)) {
-      setCurrentQuote(directCurrentPrice);
-    } else {
-      api.getPriceAtDate(portfolioId, selectedAsset.ticker, new Date().toISOString().slice(0, 10))
-        .then((payload) => {
-          if (cancelled) return;
-          const close = Number((payload as { close?: unknown }).close);
-          setCurrentQuote(Number.isFinite(close) ? close : null);
-        })
-        .catch(() => {
-          if (cancelled) return;
-          setCurrentQuote(null);
-        });
-    }
+    api.getAssetFinancials(selectedAsset.ticker, portfolioId)
+      .then((payload) => {
+        if (cancelled) return;
+        setAssetFinancials(toObjectRecord(payload) as AssetFinancialStatements);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setAssetFinancials(null);
+        setAssetFinancialsError(error instanceof Error ? error.message : null);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setAssetFinancialsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [portfolioId, selectedAsset]);
+
+  useEffect(() => {
+    if (!selectedAsset || !portfolioId) return;
+    let cancelled = false;
+
+    api.getPriceAtDate(portfolioId, selectedAsset.ticker, new Date().toISOString().slice(0, 10))
+      .then((payload) => {
+        if (cancelled) return;
+        const close = Number((payload as { close?: unknown }).close);
+        setCurrentQuote(Number.isFinite(close) ? close : null);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setCurrentQuote(null);
+      });
 
     api.getAverageCost(portfolioId, selectedAsset.ticker)
       .then((payload) => {
@@ -794,6 +1267,16 @@ const AssetDetailsPage = () => {
 
     const quantity = Number(selectedAsset.quantity);
     const hasOpenPosition = Number.isFinite(quantity) && Math.abs(quantity) > Number.EPSILON;
+    const insightQuote = assetInsights?.status === 'ready'
+      ? toNumericValue(assetInsights.currentPrice)
+      : null;
+    if (
+      insightQuote !== null
+      && (!hasOpenPosition || Math.abs(insightQuote) > Number.EPSILON)
+    ) {
+      return insightQuote;
+    }
+
     const cachedQuote = metrics?.currentQuotes?.[selectedAsset.assetId];
     if (
       typeof cachedQuote === 'number'
@@ -803,16 +1286,11 @@ const AssetDetailsPage = () => {
       return cachedQuote;
     }
 
-    const directCurrentPrice = Number(selectedAsset.currentPrice);
-    if (Number.isFinite(directCurrentPrice) && (!hasOpenPosition || Math.abs(directCurrentPrice) > Number.EPSILON)) {
-      return directCurrentPrice;
-    }
-
     const directCurrentValue = Number(selectedAsset.currentValue);
     if (!Number.isFinite(directCurrentValue) || !Number.isFinite(quantity)) return null;
     if (Math.abs(quantity) <= Number.EPSILON) return null;
     return directCurrentValue / quantity;
-  }, [currentQuote, metrics, selectedAsset]);
+  }, [assetInsights, currentQuote, metrics, selectedAsset]);
 
   const resolvedCurrentValue = useMemo(() => {
     if (!selectedAsset) return null;
@@ -1184,7 +1662,7 @@ const AssetDetailsPage = () => {
         label: t('assets.modal.fields.currentPrice'),
         value: resolvedCurrentPrice !== null
           ? formatCurrency(resolvedCurrentPrice, selectedAsset.currency || 'BRL', numberLocale)
-          : formatDetailValue(selectedAsset.currentPrice),
+          : formatDetailValue(null),
       },
       {
         key: 'currentValue',
@@ -1457,7 +1935,7 @@ const AssetDetailsPage = () => {
       },
       {
         key: 'profile',
-        title: t('assets.modal.insights.groups.profile', { defaultValue: 'Company Profile' }),
+        title: t('assets.modal.insights.groups.profileSource', { defaultValue: 'Company Profile & Data Quality' }),
         fields: [
           {
             key: 'sector',
@@ -1487,12 +1965,6 @@ const AssetDetailsPage = () => {
                 : formatDetailValue(null)
             ),
           },
-        ],
-      },
-      {
-        key: 'source',
-        title: t('assets.modal.insights.groups.source', { defaultValue: 'Data Quality' }),
-        fields: [
           {
             key: 'sourceLabel',
             label: t('assets.modal.insights.source', { defaultValue: 'Data Source' }),
@@ -1537,6 +2009,235 @@ const AssetDetailsPage = () => {
       </span>
     );
   }, [assetInsights, formatDetailValue, insightsLinks, t]);
+
+  const financialStatementOptions = useMemo(() => ([
+    {
+      value: 'income',
+      label: t('assets.modal.financials.statement.income', { defaultValue: 'Income Statement' }),
+    },
+    {
+      value: 'balance',
+      label: t('assets.modal.financials.statement.balance', { defaultValue: 'Balance Sheet' }),
+    },
+    {
+      value: 'cashflow',
+      label: t('assets.modal.financials.statement.cashflow', { defaultValue: 'Cash Flow' }),
+    },
+  ]), [t]);
+
+  const financialFrequencyOptions = useMemo(() => ([
+    {
+      value: 'annual',
+      label: t('assets.modal.financials.frequency.annual', { defaultValue: 'Annual' }),
+    },
+    {
+      value: 'quarterly',
+      label: t('assets.modal.financials.frequency.quarterly', { defaultValue: 'Quarterly' }),
+    },
+  ]), [t]);
+
+  const selectedFinancialPayload = useMemo<unknown>(() => {
+    if (!assetFinancials) return null;
+    const key = FINANCIAL_STATEMENT_KEY_MAP[selectedFinancialStatement][selectedFinancialFrequency];
+    return assetFinancials[key] ?? null;
+  }, [assetFinancials, selectedFinancialFrequency, selectedFinancialStatement]);
+
+  const parsedFinancialStatement = useMemo<ParsedFinancialStatement>(() => (
+    parseFinancialStatementPayload(selectedFinancialPayload)
+  ), [selectedFinancialPayload]);
+
+  const financialPeriodColumns = useMemo(() => (
+    [...parsedFinancialStatement.periods].reverse()
+  ), [parsedFinancialStatement.periods]);
+
+  const formatFinancialPeriodLabel = useCallback((period: string): string => {
+    const quarterMatch = period.match(/^(\d{4})-Q([1-4])$/);
+    if (quarterMatch) {
+      return `Q${quarterMatch[2]} ${quarterMatch[1]}`;
+    }
+
+    const isoMatch = period.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!isoMatch) return period;
+
+    const date = new Date(Date.UTC(Number(isoMatch[1]), Number(isoMatch[2]) - 1, Number(isoMatch[3])));
+    return date.toLocaleDateString(numberLocale, {
+      month: 'short',
+      year: 'numeric',
+      timeZone: 'UTC',
+    });
+  }, [numberLocale]);
+
+  const formatFinancialValue = useCallback((value: number | null) => {
+    if (value === null || !Number.isFinite(value)) return formatDetailValue(null);
+
+    const absolute = Math.abs(value);
+    if (absolute >= 1_000_000_000) {
+      return value.toLocaleString(numberLocale, {
+        notation: 'compact',
+        maximumFractionDigits: 2,
+      });
+    }
+
+    if (absolute >= 1_000_000) {
+      return value.toLocaleString(numberLocale, {
+        notation: 'compact',
+        maximumFractionDigits: 2,
+      });
+    }
+
+    return value.toLocaleString(numberLocale, {
+      maximumFractionDigits: 2,
+    });
+  }, [formatDetailValue, numberLocale]);
+
+  const financialMetricOptions = useMemo(() => (
+    parsedFinancialStatement.rows.map((row) => ({
+      value: row.key,
+      label: row.label,
+    }))
+  ), [parsedFinancialStatement.rows]);
+
+  const financialMetricDropdownOptions = useMemo(() => {
+    if (financialMetricOptions.length > 0) return financialMetricOptions;
+    return [{
+      value: '',
+      label: t('assets.modal.financials.noMetric', { defaultValue: 'No metrics available' }),
+    }];
+  }, [financialMetricOptions, t]);
+
+  useEffect(() => {
+    if (financialMetricOptions.length === 0) {
+      setSelectedFinancialMetric('');
+      return;
+    }
+
+    if (financialMetricOptions.some((option) => option.value === selectedFinancialMetric)) return;
+    setSelectedFinancialMetric(financialMetricOptions[0].value);
+  }, [financialMetricOptions, selectedFinancialMetric]);
+
+  const selectedFinancialRow = useMemo(() => (
+    parsedFinancialStatement.rows.find((row) => row.key === selectedFinancialMetric)
+    || null
+  ), [parsedFinancialStatement.rows, selectedFinancialMetric]);
+
+  const selectedFinancialMetricLabel = useMemo(() => {
+    if (!selectedFinancialRow) return null;
+    return selectedFinancialRow.label;
+  }, [selectedFinancialRow]);
+
+  const financialSeries = useMemo<FinancialSeriesPoint[]>(() => {
+    if (!selectedFinancialRow) return [];
+    return parsedFinancialStatement.periods.map((period) => ({
+      period,
+      label: formatFinancialPeriodLabel(period),
+      value: selectedFinancialRow.valuesByPeriod[period] ?? null,
+    }));
+  }, [formatFinancialPeriodLabel, parsedFinancialStatement.periods, selectedFinancialRow]);
+
+  const selectedFinancialMetricStats = useMemo(() => {
+    if (!selectedFinancialRow) return null;
+
+    const validPeriods = parsedFinancialStatement.periods.filter((period) => (
+      selectedFinancialRow.valuesByPeriod[period] !== undefined
+      && selectedFinancialRow.valuesByPeriod[period] !== null
+    ));
+    if (validPeriods.length === 0) return null;
+
+    const latestPeriod = validPeriods[validPeriods.length - 1];
+    const latestValue = selectedFinancialRow.valuesByPeriod[latestPeriod] ?? null;
+    const previousPeriod = validPeriods.length > 1 ? validPeriods[validPeriods.length - 2] : null;
+    const previousValue = previousPeriod ? (selectedFinancialRow.valuesByPeriod[previousPeriod] ?? null) : null;
+    const delta = latestValue !== null && previousValue !== null ? latestValue - previousValue : null;
+    const deltaPct = delta !== null && previousValue !== null && Math.abs(previousValue) > Number.EPSILON
+      ? (delta / previousValue) * 100
+      : null;
+
+    return {
+      latestPeriod,
+      latestValue,
+      previousPeriod,
+      previousValue,
+      delta,
+      deltaPct,
+    };
+  }, [parsedFinancialStatement.periods, selectedFinancialRow]);
+
+  const financialDocuments = useMemo<AssetFinancialDocument[]>(() => (
+    parseFinancialDocumentPayload(assetFinancials?.documents)
+  ), [assetFinancials?.documents]);
+
+  const fallbackFinancialDocuments = useMemo(() => {
+    if (!selectedAsset) return [];
+    const links = buildAssetExternalLinks(selectedAsset.ticker, selectedAsset.assetClass);
+    const list = [
+      {
+        key: 'status-invest',
+        url: links.statusInvestUrl,
+        title: t('assets.modal.documents.fallback.statusInvest', { defaultValue: 'Status Invest page' }),
+      },
+      {
+        key: 'b3',
+        url: links.b3Url,
+        title: t('assets.modal.documents.fallback.b3', { defaultValue: 'B3 listed funds page' }),
+      },
+      {
+        key: 'clube-fii',
+        url: links.clubeFiiUrl,
+        title: t('assets.modal.documents.fallback.clubeFii', { defaultValue: 'Clube FII page' }),
+      },
+      {
+        key: 'fiis',
+        url: links.fiisUrl,
+        title: t('assets.modal.documents.fallback.fiis', { defaultValue: 'FIIs.com.br page' }),
+      },
+    ];
+
+    return list.filter((entry): entry is { key: string; url: string; title: string } => Boolean(entry.url));
+  }, [selectedAsset, t]);
+
+  const documentCategoryOptions = useMemo(() => {
+    const unique = Array.from(new Set(
+      financialDocuments
+        .map((entry) => toNonEmptyString(entry.category))
+        .filter((entry): entry is string => Boolean(entry))
+    )).sort((left, right) => left.localeCompare(right, numberLocale));
+
+    return [
+      { value: 'all', label: t('assets.modal.documents.filters.all', { defaultValue: 'All' }) },
+      ...unique.map((value) => ({ value, label: toDisplayLabel(value) })),
+    ];
+  }, [financialDocuments, numberLocale, t]);
+
+  const documentTypeOptions = useMemo(() => {
+    const unique = Array.from(new Set(
+      financialDocuments
+        .map((entry) => toNonEmptyString(entry.documentType))
+        .filter((entry): entry is string => Boolean(entry))
+    )).sort((left, right) => left.localeCompare(right, numberLocale));
+
+    return [
+      { value: 'all', label: t('assets.modal.documents.filters.all', { defaultValue: 'All' }) },
+      ...unique.map((value) => ({ value, label: toDisplayLabel(value) })),
+    ];
+  }, [financialDocuments, numberLocale, t]);
+
+  const filteredFinancialDocuments = useMemo(() => (
+    financialDocuments.filter((entry) => {
+      if (selectedDocumentCategory !== 'all' && entry.category !== selectedDocumentCategory) return false;
+      if (selectedDocumentType !== 'all' && entry.documentType !== selectedDocumentType) return false;
+      return true;
+    })
+  ), [financialDocuments, selectedDocumentCategory, selectedDocumentType]);
+
+  useEffect(() => {
+    if (documentCategoryOptions.some((entry) => entry.value === selectedDocumentCategory)) return;
+    setSelectedDocumentCategory('all');
+  }, [documentCategoryOptions, selectedDocumentCategory]);
+
+  useEffect(() => {
+    if (documentTypeOptions.some((entry) => entry.value === selectedDocumentType)) return;
+    setSelectedDocumentType('all');
+  }, [documentTypeOptions, selectedDocumentType]);
 
   return (
     <Layout>
@@ -1609,14 +2310,18 @@ const AssetDetailsPage = () => {
                 {insightsGroups.map((group) => (
                   <article key={group.key} className="asset-details-page__insights-group">
                     <h3>{group.title}</h3>
-                    <dl>
-                      {group.fields.map((field) => (
-                        <div key={`${group.key}-${field.key}`}>
-                          <dt>{field.label}</dt>
-                          <dd>{field.value}</dd>
-                        </div>
+                    <div className="asset-details-page__insights-columns">
+                      {splitFieldsIntoColumns(group.fields, 2).map((column, columnIndex) => (
+                        <dl key={`${group.key}-column-${columnIndex}`} className="asset-details-page__insights-column">
+                          {column.map((field) => (
+                            <div key={`${group.key}-${field.key}`}>
+                              <dt>{field.label}</dt>
+                              <dd>{field.value}</dd>
+                            </div>
+                          ))}
+                        </dl>
                       ))}
-                    </dl>
+                    </div>
                   </article>
                 ))}
                 <article className="asset-details-page__insights-group asset-details-page__insights-group--links">
@@ -1624,6 +2329,311 @@ const AssetDetailsPage = () => {
                   <div className="asset-details-page__insights-links">{insightsLinksContent}</div>
                 </article>
               </div>
+            </section>
+
+            <section className="asset-details-page__card asset-details-page__card--full asset-details-page__card--financials">
+              <div className="asset-details-page__financials-header">
+                <h2>{t('assets.modal.financials.title', { defaultValue: 'Financial Statements' })}</h2>
+                <div className="asset-details-page__financials-controls">
+                  <SharedDropdown
+                    value={selectedFinancialStatement}
+                    options={financialStatementOptions}
+                    onChange={(value) => {
+                      if (value === 'income' || value === 'balance' || value === 'cashflow') {
+                        setSelectedFinancialStatement(value);
+                      }
+                    }}
+                    ariaLabel={t('assets.modal.financials.statement.label', { defaultValue: 'Statement' })}
+                    className="asset-details-page__dropdown"
+                    size="sm"
+                  />
+                  <SharedDropdown
+                    value={selectedFinancialFrequency}
+                    options={financialFrequencyOptions}
+                    onChange={(value) => {
+                      if (value === 'annual' || value === 'quarterly') {
+                        setSelectedFinancialFrequency(value);
+                      }
+                    }}
+                    ariaLabel={t('assets.modal.financials.frequency.label', { defaultValue: 'Frequency' })}
+                    className="asset-details-page__dropdown"
+                    size="sm"
+                  />
+                  <SharedDropdown
+                    value={selectedFinancialMetric}
+                    options={financialMetricDropdownOptions}
+                    onChange={setSelectedFinancialMetric}
+                    ariaLabel={t('assets.modal.financials.metric', { defaultValue: 'Metric' })}
+                    className="asset-details-page__dropdown asset-details-page__dropdown--metric"
+                    size="sm"
+                    disabled={financialMetricOptions.length === 0}
+                  />
+                </div>
+              </div>
+
+              {assetFinancialsLoading ? (
+                <p className="asset-details-page__financials-state">{t('common.loading')}</p>
+              ) : null}
+
+              {!assetFinancialsLoading && assetFinancialsError ? (
+                <div className="asset-details-page__financials-state asset-details-page__financials-state--error">
+                  <p>{t('assets.modal.financials.loadError', { defaultValue: 'Failed to load financial statements.' })}</p>
+                  <code>{assetFinancialsError}</code>
+                </div>
+              ) : null}
+
+              {!assetFinancialsLoading && !assetFinancialsError && parsedFinancialStatement.rows.length === 0 ? (
+                <p className="asset-details-page__financials-state">
+                  {t('assets.modal.financials.empty', { defaultValue: 'No financial statements available for this asset.' })}
+                </p>
+              ) : null}
+
+              {!assetFinancialsLoading && !assetFinancialsError && parsedFinancialStatement.rows.length > 0 ? (
+                <div className="asset-details-page__financials-content">
+                  <div className="asset-details-page__financials-chart">
+                    <div className="asset-details-page__financials-chart-header">
+                      <h3>
+                        {t('assets.modal.financials.evolutionTitle', {
+                          metric: selectedFinancialMetricLabel || t('assets.modal.financials.metric', { defaultValue: 'Metric' }),
+                          defaultValue: '{{metric}} evolution',
+                        })}
+                      </h3>
+                      {selectedFinancialMetricStats ? (
+                        <div className="asset-details-page__financials-stats">
+                          <span>
+                            {t('assets.modal.financials.latest', { defaultValue: 'Latest' })}:
+                            {' '}
+                            <strong>
+                              {formatFinancialPeriodLabel(selectedFinancialMetricStats.latestPeriod)}
+                              {' '}
+                              •
+                              {' '}
+                              {formatFinancialValue(selectedFinancialMetricStats.latestValue)}
+                            </strong>
+                          </span>
+                          {selectedFinancialMetricStats.previousPeriod ? (
+                            <span>
+                              {t('assets.modal.financials.previous', { defaultValue: 'Previous' })}:
+                              {' '}
+                              <strong>
+                                {formatFinancialPeriodLabel(selectedFinancialMetricStats.previousPeriod)}
+                                {' '}
+                                •
+                                {' '}
+                                {formatFinancialValue(selectedFinancialMetricStats.previousValue)}
+                              </strong>
+                            </span>
+                          ) : null}
+                          {selectedFinancialMetricStats.delta !== null ? (
+                            <span>
+                              {t('assets.modal.financials.delta', { defaultValue: 'Delta' })}:
+                              {' '}
+                              <strong className={selectedFinancialMetricStats.delta >= 0 ? 'assets-page__delta assets-page__delta--positive' : 'assets-page__delta assets-page__delta--negative'}>
+                                {formatFinancialValue(selectedFinancialMetricStats.delta)}
+                                {selectedFinancialMetricStats.deltaPct !== null
+                                  ? ` (${formatSignedPercent(selectedFinancialMetricStats.deltaPct)})`
+                                  : ''}
+                              </strong>
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="asset-details-page__financials-chart-canvas">
+                      <ResponsiveContainer width="100%" height={260}>
+                        <LineChart data={financialSeries} margin={{ top: 8, right: 20, bottom: 8, left: 8 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.2)" />
+                          <XAxis
+                            dataKey="label"
+                            tick={{ fill: 'var(--text-secondary)', fontSize: 12 }}
+                            interval="preserveStartEnd"
+                          />
+                          <YAxis
+                            tick={{ fill: 'var(--text-secondary)', fontSize: 12 }}
+                            tickFormatter={(value: number) => formatFinancialValue(value)}
+                            width={96}
+                          />
+                          <Tooltip
+                            formatter={(value: unknown) => {
+                              const numeric = toNumericValue(value);
+                              return [
+                                formatFinancialValue(numeric),
+                                selectedFinancialMetricLabel || t('assets.modal.financials.metric', { defaultValue: 'Metric' }),
+                              ];
+                            }}
+                            labelFormatter={(label) => `${t('assets.modal.financials.period', { defaultValue: 'Period' })}: ${label}`}
+                          />
+                          <Line
+                            dataKey="value"
+                            type="monotone"
+                            stroke="var(--accent-primary, #22d3ee)"
+                            strokeWidth={2}
+                            dot={{ r: 3, strokeWidth: 1 }}
+                            activeDot={{ r: 5 }}
+                            connectNulls
+                          />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  <div className="asset-details-page__financials-table-wrap">
+                    <table className="asset-details-page__financials-table">
+                      <thead>
+                        <tr>
+                          <th>{t('assets.modal.financials.metric', { defaultValue: 'Metric' })}</th>
+                          {financialPeriodColumns.map((period) => (
+                            <th key={period}>{formatFinancialPeriodLabel(period)}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {parsedFinancialStatement.rows.map((row) => (
+                          <tr key={row.key}>
+                            <th scope="row">{row.label}</th>
+                            {financialPeriodColumns.map((period) => (
+                              <td key={`${row.key}-${period}`}>
+                                {formatFinancialValue(row.valuesByPeriod[period] ?? null)}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : null}
+            </section>
+
+            <section className="asset-details-page__card asset-details-page__card--full asset-details-page__card--documents">
+              <div className="asset-details-page__documents-header">
+                <h2>{t('assets.modal.documents.title', { defaultValue: 'Documents & Filings' })}</h2>
+                <div className="asset-details-page__documents-header-right">
+                  {!assetFinancialsLoading && financialDocuments.length > 0 ? (
+                    <span className="asset-details-page__documents-count">
+                      {t('assets.modal.documents.count', {
+                        defaultValue: '{{count}} documents',
+                        count: filteredFinancialDocuments.length,
+                      })}
+                    </span>
+                  ) : null}
+                  {!assetFinancialsLoading && financialDocuments.length > 0 ? (
+                    <div className="asset-details-page__documents-controls">
+                      <SharedDropdown
+                        value={selectedDocumentCategory}
+                        options={documentCategoryOptions}
+                        onChange={setSelectedDocumentCategory}
+                        ariaLabel={t('assets.modal.documents.filters.category', { defaultValue: 'Category filter' })}
+                        className="asset-details-page__dropdown"
+                        size="sm"
+                      />
+                      <SharedDropdown
+                        value={selectedDocumentType}
+                        options={documentTypeOptions}
+                        onChange={setSelectedDocumentType}
+                        ariaLabel={t('assets.modal.documents.filters.type', { defaultValue: 'Type filter' })}
+                        className="asset-details-page__dropdown"
+                        size="sm"
+                      />
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+
+              {assetFinancialsLoading ? (
+                <p className="asset-details-page__financials-state">{t('common.loading')}</p>
+              ) : null}
+
+              {!assetFinancialsLoading && financialDocuments.length === 0 ? (
+                <div className="asset-details-page__documents-empty">
+                  <p className="asset-details-page__financials-state">
+                    {t('assets.modal.documents.empty', {
+                      defaultValue: 'No filing documents were returned for this asset yet.',
+                    })}
+                  </p>
+                  {fallbackFinancialDocuments.length > 0 ? (
+                    <div className="asset-details-page__documents-fallback">
+                      {fallbackFinancialDocuments.map((entry) => (
+                        <a
+                          key={entry.key}
+                          href={entry.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="asset-details-page__document-fallback-link"
+                        >
+                          {entry.title}
+                        </a>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {!assetFinancialsLoading && financialDocuments.length > 0 ? (
+                <>
+                  {filteredFinancialDocuments.length === 0 ? (
+                    <p className="asset-details-page__financials-state">
+                      {t('assets.modal.documents.emptyFiltered', {
+                        defaultValue: 'No documents match the selected filters.',
+                      })}
+                    </p>
+                  ) : (
+                    <div className="asset-details-page__documents-table-wrap">
+                      <table className="asset-details-page__documents-table">
+                        <thead>
+                          <tr>
+                            <th>{t('assets.modal.documents.columns.date', { defaultValue: 'Date' })}</th>
+                            <th>{t('assets.modal.documents.columns.category', { defaultValue: 'Category' })}</th>
+                            <th>{t('assets.modal.documents.columns.type', { defaultValue: 'Type' })}</th>
+                            <th>{t('assets.modal.documents.columns.title', { defaultValue: 'Document' })}</th>
+                            <th>{t('assets.modal.documents.columns.source', { defaultValue: 'Source' })}</th>
+                            <th>{t('assets.modal.documents.columns.status', { defaultValue: 'Status' })}</th>
+                            <th>{t('assets.modal.documents.columns.action', { defaultValue: 'Action' })}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredFinancialDocuments.map((document) => {
+                            const sourceLabel = (document.source || '')
+                              .replace(/[_-]+/g, ' ')
+                              .trim()
+                              .toUpperCase();
+                            const primaryDate = document.deliveryDate || document.referenceDate || null;
+                            return (
+                              <tr key={`${document.url}|${document.id || ''}`}>
+                                <td>{primaryDate ? formatDate(primaryDate, numberLocale) : formatDetailValue(null)}</td>
+                                <td>{document.category ? toDisplayLabel(document.category) : formatDetailValue(null)}</td>
+                                <td>{document.documentType ? toDisplayLabel(document.documentType) : formatDetailValue(null)}</td>
+                                <td>
+                                  <a
+                                    href={document.url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="asset-details-page__document-title"
+                                  >
+                                    {document.title || t('assets.modal.documents.untitled', { defaultValue: 'Financial filing' })}
+                                  </a>
+                                </td>
+                                <td>{sourceLabel || formatDetailValue(null)}</td>
+                                <td>{document.status || formatDetailValue(null)}</td>
+                                <td>
+                                  <a
+                                    href={document.url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="asset-details-page__document-action"
+                                  >
+                                    {t('assets.modal.documents.open', { defaultValue: 'Open' })}
+                                  </a>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </>
+              ) : null}
             </section>
 
             {selectedAssetWeightMetrics ? (

@@ -556,6 +556,7 @@
           "valuation": "Valuation",
           "fundamentals": "Fundamentals",
           "profile": "Company Profile",
+          "profileSource": "Company Profile & Data Quality",
           "source": "Data Quality"
         },
         "sector": "Sector",
@@ -585,6 +586,63 @@
           "b3": "B3",
           "clubeFii": "Clube FII",
           "fiis": "FIIs.com.br"
+        }
+      },
+      "financials": {
+        "title": "Financial Statements",
+        "loadError": "Failed to load financial statements.",
+        "empty": "No financial statements available for this asset.",
+        "metric": "Metric",
+        "noMetric": "No metrics available",
+        "period": "Period",
+        "evolutionTitle": "{{metric}} evolution",
+        "latest": "Latest",
+        "previous": "Previous",
+        "delta": "Delta",
+        "statement": {
+          "label": "Statement",
+          "income": "Income Statement",
+          "balance": "Balance Sheet",
+          "cashflow": "Cash Flow"
+        },
+        "frequency": {
+          "label": "Frequency",
+          "annual": "Annual",
+          "quarterly": "Quarterly"
+        }
+      },
+      "documents": {
+        "title": "Communications & Filings",
+        "count_one": "{{count}} document",
+        "count_other": "{{count}} documents",
+        "empty": "No filing documents were returned for this asset yet.",
+        "emptyFiltered": "No documents match the selected filters.",
+        "untitled": "Financial filing",
+        "open": "Open",
+        "category": "Category",
+        "source": "Source",
+        "referenceDate": "Reference Date",
+        "deliveryDate": "Delivery Date",
+        "status": "Status",
+        "filters": {
+          "all": "All",
+          "category": "Category filter",
+          "type": "Type filter"
+        },
+        "columns": {
+          "date": "Date",
+          "category": "Category",
+          "type": "Type",
+          "title": "Document",
+          "source": "Source",
+          "status": "Status",
+          "action": "Action"
+        },
+        "fallback": {
+          "statusInvest": "Status Invest page",
+          "b3": "B3 listed funds page",
+          "clubeFii": "Clube FII page",
+          "fiis": "FIIs.com.br page"
         }
       },
       "provents": {

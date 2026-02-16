@@ -239,7 +239,12 @@ class GoogleFinanceScraper extends BaseScraper {
 					/"price"\s*:\s*"([^"]+)"/i,
 					/<meta[^>]+itemprop="price"[^>]+content="([^"]+)"/i,
 				]);
-				const price = embeddedQuote?.currentPrice ?? extractFirstNumber(priceText);
+				// Prefer structured quote vectors and daily bars before raw HTML number parsing.
+				// Google BR pages can render prices like "49.771", which generic parsers can misread as 49771.
+				const price =
+					embeddedQuote?.currentPrice ??
+					latestDailyBar?.close ??
+					extractFirstNumber(priceText);
 				if (!price || price <= 0) continue;
 
 				const changeBlock = extractByRegex(entitySectionHtml, [
