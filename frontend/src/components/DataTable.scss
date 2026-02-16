@@ -18,6 +18,10 @@
     min-width: 180px;
     flex: 1;
 
+    &:first-child {
+      flex: 3;
+    }
+
     label {
       @include form-label(0.8rem);
     }

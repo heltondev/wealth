@@ -11,6 +11,7 @@ import {
   YAxis,
 } from 'recharts';
 import Layout from '../components/Layout';
+import DataTable from '../components/DataTable';
 import ExpandableText from '../components/ExpandableText';
 import SharedDropdown from '../components/SharedDropdown';
 import { api, type Asset, type Transaction } from '../services/api';
@@ -910,12 +911,9 @@ const AssetDetailsPage = () => {
   } = usePortfolioData();
   const portfolioId = selectedPortfolio;
   const portfolioMarketValueByAssetId = useMemo(() => metrics?.marketValues || {}, [metrics]);
-  const [activeTab, setActiveTab] = useState<'overview' | 'financials' | 'history'>('overview');
-  const tabOptions = useMemo(() => [
-    { value: 'overview' as const, label: t('assets.detail.tabs.overview', { defaultValue: 'Overview' }) },
-    { value: 'financials' as const, label: t('assets.detail.tabs.financials', { defaultValue: 'Financials' }) },
-    { value: 'history' as const, label: t('assets.detail.tabs.history', { defaultValue: 'History' }) },
-  ], [t]);
+  const [activeTab, setActiveTab] = useState<'overview' | 'portfolio' | 'financials' | 'history'>('overview');
+  const [portfolioSearchTerm, setPortfolioSearchTerm] = useState('');
+  const [portfolioItemsPerPage, setPortfolioItemsPerPage] = useState(5);
   const [currentQuote, setCurrentQuote] = useState<number | null>(null);
   const [averageCost, setAverageCost] = useState<number | null>(null);
   const [marketSeries, setMarketSeries] = useState<AssetPriceSeriesPoint[]>([]);
@@ -2546,6 +2544,18 @@ const AssetDetailsPage = () => {
     return isFii || fundPortfolioRows.length > 0;
   }, [fundPortfolioRows.length, selectedAsset]);
 
+  const tabOptions = useMemo(() => {
+    const tabs = [
+      { value: 'overview' as const, label: t('assets.detail.tabs.overview', { defaultValue: 'Overview' }) },
+      { value: 'financials' as const, label: t('assets.detail.tabs.financials', { defaultValue: 'Financials' }) },
+      { value: 'history' as const, label: t('assets.detail.tabs.history', { defaultValue: 'History' }) },
+    ];
+    if (shouldRenderFundPortfolio) {
+      tabs.splice(1, 0, { value: 'portfolio' as const, label: t('assets.detail.tabs.portfolio', { defaultValue: 'Portfolio' }) });
+    }
+    return tabs;
+  }, [t, shouldRenderFundPortfolio]);
+
   const fundGeneralInfoFields = useMemo<Array<{ key: string; label: string; value: React.ReactNode }>>(() => {
     const quotaCountValue = fundGeneralInfo?.quotaCount ?? null;
     const quotaCountDisplay = quotaCountValue !== null && Number.isFinite(quotaCountValue)
@@ -2994,71 +3004,6 @@ const AssetDetailsPage = () => {
               </section>
             ) : null}
 
-            {shouldRenderFundPortfolio ? (
-              <section className="asset-details-page__card asset-details-page__card--full asset-details-page__card--portfolio">
-                <div className="asset-details-page__portfolio-header">
-                  <h2>
-                    {t('assets.modal.portfolio.title', {
-                      ticker: selectedAsset.ticker,
-                      defaultValue: 'Portfolio do {{ticker}}',
-                    })}
-                  </h2>
-                  {fundPortfolioRows.length > 0 ? (
-                    <span className="asset-details-page__portfolio-count">
-                      {t('assets.modal.portfolio.items', {
-                        count: fundPortfolioRows.length,
-                        defaultValue: '{{count}} items',
-                      })}
-                    </span>
-                  ) : null}
-                </div>
-
-                {assetFinancialsLoading ? (
-                  <p className="asset-details-page__financials-state">{t('common.loading')}</p>
-                ) : fundPortfolioRows.length === 0 ? (
-                  <p className="asset-details-page__financials-state">
-                    {t('assets.modal.portfolio.empty', {
-                      defaultValue: 'No portfolio composition data available for this asset.',
-                    })}
-                  </p>
-                ) : (
-                  <div className="asset-details-page__portfolio-table-wrap">
-                    <table className="asset-details-page__portfolio-table">
-                      <thead>
-                        <tr>
-                          <th>{t('assets.modal.portfolio.columns.label', { defaultValue: 'Item' })}</th>
-                          <th>{t('assets.modal.portfolio.columns.allocation', { defaultValue: 'Allocation' })}</th>
-                          <th>{t('assets.modal.portfolio.columns.category', { defaultValue: 'Category' })}</th>
-                          <th>{t('assets.modal.portfolio.columns.source', { defaultValue: 'Source' })}</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {fundPortfolioRows.map((row) => (
-                          <tr key={`${row.label}-${row.allocationPct}-${row.category || ''}`}>
-                            <td>{row.label}</td>
-                            <td>
-                              <div className="asset-details-page__portfolio-allocation">
-                                <span>
-                                  {formatPercent(row.allocationPct / 100)}
-                                </span>
-                                <div className="asset-details-page__portfolio-allocation-bar" aria-hidden="true">
-                                  <span
-                                    className="asset-details-page__portfolio-allocation-fill"
-                                    style={{ width: `${Math.max(0, Math.min(100, row.allocationPct))}%` }}
-                                  />
-                                </div>
-                              </div>
-                            </td>
-                            <td>{row.category || '-'}</td>
-                            <td>{row.source || '-'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </section>
-            ) : null}
             </>)}
 
             {activeTab === 'financials' && (<>
@@ -3860,6 +3805,68 @@ const AssetDetailsPage = () => {
                   defaultValue: 'Derived from stock split factors in historical price data.',
                 })}
               </p>
+            </section>
+            </>)}
+
+            {activeTab === 'portfolio' && (<>
+            <section className="asset-details-page__card asset-details-page__card--full">
+              <DataTable<AssetFundPortfolioRow>
+                rows={fundPortfolioRows}
+                rowKey={(row) => `${row.label}-${row.allocationPct}-${row.category || ''}`}
+                columns={[
+                  {
+                    key: 'label',
+                    label: t('assets.modal.portfolio.columns.label', { defaultValue: 'Item' }),
+                    sortable: true,
+                    sortValue: (row) => row.label,
+                    render: (row) => row.label,
+                  },
+                  {
+                    key: 'allocation',
+                    label: t('assets.modal.portfolio.columns.allocation', { defaultValue: 'Allocation' }),
+                    sortable: true,
+                    sortValue: (row) => row.allocationPct,
+                    render: (row) => (
+                      <div className="asset-details-page__portfolio-allocation">
+                        <span>{formatPercent(row.allocationPct / 100)}</span>
+                        <div className="asset-details-page__portfolio-allocation-bar" aria-hidden="true">
+                          <span
+                            className="asset-details-page__portfolio-allocation-fill"
+                            style={{ width: `${Math.max(0, Math.min(100, row.allocationPct))}%` }}
+                          />
+                        </div>
+                      </div>
+                    ),
+                  },
+                  {
+                    key: 'category',
+                    label: t('assets.modal.portfolio.columns.category', { defaultValue: 'Category' }),
+                    sortable: true,
+                    sortValue: (row) => row.category || '',
+                    render: (row) => row.category || '-',
+                  },
+                ]}
+                searchLabel={t('assets.modal.portfolio.search.label', { defaultValue: 'Search' })}
+                searchPlaceholder={t('assets.modal.portfolio.search.placeholder', { defaultValue: 'Search properties...' })}
+                searchTerm={portfolioSearchTerm}
+                onSearchTermChange={setPortfolioSearchTerm}
+                matchesSearch={(row, term) => {
+                  const lower = term.toLowerCase();
+                  return (row.label?.toLowerCase().includes(lower) || row.category?.toLowerCase().includes(lower)) ?? false;
+                }}
+                itemsPerPage={portfolioItemsPerPage}
+                onItemsPerPageChange={setPortfolioItemsPerPage}
+                pageSizeOptions={[5, 10, 25, 50]}
+                emptyLabel={t('assets.modal.portfolio.empty', { defaultValue: 'No portfolio composition data available for this asset.' })}
+                defaultSort={{ key: 'allocation', direction: 'desc' }}
+                labels={{
+                  itemsPerPage: t('assets.pagination.itemsPerPage'),
+                  prev: t('assets.pagination.prev'),
+                  next: t('assets.pagination.next'),
+                  page: (page, total) => t('assets.pagination.page', { page, total }),
+                  showing: (start, end, total) => t('assets.pagination.showing', { start, end, total }),
+                }}
+              />
             </section>
             </>)}
           </>
