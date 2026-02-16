@@ -404,23 +404,6 @@ const toDisplayLabel = (value: string): string => (
     .join(' ')
 );
 
-const splitFieldsIntoColumns = <T,>(fields: T[], columnCount = 2): T[][] => {
-  if (!Array.isArray(fields) || fields.length === 0) {
-    return Array.from({ length: Math.max(1, columnCount) }, () => []);
-  }
-  const safeColumnCount = Math.max(1, columnCount);
-  const rowsPerColumn = Math.ceil(fields.length / safeColumnCount);
-  const columns: T[][] = [];
-
-  for (let index = 0; index < safeColumnCount; index += 1) {
-    const start = index * rowsPerColumn;
-    const end = start + rowsPerColumn;
-    columns.push(fields.slice(start, end));
-  }
-
-  return columns;
-};
-
 const normalizeComparableText = (value: unknown): string => (
   String(value || '')
     .trim()
@@ -428,6 +411,11 @@ const normalizeComparableText = (value: unknown): string => (
     .replace(/\.sa$/i, '')
     .replace(/\s+/g, ' ')
 );
+
+const isStockAssetClass = (assetClass: unknown): boolean => {
+  const normalized = String(assetClass || '').toLowerCase();
+  return normalized === 'stock' || normalized === 'equity';
+};
 
 const normalizeCityLabel = (value: unknown): string | null => {
   const text = String(value || '')
@@ -1121,6 +1109,7 @@ const AssetDetailsPage = () => {
   const [portfolioCityLoading, setPortfolioCityLoading] = useState(false);
   const [portfolioMapError, setPortfolioMapError] = useState<string | null>(null);
   const portfolioMapContainerRef = useRef<HTMLDivElement | null>(null);
+  const portfolioLeafletContainerRef = useRef<HTMLDivElement | null>(null);
   const portfolioLeafletMapRef = useRef<LeafletMap | null>(null);
   const portfolioLeafletLayerRef = useRef<LeafletLayerGroup | null>(null);
   const portfolioLeafletScaleControlRef = useRef<LeafletScaleControl | null>(null);
@@ -1550,7 +1539,7 @@ const AssetDetailsPage = () => {
     setSelectedFinancialMetric('');
     setSelectedDocumentCategory('all');
     setSelectedDocumentType('all');
-    if (selectedAsset) {
+    if (selectedAsset && isStockAssetClass(selectedAsset.assetClass)) {
       setAssetInsights(createEmptyInsightsSnapshot('loading', selectedAsset.ticker, selectedAsset.assetClass));
     } else {
       setAssetInsights(null);
@@ -1559,6 +1548,10 @@ const AssetDetailsPage = () => {
 
   useEffect(() => {
     if (!selectedAsset || !portfolioId) return;
+    if (!isStockAssetClass(selectedAsset.assetClass)) {
+      setAssetInsights(null);
+      return;
+    }
     let cancelled = false;
 
     const loadPayloads = async () => {
@@ -2332,7 +2325,7 @@ const AssetDetailsPage = () => {
   }, [assetInsights, t]);
 
   const insightsGroups = useMemo(() => {
-    if (!selectedAsset) return [];
+    if (!selectedAsset || !isStockAssetClass(selectedAsset.assetClass)) return [];
 
     const renderInsightsValue = (value: React.ReactNode) => {
       if (!assetInsights || assetInsights.status === 'loading') return t('common.loading');
@@ -2866,7 +2859,16 @@ const AssetDetailsPage = () => {
   }, [portfolioCityAllocations, portfolioCityCoordinates]);
 
   useEffect(() => {
-    if (activeTab !== 'portfolio') return;
+    if (activeTab !== 'portfolio') {
+      if (portfolioLeafletMapRef.current) {
+        portfolioLeafletMapRef.current.remove();
+        portfolioLeafletMapRef.current = null;
+        portfolioLeafletLayerRef.current = null;
+        portfolioLeafletScaleControlRef.current = null;
+        portfolioLeafletContainerRef.current = null;
+      }
+      return;
+    }
     if (!portfolioMapContainerRef.current) return;
 
     let cancelled = false;
@@ -2875,9 +2877,22 @@ const AssetDetailsPage = () => {
     ensureLeafletLoaded()
       .then((L) => {
         if (cancelled || !L || !portfolioMapContainerRef.current) return;
+        const container = portfolioMapContainerRef.current;
+
+        if (
+          portfolioLeafletMapRef.current
+          && portfolioLeafletContainerRef.current
+          && portfolioLeafletContainerRef.current !== container
+        ) {
+          portfolioLeafletMapRef.current.remove();
+          portfolioLeafletMapRef.current = null;
+          portfolioLeafletLayerRef.current = null;
+          portfolioLeafletScaleControlRef.current = null;
+          portfolioLeafletContainerRef.current = null;
+        }
 
         if (!portfolioLeafletMapRef.current) {
-          const map = L.map(portfolioMapContainerRef.current, {
+          const map = L.map(container, {
             zoomControl: true,
             scrollWheelZoom: true,
           });
@@ -2885,6 +2900,7 @@ const AssetDetailsPage = () => {
             attribution: '&copy; OpenStreetMap contributors',
           }).addTo(map);
           portfolioLeafletMapRef.current = map;
+          portfolioLeafletContainerRef.current = container;
         }
 
         const map = portfolioLeafletMapRef.current;
@@ -2938,6 +2954,7 @@ const AssetDetailsPage = () => {
       portfolioLeafletMapRef.current = null;
       portfolioLeafletLayerRef.current = null;
       portfolioLeafletScaleControlRef.current = null;
+      portfolioLeafletContainerRef.current = null;
     }
   }, []);
 
@@ -2956,6 +2973,11 @@ const AssetDetailsPage = () => {
   const isFiiAsset = useMemo(() => {
     if (!selectedAsset) return false;
     return String(selectedAsset.assetClass || '').toLowerCase() === 'fii';
+  }, [selectedAsset]);
+
+  const isStockAsset = useMemo(() => {
+    if (!selectedAsset) return false;
+    return isStockAssetClass(selectedAsset.assetClass);
   }, [selectedAsset]);
 
   const tabOptions = useMemo(() => {
@@ -3307,11 +3329,16 @@ const AssetDetailsPage = () => {
 
             {activeTab === 'overview' && (<>
             <div className="asset-details-page__grid">
-              <section className="asset-details-page__card asset-details-page__card--two-cols">
+              <section className="asset-details-page__card">
                 <h2>{t('assets.modal.sections.overview')}</h2>
-                <dl>
+                <dl className="asset-details-page__tiles">
                   {overviewFields.map((field) => (
-                    <div key={field.key}>
+                    <div
+                      key={field.key}
+                      className={`asset-details-page__tile ${
+                        field.key === 'name' ? 'asset-details-page__tile--wide' : ''
+                      }`}
+                    >
                       <dt>{field.label}</dt>
                       <dd>{field.value}</dd>
                     </div>
@@ -3319,11 +3346,11 @@ const AssetDetailsPage = () => {
                 </dl>
               </section>
 
-              <section className="asset-details-page__card asset-details-page__card--two-cols">
+              <section className="asset-details-page__card">
                 <h2>{t('assets.modal.sections.market')}</h2>
-                <dl>
+                <dl className="asset-details-page__tiles">
                   {marketFields.map((field) => (
-                    <div key={field.key}>
+                    <div key={field.key} className="asset-details-page__tile">
                       <dt>{field.label}</dt>
                       <dd>{field.value}</dd>
                     </div>
@@ -3333,24 +3360,26 @@ const AssetDetailsPage = () => {
 
             </div>
 
+            {isStockAsset ? (
             <section className="asset-details-page__card asset-details-page__card--full asset-details-page__card--insights">
               <h2>{t('assets.modal.sections.insights', { defaultValue: 'Fundamentals & Fair Value' })}</h2>
               <div className="asset-details-page__insights-grid">
                 {insightsGroups.map((group) => (
                   <article key={group.key} className="asset-details-page__insights-group">
                     <h3>{group.title}</h3>
-                    <div className="asset-details-page__insights-columns">
-                      {splitFieldsIntoColumns(group.fields, 2).map((column, columnIndex) => (
-                        <dl key={`${group.key}-column-${columnIndex}`} className="asset-details-page__insights-column">
-                          {column.map((field) => (
-                            <div key={`${group.key}-${field.key}`}>
-                              <dt>{field.label}</dt>
-                              <dd>{field.value}</dd>
-                            </div>
-                          ))}
-                        </dl>
+                    <dl className="asset-details-page__tiles asset-details-page__tiles--insights">
+                      {group.fields.map((field) => (
+                        <div
+                          key={`${group.key}-${field.key}`}
+                          className={`asset-details-page__tile ${
+                            field.key === 'industry' ? 'asset-details-page__tile--wide' : ''
+                          }`}
+                        >
+                          <dt>{field.label}</dt>
+                          <dd>{field.value}</dd>
+                        </div>
                       ))}
-                    </div>
+                    </dl>
                   </article>
                 ))}
                 <article className="asset-details-page__insights-group asset-details-page__insights-group--links">
@@ -3359,19 +3388,6 @@ const AssetDetailsPage = () => {
                 </article>
               </div>
             </section>
-
-            {shouldRenderFundInfo ? (
-              <section className="asset-details-page__card asset-details-page__card--full asset-details-page__card--two-cols">
-                <h2>{t('assets.modal.sections.fundInfo', { defaultValue: 'Fund General Info' })}</h2>
-                <dl>
-                  {fundGeneralInfoFields.map((field) => (
-                    <div key={field.key}>
-                      <dt>{field.label}</dt>
-                      <dd>{field.value}</dd>
-                    </div>
-                  ))}
-                </dl>
-              </section>
             ) : null}
 
             {selectedAssetWeightMetrics ? (
@@ -3428,6 +3444,20 @@ const AssetDetailsPage = () => {
                     </article>
                   </div>
                 </div>
+              </section>
+            ) : null}
+
+            {shouldRenderFundInfo ? (
+              <section className="asset-details-page__card asset-details-page__card--full asset-details-page__card--two-cols">
+                <h2>{t('assets.modal.sections.fundInfo', { defaultValue: 'General Info' })}</h2>
+                <dl>
+                  {fundGeneralInfoFields.map((field) => (
+                    <div key={field.key}>
+                      <dt>{field.label}</dt>
+                      <dd>{field.value}</dd>
+                    </div>
+                  ))}
+                </dl>
               </section>
             ) : null}
 
