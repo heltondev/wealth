@@ -2864,18 +2864,26 @@ const AssetDetailsPage = () => {
         {!loading && selectedAsset ? (
           <>
             <div className="asset-details-page__tabs" role="tablist" aria-label={t('assets.detail.tabs.ariaLabel', { defaultValue: 'Asset detail sections' })}>
-              {tabOptions.map((tab) => (
-                <button
-                  key={tab.value}
-                  type="button"
-                  role="tab"
-                  aria-selected={activeTab === tab.value}
-                  className={`asset-details-page__tab ${activeTab === tab.value ? 'asset-details-page__tab--active' : ''}`}
-                  onClick={() => setActiveTab(tab.value)}
-                >
-                  {tab.label}
-                </button>
-              ))}
+              {tabOptions.map((tab) => {
+                const isLoading =
+                  (tab.value === 'overview' && assetInsights?.status === 'loading') ||
+                  (tab.value === 'portfolio' && assetFinancialsLoading) ||
+                  (tab.value === 'financials' && assetFinancialsLoading) ||
+                  (tab.value === 'history' && marketSeriesLoading);
+                return (
+                  <button
+                    key={tab.value}
+                    type="button"
+                    role="tab"
+                    aria-selected={activeTab === tab.value}
+                    className={`asset-details-page__tab ${activeTab === tab.value ? 'asset-details-page__tab--active' : ''}`}
+                    onClick={() => setActiveTab(tab.value)}
+                  >
+                    {tab.label}
+                    {isLoading ? <span className="asset-details-page__tab-spinner" /> : null}
+                  </button>
+                );
+              })}
             </div>
 
             {activeTab === 'overview' && (<>

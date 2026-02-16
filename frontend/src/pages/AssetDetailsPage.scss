@@ -64,6 +64,22 @@
     }
   }
 
+  &__tab-spinner {
+    display: inline-block;
+    width: 0.75em;
+    height: 0.75em;
+    margin-left: 0.4em;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    vertical-align: middle;
+    animation: tab-spin 0.6s linear infinite;
+  }
+
+  @keyframes tab-spin {
+    to { transform: rotate(360deg); }
+  }
+
   &__state {
     @include glass-card;
     padding: $spacing-xxl;
