@@ -1,8 +1,22 @@
 const { fetchWithTimeout, withRetry } = require('../../utils');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
+const fs = require('fs');
+const path = require('path');
 
 const DEFAULT_TIMEOUT_MS = 15000;
 const BASE_URL = 'https://www.fundsexplorer.com.br/funds/';
 const EMISSIONS_URL = 'https://www.fundsexplorer.com.br/emissoes-ipos';
+const execFileAsync = promisify(execFile);
+const LOCAL_CACHE_FILE = path.resolve(__dirname, '../../../../data/fundsexplorer-descriptions.json');
+const HTML_ENTITY_MAP = {
+	amp: '&',
+	lt: '<',
+	gt: '>',
+	quot: '"',
+	apos: "'",
+	nbsp: ' ',
+};
 
 /**
  * Parse a Brazilian-formatted number string (e.g. "132.352,72") into a float.
@@ -14,11 +28,26 @@ const parseBrNumber = (str) => {
 	return Number.isFinite(n) ? n : 0;
 };
 
+const decodeHtmlEntities = (value) => {
+	if (!value) return '';
+	return String(value)
+		.replace(/&#(\d+);/g, (_, decimal) => {
+			const codePoint = Number(decimal);
+			return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : '';
+		})
+		.replace(/&#x([0-9a-f]+);/gi, (_, hexadecimal) => {
+			const codePoint = Number.parseInt(hexadecimal, 16);
+			return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : '';
+		})
+		.replace(/&([a-z]+);/gi, (_, name) => HTML_ENTITY_MAP[name.toLowerCase()] || `&${name};`);
+};
+
 class FundsExplorerProvider {
 	constructor(options = {}) {
 		this.timeoutMs = Number(
 			options.timeoutMs || process.env.MARKET_DATA_FUNDSEXPLORER_TIMEOUT_MS || DEFAULT_TIMEOUT_MS
 		);
+		this.localDescriptionCache = null;
 	}
 
 	canHandle(asset) {
@@ -38,30 +67,38 @@ class FundsExplorerProvider {
 
 		try {
 			const html = await withRetry(
-				async () => {
-					const url = `${BASE_URL}${ticker}`;
-					const res = await fetchWithTimeout(url, {
-						timeoutMs: this.timeoutMs,
-						headers: {
-							'User-Agent':
-								'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-							Accept: 'text/html,application/xhtml+xml',
-						},
-					});
-					if (!res.ok) throw new Error(`HTTP ${res.status}`);
-					return res.text();
-				},
+				async () => this.#fetchPageHtml(`${BASE_URL}${ticker}`),
 				{ retries: 1, baseDelayMs: 500 }
 			);
 
 			const rows = this.#parseProperties(html);
+			const descriptionHtml = this.#parseDescriptionHtml(html);
+			const description = this.#parseDescription(html, descriptionHtml);
 			return {
 				data_source: 'fundsexplorer',
+				fund_info: description
+					? {
+						description,
+						description_html: descriptionHtml,
+						source: 'fundsexplorer',
+					}
+					: null,
 				fund_portfolio: rows,
 				portfolio_composition: rows,
 			};
 		} catch {
-			return null;
+			const localFallback = this.#readLocalDescriptionFallback(ticker);
+			if (!localFallback) return null;
+			return {
+				data_source: localFallback.source || 'fundsexplorer_local_cache',
+				fund_info: {
+					description: localFallback.description || null,
+					description_html: localFallback.description_html || null,
+					source: localFallback.source || 'fundsexplorer_local_cache',
+				},
+				fund_portfolio: [],
+				portfolio_composition: [],
+			};
 		}
 	}
 
@@ -74,18 +111,7 @@ class FundsExplorerProvider {
 		try {
 			const fetchUrl = (url) =>
 				withRetry(
-					async () => {
-						const res = await fetchWithTimeout(url, {
-							timeoutMs: this.timeoutMs,
-							headers: {
-								'User-Agent':
-									'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-								Accept: 'text/html,application/xhtml+xml',
-							},
-						});
-						if (!res.ok) throw new Error(`HTTP ${res.status}`);
-						return res.text();
-					},
+					async () => this.#fetchPageHtml(url),
 					{ retries: 1, baseDelayMs: 500 }
 				);
 
@@ -198,6 +224,63 @@ class FundsExplorerProvider {
 		return emissions;
 	}
 
+	async #fetchPageHtml(url) {
+		try {
+			const res = await fetchWithTimeout(url, {
+				timeoutMs: this.timeoutMs,
+				headers: {
+					'User-Agent':
+						'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+					Accept: 'text/html,application/xhtml+xml',
+				},
+			});
+			if (!res.ok) throw new Error(`HTTP ${res.status}`);
+			return res.text();
+		} catch (error) {
+			if (!this.#shouldUseCurlFallback(error)) throw error;
+			return this.#fetchPageHtmlWithCurl(url);
+		}
+	}
+
+	#shouldUseCurlFallback(error) {
+		const errorCode = String(error?.cause?.code || error?.code || '').toUpperCase();
+		const message = String(error?.message || '').toUpperCase();
+		return (
+			errorCode === 'ENOTFOUND' ||
+			errorCode === 'EAI_AGAIN' ||
+			errorCode === 'ENETUNREACH' ||
+			errorCode === 'EHOSTUNREACH' ||
+			message.includes('ENOTFOUND') ||
+			message.includes('EAI_AGAIN')
+		);
+	}
+
+	async #fetchPageHtmlWithCurl(url) {
+		const timeoutSeconds = Math.max(5, Math.ceil(this.timeoutMs / 1000));
+		const { stdout } = await execFileAsync(
+			'curl',
+			[
+				'-sL',
+				'--max-time',
+				String(timeoutSeconds),
+				'--connect-timeout',
+				'10',
+				'-A',
+				'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+				'-H',
+				'Accept: text/html,application/xhtml+xml',
+				url,
+			],
+			{
+				maxBuffer: 8 * 1024 * 1024,
+			}
+		);
+		if (!stdout || String(stdout).trim().length === 0) {
+			throw new Error('curl returned empty response body');
+		}
+		return String(stdout);
+	}
+
 	#parseProperties(html) {
 		if (!html) return [];
 
@@ -252,6 +335,194 @@ class FundsExplorerProvider {
 			category: p.city || null,
 			source: 'fundsexplorer',
 		}));
+	}
+
+	#parseDescription(html, descriptionHtml = null) {
+		if (!html) return null;
+		if (descriptionHtml) {
+			const descriptionText = this.#normalizeDescriptionText(descriptionHtml);
+			if (descriptionText) return descriptionText;
+		}
+
+		const dataLayerContent = this.#parseDataLayerContent(html);
+		const dataLayerDescription = this.#normalizeDescriptionText(
+			dataLayerContent?.pagePostTerms?.meta?.tudo_sobre ||
+				dataLayerContent?.pagePostTerms?.meta?.descricao ||
+				dataLayerContent?.pagePostTerms?.meta?.description ||
+				null
+		);
+		if (dataLayerDescription) return dataLayerDescription;
+
+		return this.#normalizeDescriptionText(
+			this.#extractMetaContent(html, 'description') ||
+				this.#extractMetaContent(html, 'og:description') ||
+				this.#extractMetaContent(html, 'twitter:description') ||
+				null
+		);
+	}
+
+	#parseDescriptionHtml(html) {
+		const articleHtml = this.#extractDescriptionArticleHtml(html);
+		if (!articleHtml) return null;
+		return this.#sanitizeDescriptionHtml(articleHtml);
+	}
+
+	#extractDescriptionArticleHtml(html) {
+		if (!html) return null;
+		const htmlText = String(html);
+
+		const extractArticleFromBlock = (blockHtml) => {
+			if (!blockHtml) return null;
+			const prioritized = blockHtml.match(
+				/<article[^>]*class=["'][^"']*newsContent__article[^"']*["'][^>]*>[\s\S]*?<\/article>/i
+			);
+			if (prioritized?.[0]) return prioritized[0];
+
+			const generic = blockHtml.match(/<article[^>]*>[\s\S]*?<\/article>/i);
+			return generic?.[0] || null;
+		};
+
+		const sectionMatch = htmlText.match(
+			/<section[^>]*id=["'][^"']*carbon_fields_fiis_description[^"']*["'][^>]*>([\s\S]*?)<\/section>/i
+		);
+		const sectionArticle = extractArticleFromBlock(sectionMatch?.[1] || '');
+		if (sectionArticle) return sectionArticle;
+
+		const headingScopedMatch = htmlText.match(
+			/<h2[^>]*>\s*Descri(?:ç|c)[aã]o\s+do[\s\S]*?<\/h2>([\s\S]*?)(?:<\/section>|<section\b|$)/i
+		);
+		const headingScopedArticle = extractArticleFromBlock(headingScopedMatch?.[1] || '');
+		if (headingScopedArticle) return headingScopedArticle;
+
+		return null;
+	}
+
+	#sanitizeDescriptionHtml(value) {
+		let html = String(value || '').trim();
+		if (!html) return null;
+
+		// Remove dangerous blocks and inline event/script vectors before allowing rich text tags.
+		html = html
+			.replace(/<!--[\s\S]*?-->/g, '')
+			.replace(/<\s*(script|style|iframe|object|embed|form|svg|math|template)[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, '')
+			.replace(/\s(on[a-z]+)\s*=\s*(['"]).*?\2/gi, '')
+			.replace(/\sstyle\s*=\s*(['"]).*?\1/gi, '')
+			.replace(/\s(srcdoc)\s*=\s*(['"]).*?\2/gi, '')
+			.replace(/\s(href|src)\s*=\s*(['"])\s*javascript:[\s\S]*?\2/gi, '');
+
+		const allowedTags = new Set([
+			'article',
+			'h3',
+			'b',
+			'strong',
+			'em',
+			'i',
+			'p',
+			'br',
+			'ul',
+			'ol',
+			'li',
+			'a',
+		]);
+
+		html = html.replace(/<\/?([a-zA-Z0-9]+)(\s[^>]*)?>/g, (full, tagName) => {
+			const normalizedTag = String(tagName || '').toLowerCase();
+			if (!allowedTags.has(normalizedTag)) return '';
+			return full.trim().startsWith('</') ? `</${normalizedTag}>` : `<${normalizedTag}>`;
+		});
+
+		const plainText = this.#normalizeDescriptionText(html);
+		if (!plainText) return null;
+		return html
+			.replace(/\r/g, '\n')
+			.replace(/\n{3,}/g, '\n\n')
+			.trim();
+	}
+
+	#extractMetaContent(html, metaName) {
+		const target = String(metaName || '').toLowerCase();
+		if (!target) return null;
+
+		const tags = String(html).match(/<meta\b[^>]*>/gi) || [];
+		for (const tag of tags) {
+			const attrs = {};
+			const attrPattern = /([a-zA-Z_:.-]+)\s*=\s*["']([^"']*)["']/g;
+			let attrMatch;
+			while ((attrMatch = attrPattern.exec(tag)) !== null) {
+				attrs[attrMatch[1].toLowerCase()] = attrMatch[2];
+			}
+			const name = String(attrs.name || attrs.property || '').toLowerCase();
+			if (name !== target) continue;
+			return attrs.content || null;
+		}
+		return null;
+	}
+
+	#parseDataLayerContent(html) {
+		const match = String(html).match(
+			/var\s+dataLayer_content\s*=\s*(\{[\s\S]*?\})\s*;\s*dataLayer\.push/i
+		);
+		if (!match?.[1]) return null;
+		try {
+			return JSON.parse(match[1]);
+		} catch {
+			return null;
+		}
+	}
+
+	#normalizeDescriptionText(value) {
+		const raw = String(value || '').trim();
+		if (!raw) return null;
+
+		const withLineBreaks = raw
+			.replace(/<\s*br\s*\/?>/gi, '\n')
+			.replace(/<\/\s*(p|div|li|h1|h2|h3|h4|h5|h6|article)\s*>/gi, '\n')
+			.replace(/<\s*li[^>]*>/gi, '• ');
+		const withoutTags = withLineBreaks.replace(/<[^>]+>/g, ' ');
+		const decoded = decodeHtmlEntities(withoutTags)
+			.replace(/\r/g, '\n')
+			.replace(/[ \t]+\n/g, '\n')
+			.replace(/\n{3,}/g, '\n\n');
+
+		const lines = decoded
+			.split('\n')
+			.map((line) => line.replace(/\s+/g, ' ').trim())
+			.filter(Boolean);
+
+		if (lines.length === 0) return null;
+		return lines.join('\n');
+	}
+
+	#readLocalDescriptionFallback(ticker) {
+		const normalizedTicker = String(ticker || '').toUpperCase().trim();
+		if (!normalizedTicker) return null;
+
+		if (this.localDescriptionCache === null) {
+			try {
+				const content = fs.readFileSync(LOCAL_CACHE_FILE, 'utf8');
+				this.localDescriptionCache = JSON.parse(content);
+			} catch {
+				this.localDescriptionCache = {};
+			}
+		}
+
+		const items = this.localDescriptionCache?.items || this.localDescriptionCache || {};
+		const entry = items?.[normalizedTicker] || null;
+		if (!entry) return null;
+
+		const descriptionHtml = this.#sanitizeDescriptionHtml(
+			entry.description_html || entry.descriptionHtml || null
+		);
+		const description =
+			this.#normalizeDescriptionText(entry.description || null) ||
+			this.#normalizeDescriptionText(descriptionHtml || null);
+		if (!description && !descriptionHtml) return null;
+
+		return {
+			description,
+			description_html: descriptionHtml,
+			source: 'fundsexplorer_local_cache',
+		};
 	}
 }
 

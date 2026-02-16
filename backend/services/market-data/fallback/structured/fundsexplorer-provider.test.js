@@ -13,7 +13,7 @@ const withMockedFetch = async (fetchImpl, task) => {
 	}
 };
 
-const buildHtml = (slides) => `
+const buildHtml = (slides, extra = '') => `
 <html><body>
 <div class="swiper mySwiper mySwiper--locationGrid">
 <div class="swiper-wrapper" data-element="properties-swiper-container">
@@ -21,6 +21,7 @@ ${slides}
 </div>
 <div class="swiper-button-next"></div>
 </div>
+${extra}
 </body></html>
 `;
 
@@ -45,12 +46,27 @@ const HGLG_SLIDES = `
 </div>
 `;
 
+const DESCRIPTION_SECTION = `
+<section id="carbon_fields_fiis_description-3" class="widget carbon_fields_fiis_description">
+	<h2 class="wrapper extraTitle">Descrição do HGLG11</h2>
+	<div class="wrapper newsContent">
+		<article class="newsContent__article">
+			<h3>HGLG11: Pátria Logística</h3>
+			<b>PÁTRIA LOG - FUNDO DE INVESTIMENTO IMOBILIÁRIO</b>
+			HGLG11 é um fundo imobiliário do tipo tijolo.
+			<br />
+			Atua em galpões logísticos.
+		</article>
+	</div>
+</section>
+`;
+
 test('FundsExplorerProvider parses property slides into portfolio rows', async () => {
 	const provider = new FundsExplorerProvider({ timeoutMs: 1000 });
 
 	const fetchImpl = async (url) => {
 		if (url.includes('fundsexplorer.com.br/funds/hglg11')) {
-			return new Response(buildHtml(HGLG_SLIDES), {
+			return new Response(buildHtml(HGLG_SLIDES, DESCRIPTION_SECTION), {
 				status: 200,
 				headers: { 'content-type': 'text/html' },
 			});
@@ -76,6 +92,14 @@ test('FundsExplorerProvider parses property slides into portfolio rows', async (
 	assert.equal(vinhedo.name, 'HGLG Vinhedo');
 	assert.equal(vinhedo.category, 'Vinhedo - SP');
 	assert.ok(Math.abs(vinhedo.allocation_pct - 10) < 0.01);
+
+	assert.equal(payload.fund_info.source, 'fundsexplorer');
+	assert.ok(payload.fund_info.description_html.includes('<article>'));
+	assert.ok(payload.fund_info.description_html.includes('<h3>'));
+	assert.ok(
+		payload.fund_info.description.includes('HGLG11 é um fundo imobiliário do tipo tijolo.')
+	);
+	assert.ok(payload.fund_info.description.includes('Atua em galpões logísticos.'));
 });
 
 test('FundsExplorerProvider returns null for non-BR market', async () => {
@@ -100,6 +124,67 @@ test('FundsExplorerProvider returns null on HTTP error', async () => {
 		provider.fetch({ ticker: 'XYZZ11', market: 'BR', assetClass: 'fii' })
 	);
 	assert.equal(payload, null);
+});
+
+test('FundsExplorerProvider falls back to dataLayer description when section is missing', async () => {
+	const provider = new FundsExplorerProvider({ timeoutMs: 1000 });
+	const dataLayerContent = JSON.stringify({
+		pagePostTerms: {
+			meta: {
+				tudo_sobre: 'Descrição vinda do dataLayer.',
+			},
+		},
+	});
+
+	const fetchImpl = async (url) => {
+		if (url.includes('fundsexplorer.com.br/funds/btlg11')) {
+			return new Response(
+				buildHtml(
+					'',
+					`<script>var dataLayer_content = ${dataLayerContent}; dataLayer.push( dataLayer_content );</script>`
+				),
+				{
+					status: 200,
+					headers: { 'content-type': 'text/html' },
+				}
+			);
+		}
+		throw new Error(`Unexpected URL: ${url}`);
+	};
+
+	const payload = await withMockedFetch(fetchImpl, () =>
+		provider.fetch({ ticker: 'BTLG11', market: 'BR', assetClass: 'fii' })
+	);
+
+	assert.ok(payload);
+	assert.equal(payload.fund_info.description, 'Descrição vinda do dataLayer.');
+});
+
+test('FundsExplorerProvider falls back to meta description when section and dataLayer are missing', async () => {
+	const provider = new FundsExplorerProvider({ timeoutMs: 1000 });
+
+	const fetchImpl = async (url) => {
+		if (url.includes('fundsexplorer.com.br/funds/bcff11')) {
+			return new Response(
+				buildHtml(
+					'',
+					'<meta name="description" content="Resumo do BCFF11 vindo do meta description." />'
+				),
+				{
+					status: 200,
+					headers: { 'content-type': 'text/html' },
+				}
+			);
+		}
+		throw new Error(`Unexpected URL: ${url}`);
+	};
+
+	const payload = await withMockedFetch(fetchImpl, () =>
+		provider.fetch({ ticker: 'BCFF11', market: 'BR', assetClass: 'fii' })
+	);
+
+	assert.ok(payload);
+	assert.equal(payload.fund_info.description, 'Resumo do BCFF11 vindo do meta description.');
 });
 
 const buildEmissionsHtml = (cards) => `

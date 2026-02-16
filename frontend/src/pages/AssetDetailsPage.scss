@@ -152,6 +152,44 @@
     }
   }
 
+  &__summary {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    line-height: 1.42;
+    white-space: pre-line;
+  }
+
+  &__summary--html {
+    white-space: pre-line;
+
+    h3 {
+      margin: 0 0 $spacing-sm;
+      font-size: 1rem;
+      color: var(--text-primary);
+    }
+
+    p {
+      margin: 0 0 $spacing-sm;
+    }
+
+    ul,
+    ol {
+      margin: 0 0 $spacing-sm;
+      padding-left: 1.2rem;
+    }
+
+    li {
+      margin: 0 0 0.2rem;
+    }
+
+    b,
+    strong {
+      color: var(--text-primary);
+      font-weight: 700;
+    }
+  }
+
   &__tiles {
     margin: 0;
     display: grid;

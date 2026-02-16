@@ -124,6 +124,8 @@ type AssetFundGeneralInfo = {
   tradingName: string | null;
   acronym: string | null;
   cnpj: string | null;
+  description: string | null;
+  descriptionHtml: string | null;
   classification: string | null;
   segment: string | null;
   administrator: string | null;
@@ -403,6 +405,44 @@ const toDisplayLabel = (value: string): string => (
     .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1).toLowerCase()}`)
     .join(' ')
 );
+
+const sanitizeSummaryHtml = (value: unknown): string | null => {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+
+  const allowedTags = new Set([
+    'article',
+    'h3',
+    'b',
+    'strong',
+    'em',
+    'i',
+    'p',
+    'br',
+    'ul',
+    'ol',
+    'li',
+    'a',
+  ]);
+
+  let html = raw
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<\s*(script|style|iframe|object|embed|form|svg|math|template)[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, '')
+    .replace(/\s(on[a-z]+)\s*=\s*(['"]).*?\2/gi, '')
+    .replace(/\sstyle\s*=\s*(['"]).*?\1/gi, '')
+    .replace(/\s(srcdoc)\s*=\s*(['"]).*?\2/gi, '')
+    .replace(/\s(href|src)\s*=\s*(['"])\s*javascript:[\s\S]*?\2/gi, '');
+
+  html = html.replace(/<\/?([a-zA-Z0-9]+)(\s[^>]*)?>/g, (full, tagName) => {
+    const normalizedTag = String(tagName || '').toLowerCase();
+    if (!allowedTags.has(normalizedTag)) return '';
+    return full.trim().startsWith('</') ? `</${normalizedTag}>` : `<${normalizedTag}>`;
+  });
+
+  const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+  return html;
+};
 
 const normalizeComparableText = (value: unknown): string => (
   String(value || '')
@@ -874,6 +914,15 @@ const parseFundGeneralInfoPayload = (payload: unknown): AssetFundGeneralInfo | n
   const tradingName = toNonEmptyString(entry.trading_name ?? entry.tradingName);
   const acronym = toNonEmptyString(entry.acronym);
   const cnpj = toNonEmptyString(entry.cnpj);
+  const description = toNonEmptyString(entry.description ?? entry.descricao ?? entry.tudo_sobre ?? entry.tudoSobre);
+  const descriptionHtml = sanitizeSummaryHtml(
+    entry.description_html
+    ?? entry.descriptionHtml
+    ?? entry.summary_html
+    ?? entry.summaryHtml
+    ?? entry.descricao_html
+    ?? entry.descricaoHtml
+  );
   const classification = toNonEmptyString(entry.classification);
   const segment = toNonEmptyString(entry.segment);
   const administrator = toNonEmptyString(entry.administrator);
@@ -894,6 +943,8 @@ const parseFundGeneralInfoPayload = (payload: unknown): AssetFundGeneralInfo | n
     tradingName,
     acronym,
     cnpj,
+    description,
+    descriptionHtml,
     classification,
     segment,
     administrator,
@@ -3121,6 +3172,34 @@ const AssetDetailsPage = () => {
     ];
   }, [assetInsights?.source, formatCnpjValue, formatDetailValue, fundGeneralInfo, numberLocale, selectedAsset?.name, selectedAsset?.source, selectedAsset?.ticker, t]);
 
+  const fundSummaryText = useMemo(() => {
+    const explicitSummary = toNonEmptyString(fundGeneralInfo?.description ?? null);
+    if (explicitSummary) return explicitSummary;
+    if (!fundGeneralInfo) return null;
+
+    const lines = [
+      toNonEmptyString(fundGeneralInfo.legalName),
+      toNonEmptyString(fundGeneralInfo.classification)
+        ? `${t('assets.modal.fundInfo.classification', { defaultValue: 'Classification' })}: ${fundGeneralInfo.classification}`
+        : null,
+      toNonEmptyString(fundGeneralInfo.segment)
+        ? `${t('assets.modal.fundInfo.segment', { defaultValue: 'Segment' })}: ${fundGeneralInfo.segment}`
+        : null,
+      toNonEmptyString(fundGeneralInfo.administrator)
+        ? `${t('assets.modal.fundInfo.administrator', { defaultValue: 'Administrator' })}: ${fundGeneralInfo.administrator}`
+        : null,
+      toNonEmptyString(fundGeneralInfo.managerName)
+        ? `${t('assets.modal.fundInfo.managerName', { defaultValue: 'Manager' })}: ${fundGeneralInfo.managerName}`
+        : null,
+    ].filter(Boolean) as string[];
+
+    return lines.length > 0 ? lines.join('\n') : null;
+  }, [fundGeneralInfo, t]);
+
+  const fundSummaryHtml = useMemo(() => (
+    sanitizeSummaryHtml(fundGeneralInfo?.descriptionHtml ?? null)
+  ), [fundGeneralInfo?.descriptionHtml]);
+
   const fallbackFinancialDocuments = useMemo(() => {
     if (!selectedAsset) return [];
     const links = buildAssetExternalLinks(selectedAsset.ticker, selectedAsset.assetClass);
@@ -3458,6 +3537,23 @@ const AssetDetailsPage = () => {
                     </div>
                   ))}
                 </dl>
+              </section>
+            ) : null}
+
+            {(isFiiAsset || shouldRenderFundInfo) ? (
+              <section className="asset-details-page__card asset-details-page__card--full">
+                <h2>{t('assets.modal.sections.summary', { defaultValue: 'Summary' })}</h2>
+                {fundSummaryHtml ? (
+                  <div
+                    className="asset-details-page__summary asset-details-page__summary--html"
+                    // Rich summary comes from scraped article HTML and is sanitized before rendering.
+                    dangerouslySetInnerHTML={{ __html: fundSummaryHtml }}
+                  />
+                ) : (
+                  <p className="asset-details-page__summary">
+                    {fundSummaryText ?? formatDetailValue(null)}
+                  </p>
+                )}
               </section>
             ) : null}
 

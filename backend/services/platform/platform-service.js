@@ -920,6 +920,17 @@ const readFundGeneralInfoFromPayload = (payload, sourceHint) => {
 		trading_name: readString(['tradingname', 'pregao']),
 		acronym,
 		cnpj: readString(['cnpj']),
+		description: readString(['tudosobre', 'descricao', 'description', 'about', 'funddescription']),
+		description_html: toTrimmedStringOrNull(
+			readValueFromRecordKeys(allRecords, [
+				'description_html',
+				'descriptionHtml',
+				'summary_html',
+				'summaryHtml',
+				'descricao_html',
+				'descricaoHtml',
+			])
+		),
 		classification: readString(['classification', 'classificacao']),
 		segment: readString(['segment']),
 		administrator: readString(['positionmanager', 'administrator', 'administrador']),
@@ -3057,7 +3068,7 @@ class PlatformService {
 					return {
 						statements: createEmptyFinancialStatements(),
 						documents: [],
-						fund_info: null,
+						fund_info: readFundGeneralInfoFromPayload(payload, 'fundsexplorer'),
 						fund_portfolio: readFundPortfolioFromPayload(payload, 'fundsexplorer'),
 						error: null,
 					};
@@ -3123,6 +3134,9 @@ class PlatformService {
 					});
 				}
 				if (hasAnyFinancialStatements(candidateStatements)) {
+					sourcesWithData.add(candidate.source);
+				}
+				if (hasFundGeneralInfo(loaded?.fund_info)) {
 					sourcesWithData.add(candidate.source);
 				}
 				if (hasFundPortfolio(loaded?.fund_portfolio)) {

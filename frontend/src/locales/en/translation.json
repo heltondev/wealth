@@ -469,6 +469,7 @@
         "market": "Market",
         "insights": "Fundamentals & Fair Value",
         "fundInfo": "General Info",
+        "summary": "Summary",
         "provents": "Provents & Calendar",
         "metadata": "Metadata",
         "raw": "Raw Payload"
