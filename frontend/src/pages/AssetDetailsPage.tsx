@@ -146,6 +146,25 @@ type AssetFundPortfolioRow = {
   source: string | null;
 };
 
+type FiiEmissionRow = {
+  ticker: string;
+  emissionNumber: number;
+  stage: string;
+  price: number | null;
+  discount: number | null;
+  baseDate: string;
+  proportionFactor: string;
+  preferenceStart: string;
+  preferenceEnd: string;
+  preferenceStatus: string;
+  sobrasStart: string;
+  sobrasEnd: string;
+  sobrasStatus: string;
+  publicStart: string;
+  publicEnd: string;
+  publicStatus: string;
+};
+
 type ParsedFinancialRow = {
   key: string;
   label: string;
@@ -911,7 +930,7 @@ const AssetDetailsPage = () => {
   } = usePortfolioData();
   const portfolioId = selectedPortfolio;
   const portfolioMarketValueByAssetId = useMemo(() => metrics?.marketValues || {}, [metrics]);
-  const [activeTab, setActiveTab] = useState<'overview' | 'portfolio' | 'financials' | 'history'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'portfolio' | 'emissions' | 'financials' | 'history'>('overview');
   const [portfolioSearchTerm, setPortfolioSearchTerm] = useState('');
   const [portfolioItemsPerPage, setPortfolioItemsPerPage] = useState(5);
   const [currentQuote, setCurrentQuote] = useState<number | null>(null);
@@ -943,6 +962,10 @@ const AssetDetailsPage = () => {
     source: string;
   }>>([]);
   const [fiiUpdatesLoading, setFiiUpdatesLoading] = useState(false);
+  const [fiiEmissions, setFiiEmissions] = useState<FiiEmissionRow[]>([]);
+  const [fiiEmissionsLoading, setFiiEmissionsLoading] = useState(false);
+  const [emissionsSearchTerm, setEmissionsSearchTerm] = useState('');
+  const [emissionsItemsPerPage, setEmissionsItemsPerPage] = useState(5);
 
   const numberLocale = i18n.language?.startsWith('pt') ? 'pt-BR' : 'en-US';
 
@@ -1469,6 +1492,36 @@ const AssetDetailsPage = () => {
       .finally(() => {
         if (cancelled) return;
         setFiiUpdatesLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [portfolioId, selectedAsset]);
+
+  useEffect(() => {
+    if (!selectedAsset || !portfolioId) return;
+    const isFii = String(selectedAsset.assetClass || '').toLowerCase() === 'fii';
+    if (!isFii) {
+      setFiiEmissions([]);
+      return;
+    }
+    let cancelled = false;
+    setFiiEmissionsLoading(true);
+
+    api.getFiiEmissions(selectedAsset.ticker, portfolioId)
+      .then((payload: Record<string, unknown>) => {
+        if (cancelled) return;
+        const items = Array.isArray(payload?.emissions) ? payload.emissions : [];
+        setFiiEmissions(items);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setFiiEmissions([]);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setFiiEmissionsLoading(false);
       });
 
     return () => {
@@ -2544,6 +2597,11 @@ const AssetDetailsPage = () => {
     return isFii || fundPortfolioRows.length > 0;
   }, [fundPortfolioRows.length, selectedAsset]);
 
+  const isFiiAsset = useMemo(() => {
+    if (!selectedAsset) return false;
+    return String(selectedAsset.assetClass || '').toLowerCase() === 'fii';
+  }, [selectedAsset]);
+
   const tabOptions = useMemo(() => {
     const tabs = [
       { value: 'overview' as const, label: t('assets.detail.tabs.overview', { defaultValue: 'Overview' }) },
@@ -2553,8 +2611,12 @@ const AssetDetailsPage = () => {
     if (shouldRenderFundPortfolio) {
       tabs.splice(1, 0, { value: 'portfolio' as const, label: t('assets.detail.tabs.portfolio', { defaultValue: 'Portfolio' }) });
     }
+    if (isFiiAsset) {
+      const financialsIndex = tabs.findIndex((tab) => tab.value === 'financials');
+      tabs.splice(financialsIndex, 0, { value: 'emissions' as const, label: t('assets.detail.tabs.emissions', { defaultValue: 'Emissões' }) });
+    }
     return tabs;
-  }, [t, shouldRenderFundPortfolio]);
+  }, [t, shouldRenderFundPortfolio, isFiiAsset]);
 
   const fundGeneralInfoFields = useMemo<Array<{ key: string; label: string; value: React.ReactNode }>>(() => {
     const quotaCountValue = fundGeneralInfo?.quotaCount ?? null;
@@ -2868,6 +2930,7 @@ const AssetDetailsPage = () => {
                 const isLoading =
                   (tab.value === 'overview' && assetInsights?.status === 'loading') ||
                   (tab.value === 'portfolio' && assetFinancialsLoading) ||
+                  (tab.value === 'emissions' && fiiEmissionsLoading) ||
                   (tab.value === 'financials' && assetFinancialsLoading) ||
                   (tab.value === 'history' && marketSeriesLoading);
                 return (
@@ -3813,6 +3876,132 @@ const AssetDetailsPage = () => {
                   defaultValue: 'Derived from stock split factors in historical price data.',
                 })}
               </p>
+            </section>
+            </>)}
+
+            {activeTab === 'emissions' && (<>
+            <section className="asset-details-page__card asset-details-page__card--full">
+              {fiiEmissionsLoading ? (
+                <p className="asset-details-page__financials-state">{t('common.loading')}</p>
+              ) : (
+                <DataTable<FiiEmissionRow>
+                  rows={fiiEmissions}
+                  rowKey={(row) => `${row.ticker}-${row.emissionNumber}`}
+                  columns={[
+                    {
+                      key: 'emission',
+                      label: t('assets.detail.emissions.columns.emission', { defaultValue: 'Emissão' }),
+                      sortable: true,
+                      sortValue: (row) => row.emissionNumber,
+                      render: (row) => `${row.emissionNumber}ª emissão`,
+                    },
+                    {
+                      key: 'stage',
+                      label: t('assets.detail.emissions.columns.status', { defaultValue: 'Status' }),
+                      sortable: true,
+                      sortValue: (row) => row.stage,
+                      render: (row) => (
+                        <span className={`asset-details-page__emission-stage asset-details-page__emission-stage--${row.stage}`}>
+                          {row.stage}
+                        </span>
+                      ),
+                    },
+                    {
+                      key: 'price',
+                      label: t('assets.detail.emissions.columns.price', { defaultValue: 'Preço (R$)' }),
+                      sortable: true,
+                      sortValue: (row) => row.price ?? 0,
+                      render: (row) => row.price !== null
+                        ? row.price.toLocaleString(numberLocale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                        : '-',
+                    },
+                    {
+                      key: 'discount',
+                      label: t('assets.detail.emissions.columns.discount', { defaultValue: 'Desconto' }),
+                      sortable: true,
+                      sortValue: (row) => row.discount ?? 0,
+                      render: (row) => {
+                        if (row.discount === null) return '-';
+                        const cls = row.discount < 0
+                          ? 'asset-details-page__emission-discount--negative'
+                          : 'asset-details-page__emission-discount--positive';
+                        return (
+                          <span className={`asset-details-page__emission-discount ${cls}`}>
+                            {row.discount > 0 ? '+' : ''}{row.discount.toLocaleString(numberLocale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%
+                          </span>
+                        );
+                      },
+                    },
+                    {
+                      key: 'baseDate',
+                      label: t('assets.detail.emissions.columns.baseDate', { defaultValue: 'Data-base' }),
+                      sortable: true,
+                      sortValue: (row) => row.baseDate,
+                      render: (row) => row.baseDate || '-',
+                    },
+                    {
+                      key: 'factor',
+                      label: t('assets.detail.emissions.columns.factor', { defaultValue: 'Fator' }),
+                      sortable: false,
+                      render: (row) => row.proportionFactor || '-',
+                    },
+                    {
+                      key: 'preference',
+                      label: t('assets.detail.emissions.columns.preference', { defaultValue: 'Preferência' }),
+                      sortable: false,
+                      render: (row) => (
+                        <div className="asset-details-page__emission-period">
+                          <span>{row.preferenceStart && row.preferenceStart !== 'A definir' ? `${row.preferenceStart} – ${row.preferenceEnd}` : row.preferenceStart || '-'}</span>
+                          {row.preferenceStatus ? (
+                            <span className={`asset-details-page__emission-period-status asset-details-page__emission-period-status--${row.preferenceStatus === 'Em andamento' ? 'active' : row.preferenceStatus === 'Data atingida' ? 'done' : 'pending'}`}>
+                              {row.preferenceStatus}
+                            </span>
+                          ) : null}
+                        </div>
+                      ),
+                    },
+                    {
+                      key: 'sobras',
+                      label: t('assets.detail.emissions.columns.sobras', { defaultValue: 'Sobras' }),
+                      sortable: false,
+                      render: (row) => (
+                        <div className="asset-details-page__emission-period">
+                          <span>{row.sobrasStart && row.sobrasStart !== 'A definir' ? `${row.sobrasStart} – ${row.sobrasEnd}` : row.sobrasStart || '-'}</span>
+                          {row.sobrasStatus ? (
+                            <span className={`asset-details-page__emission-period-status asset-details-page__emission-period-status--${row.sobrasStatus === 'Em andamento' ? 'active' : row.sobrasStatus === 'Data atingida' ? 'done' : 'pending'}`}>
+                              {row.sobrasStatus}
+                            </span>
+                          ) : null}
+                        </div>
+                      ),
+                    },
+                  ]}
+                  searchLabel={t('assets.detail.emissions.search.label', { defaultValue: 'Search' })}
+                  searchPlaceholder={t('assets.detail.emissions.search.placeholder', { defaultValue: 'Search emissions...' })}
+                  searchTerm={emissionsSearchTerm}
+                  onSearchTermChange={setEmissionsSearchTerm}
+                  matchesSearch={(row, term) => {
+                    const lower = term.toLowerCase();
+                    return (
+                      row.ticker.toLowerCase().includes(lower) ||
+                      String(row.emissionNumber).includes(lower) ||
+                      row.stage.toLowerCase().includes(lower)
+                    );
+                  }}
+                  itemsPerPage={emissionsItemsPerPage}
+                  onItemsPerPageChange={setEmissionsItemsPerPage}
+                  pageSizeOptions={[5, 10, 25]}
+                  emptyLabel={t('assets.detail.emissions.empty', { defaultValue: 'No emissions data available for this asset.' })}
+                  defaultSort={{ key: 'emission', direction: 'desc' }}
+                  labels={{
+                    itemsPerPage: t('assets.pagination.itemsPerPage'),
+                    prev: t('assets.pagination.prev'),
+                    next: t('assets.pagination.next'),
+                    page: (page, total) => t('assets.pagination.page', { page, total }),
+                    showing: (start, end, total) => t('assets.pagination.showing', { start, end, total }),
+                  }}
+                />
+              )}
             </section>
             </>)}
 

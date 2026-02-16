@@ -1435,6 +1435,35 @@ class PlatformService {
 		}
 	}
 
+	async getFiiEmissions(ticker, options = {}) {
+		const assets = await this.#resolveAssetsForTickerOrPortfolio(ticker, options.portfolioId);
+		const asset = assets[0];
+		if (!asset) return { ticker, emissions: [], fetched_at: nowIso() };
+
+		const normalizedClass = String(asset.assetClass || '').toLowerCase();
+		const normalizedTicker = String(asset.ticker || '').trim().toUpperCase();
+		if (normalizedClass !== 'fii' && !normalizedTicker.endsWith('11')) {
+			return { ticker: normalizedTicker, emissions: [], fetched_at: nowIso() };
+		}
+
+		try {
+			const result = await this.fundsExplorerProvider.fetchEmissions(asset);
+			if (!result) {
+				return { ticker: normalizedTicker, emissions: [], fetched_at: nowIso() };
+			}
+			return result;
+		} catch (error) {
+			console.log('[getFiiEmissions] error: %s', error.message);
+			this.logger.error(JSON.stringify({
+				event: 'fii_emissions_fetch_failed',
+				ticker: normalizedTicker,
+				error: error.message,
+				fetched_at: nowIso(),
+			}));
+			return { ticker: normalizedTicker, emissions: [], error: error.message, fetched_at: nowIso() };
+		}
+	}
+
 	async #resolveFiiCnpj(ticker) {
 		const normalizedTicker = String(ticker).trim().toUpperCase();
 		const acronym = normalizedTicker.endsWith('11') ? normalizedTicker.slice(0, -2) : normalizedTicker;

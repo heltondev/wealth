@@ -570,6 +570,11 @@ export const api = {
     if (portfolioId) query.set('portfolioId', portfolioId);
     return request(`/assets/${encodeURIComponent(ticker)}?${query.toString()}`);
   },
+  getFiiEmissions: (ticker: string, portfolioId?: string) => {
+    const query = new URLSearchParams({ action: 'fii-emissions' });
+    if (portfolioId) query.set('portfolioId', portfolioId);
+    return request(`/assets/${encodeURIComponent(ticker)}?${query.toString()}`);
+  },
   screenAssets: (filters: Record<string, unknown>) =>
     request('/assets/screen', { method: 'POST', body: JSON.stringify(filters) }),
   compareAssets: (tickers: string[], portfolioId?: string) =>
