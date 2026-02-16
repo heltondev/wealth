@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import {
   CartesianGrid,
@@ -3557,6 +3557,59 @@ const AssetDetailsPage = () => {
     fundGeneralInfo?.dividendYieldComparator || null
   ), [fundGeneralInfo?.dividendYieldComparator]);
 
+  const fundDividendYieldComparatorBars = useMemo(() => {
+    if (!fundDividendYieldComparator || fundDividendYieldComparator.items.length === 0) return null;
+
+    const parsedItems = fundDividendYieldComparator.items.map((item) => ({
+      ...item,
+      numericValue: parseLocalizedNumber(item.value),
+    }));
+
+    const numericValues = parsedItems
+      .map((item) => item.numericValue)
+      .filter((value): value is number => value !== null && Number.isFinite(value) && value >= 0);
+    const maxNumericValue = numericValues.length > 0 ? Math.max(...numericValues) : null;
+
+    const scoreValues = parsedItems
+      .map((item) => item.score)
+      .filter((value): value is number => value !== null && Number.isFinite(value) && value >= 0);
+    const maxScoreValue = scoreValues.length > 0 ? Math.max(...scoreValues) : null;
+
+    const items = parsedItems.map((item) => {
+      const fromNumericValue = (
+        maxNumericValue !== null
+        && maxNumericValue > 0
+        && item.numericValue !== null
+        && item.numericValue >= 0
+      ) ? (item.numericValue / maxNumericValue) * 100 : null;
+      const fromScoreValue = (
+        fromNumericValue === null
+        && maxScoreValue !== null
+        && maxScoreValue > 0
+        && item.score !== null
+        && item.score >= 0
+      ) ? (item.score / maxScoreValue) * 100 : null;
+      const widthPercent = Math.max(0, Math.min(100, fromNumericValue ?? fromScoreValue ?? 0));
+
+      return {
+        ...item,
+        widthPercent,
+      };
+    });
+
+    const maxLabel = (
+      parsedItems.find((item) => item.numericValue !== null && item.numericValue === maxNumericValue)?.value
+      ?? (maxNumericValue !== null
+        ? `${maxNumericValue.toLocaleString(numberLocale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`
+        : null)
+    );
+
+    return {
+      items,
+      maxLabel,
+    };
+  }, [fundDividendYieldComparator, numberLocale]);
+
   const fallbackFinancialDocuments = useMemo(() => {
     if (!selectedAsset) return [];
     const links = buildAssetExternalLinks(selectedAsset.ticker, selectedAsset.assetClass);
@@ -3883,7 +3936,7 @@ const AssetDetailsPage = () => {
               </section>
             ) : null}
 
-            {fundDividendYieldComparator ? (
+            {fundDividendYieldComparator && fundDividendYieldComparatorBars ? (
               <section className="asset-details-page__card asset-details-page__card--full asset-details-page__dy-comparator">
                 <h2>{t('assets.modal.sections.dividendYieldComparator', { defaultValue: 'Dividend Yield Comparator' })}</h2>
                 {fundDividendYieldComparator.title ? (
@@ -3893,8 +3946,12 @@ const AssetDetailsPage = () => {
                   <p className="asset-details-page__dy-comparator-description">{fundDividendYieldComparator.description}</p>
                 ) : null}
 
+                <div className="asset-details-page__dy-comparator-axis" aria-hidden="true">
+                  <span>0%</span>
+                  <span>{fundDividendYieldComparatorBars.maxLabel || '100%'}</span>
+                </div>
                 <div className="asset-details-page__dy-comparator-list">
-                  {fundDividendYieldComparator.items.map((item, index) => {
+                  {fundDividendYieldComparatorBars.items.map((item, index) => {
                     const fallbackLabel = item.kind === 'principal'
                       ? (selectedAsset?.ticker || t('assets.modal.dyComparator.labels.principal', { defaultValue: 'Asset' }))
                       : item.kind === 'sector'
@@ -3904,7 +3961,6 @@ const AssetDetailsPage = () => {
                           : item.kind === 'market'
                             ? t('assets.modal.dyComparator.labels.market', { defaultValue: 'Market' })
                             : t('assets.modal.dyComparator.labels.reference', { defaultValue: 'Reference' });
-                    const score = item.score ?? 0;
                     return (
                       <article
                         key={`dy-comparator-${item.kind}-${index}`}
@@ -3920,7 +3976,7 @@ const AssetDetailsPage = () => {
                         <div className="asset-details-page__dy-comparator-progress">
                           <div
                             className="asset-details-page__dy-comparator-progress-bar"
-                            style={{ '--score': `${score}%` } as CSSProperties}
+                            style={{ width: `${item.widthPercent}%` }}
                           />
                         </div>
                       </article>
