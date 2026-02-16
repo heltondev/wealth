@@ -609,6 +609,17 @@ const AssetsPage = () => {
     }
   };
 
+  const openAssetDetails = useCallback((asset: AssetRow) => {
+    const params = new URLSearchParams();
+    const effectivePortfolioId = selectedPortfolio || asset.portfolioId || '';
+    if (effectivePortfolioId) params.set('portfolioId', effectivePortfolioId);
+    const queryString = params.toString();
+    const path = queryString
+      ? `/assets/${asset.assetId}?${queryString}`
+      : `/assets/${asset.assetId}`;
+    navigate(path);
+  }, [navigate, selectedPortfolio]);
+
   const formatCountryFlag = useCallback((country: string) =>
     COUNTRY_FLAG_MAP[country] || '🏳️', []);
 
@@ -1995,7 +2006,7 @@ const AssetsPage = () => {
               showing: (start, end, total) => t('assets.pagination.showing', { start, end, total }),
             }}
             defaultSort={{ key: 'ticker', direction: 'asc' }}
-            onRowClick={setSelectedAsset}
+            onRowClick={openAssetDetails}
             rowAriaLabel={(asset) => t('assets.modal.openDetails', { ticker: asset.ticker })}
           />
         )}

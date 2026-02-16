@@ -552,6 +552,20 @@
           "allocation": "Alocação",
           "category": "Categoria",
           "source": "Fonte"
+        },
+        "map": {
+          "title": "Mapa das Cidades do Portfólio",
+          "count_one": "{{count}} cidade",
+          "count_other": "{{count}} cidades",
+          "subtitle": "Mapa baseado nos imóveis e nas cidades disponíveis nas fontes de composição do portfólio.",
+          "loading": "Carregando pontos do mapa...",
+          "empty": "Não há localizações por cidade disponíveis para este ativo.",
+          "loadError": "Não foi possível carregar o mapa.",
+          "ariaLabel": "Mapa das cidades do portfólio",
+          "popup": {
+            "allocation": "Alocação",
+            "source": "Fonte"
+          }
         }
       },
       "splits": {

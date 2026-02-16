@@ -1060,6 +1060,54 @@ const parseBrDatetime = (value) => {
 	return iso;
 };
 
+const decodeHtmlEntities = (value) =>
+	String(value || '')
+		.replace(/&nbsp;/gi, ' ')
+		.replace(/&amp;/gi, '&')
+		.replace(/&quot;/gi, '"')
+		.replace(/&#39;/gi, '\'')
+		.replace(/&lt;/gi, '<')
+		.replace(/&gt;/gi, '>');
+
+const stripHtmlTags = (value) =>
+	decodeHtmlEntities(String(value || '').replace(/<[^>]*>/g, ' '))
+		.replace(/\s+/g, ' ')
+		.trim();
+
+const parseFirstDateInText = (value) => {
+	const text = String(value || '');
+	if (!text) return null;
+	const brDatetime = text.match(/\b\d{2}\/\d{2}\/\d{4}(?:\s+\d{2}:\d{2})?\b/)?.[0] || null;
+	if (brDatetime) return parseBrDatetime(brDatetime);
+	const isoDate = text.match(/\b\d{4}-\d{2}-\d{2}\b/)?.[0] || null;
+	return normalizeDate(isoDate);
+};
+
+const mergeFiiUpdateItems = (primaryItems, secondaryItems) => {
+	const merged = [];
+	const dedupe = new Set();
+	const append = (item) => {
+		if (!item || typeof item !== 'object') return;
+		const normalizedUrl = String(item.url || '').trim();
+		const normalizedTitle = String(item.title || '').trim();
+		const normalizedDate = normalizeDate(item.deliveryDate || item.referenceDate || null) || '';
+		if (!normalizedUrl && !normalizedTitle) return;
+		const key = `${normalizedUrl}|${normalizedTitle.toLowerCase()}|${normalizedDate}`;
+		if (dedupe.has(key)) return;
+		dedupe.add(key);
+		merged.push(item);
+	};
+
+	for (const item of Array.isArray(primaryItems) ? primaryItems : []) append(item);
+	for (const item of Array.isArray(secondaryItems) ? secondaryItems : []) append(item);
+
+	return merged.sort((left, right) => {
+		const leftDate = normalizeDate(left.deliveryDate || left.referenceDate || null) || '';
+		const rightDate = normalizeDate(right.deliveryDate || right.referenceDate || null) || '';
+		return rightDate.localeCompare(leftDate);
+	});
+};
+
 const parseRssTag = (block, tag) => {
 	const regex = new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i');
 	const match = block.match(regex);
@@ -1360,10 +1408,20 @@ class PlatformService {
 			return { ticker: normalizedTicker, items: [], fetched_at: nowIso() };
 		}
 
+		const fiisFallbackPromise = this.#fetchFiisUpdates(normalizedTicker);
+
 		try {
 			const cnpj = await this.#resolveFiiCnpj(normalizedTicker);
 			if (!cnpj) {
-				return { ticker: normalizedTicker, items: [], error: 'Could not resolve CNPJ', fetched_at: nowIso() };
+				const fiisItems = await fiisFallbackPromise.catch(() => []);
+				return {
+					ticker: normalizedTicker,
+					items: fiisItems,
+					total: fiisItems.length,
+					sources: fiisItems.length > 0 ? ['fiis'] : [],
+					error: 'Could not resolve CNPJ',
+					fetched_at: nowIso(),
+				};
 			}
 
 			const now = new Date();
@@ -1394,13 +1452,21 @@ class PlatformService {
 				{ retries: 2, baseDelayMs: 400, factor: 2 }
 			);
 			if (!response.ok) {
-				return { ticker: normalizedTicker, items: [], error: `FNET responded with ${response.status}`, fetched_at: nowIso() };
+				const fiisItems = await fiisFallbackPromise.catch(() => []);
+				return {
+					ticker: normalizedTicker,
+					items: fiisItems,
+					total: fiisItems.length,
+					sources: fiisItems.length > 0 ? ['fiis'] : [],
+					error: `FNET responded with ${response.status}`,
+					fetched_at: nowIso(),
+				};
 			}
 
 			const payload = await response.json();
 			const rawItems = Array.isArray(payload?.data) ? payload.data : [];
 
-			const items = rawItems
+			const fnetItems = rawItems
 				.filter((item) => item.id && item.status === 'AC')
 				.map((item) => {
 					const detailParts = [item.tipoDocumento, item.especieDocumento].filter(Boolean);
@@ -1417,11 +1483,17 @@ class PlatformService {
 						source: 'fnet',
 					};
 				});
+			const fiisItems = await fiisFallbackPromise.catch(() => []);
+			const items = mergeFiiUpdateItems(fnetItems, fiisItems);
+			const sources = [];
+			if (fnetItems.length > 0) sources.push('fnet');
+			if (fiisItems.length > 0) sources.push('fiis');
 
 			return {
 				ticker: normalizedTicker,
-				total: payload.recordsTotal || items.length,
+				total: items.length,
 				items,
+				sources,
 				fetched_at: nowIso(),
 			};
 		} catch (error) {
@@ -1431,7 +1503,15 @@ class PlatformService {
 				error: error.message,
 				fetched_at: nowIso(),
 			}));
-			return { ticker: normalizedTicker, items: [], error: error.message, fetched_at: nowIso() };
+			const fiisItems = await fiisFallbackPromise.catch(() => []);
+			return {
+				ticker: normalizedTicker,
+				items: fiisItems,
+				total: fiisItems.length,
+				sources: fiisItems.length > 0 ? ['fiis'] : [],
+				error: error.message,
+				fetched_at: nowIso(),
+			};
 		}
 	}
 
@@ -4546,6 +4626,100 @@ class PlatformService {
 		}
 		if (/^[a-z0-9.-]+\.[a-z]{2,}\/?/i.test(text)) return `https://${text}`;
 		return null;
+	}
+
+	async #fetchFiisUpdates(ticker) {
+		const normalizedTicker = String(ticker || '').toUpperCase().replace(/\.SA$/i, '');
+		const slug = normalizedTicker.toLowerCase().replace(/[^a-z0-9]/g, '');
+		if (!slug) return [];
+
+		const sourceUrl = `https://fiis.com.br/${slug}/`;
+		const timeoutMs = Number(process.env.MARKET_DATA_FIIS_TIMEOUT_MS || 9000);
+		let response;
+		try {
+			response = await withRetry(
+				() =>
+					fetchWithTimeout(sourceUrl, {
+						timeoutMs,
+						headers: {
+							Accept: 'text/html,*/*',
+							'User-Agent': 'Mozilla/5.0 (compatible; WealthBot/1.0)',
+						},
+					}),
+				{ retries: 1, baseDelayMs: 350, factor: 2 }
+			);
+		} catch {
+			return [];
+		}
+		if (!response?.ok) return [];
+
+		const html = await response.text();
+		return this.#extractFiisUpdatesFromHtml(html, sourceUrl, normalizedTicker);
+	}
+
+	#extractFiisUpdatesFromHtml(html, sourceUrl, normalizedTicker) {
+		const content = String(html || '');
+		if (!content) return [];
+
+		const sectionMatch = content.match(
+			/<section[^>]*>[\s\S]*?Atualiza(?:ç|c)(?:[oõ]|oe)s?\s+do\s+[A-Z0-9]{4,12}[\s\S]*?<\/section>/i
+		);
+		const scope = sectionMatch?.[0] || content;
+		const anchorPattern = /<a[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+		const dedupe = new Set();
+		const items = [];
+		let match = anchorPattern.exec(scope);
+		while (match) {
+			const href = this.#resolveAbsoluteUrl(sourceUrl, match[1]);
+			const title = stripHtmlTags(match[2]);
+			if (!href || !title || title.length < 8) {
+				match = anchorPattern.exec(scope);
+				continue;
+			}
+			if (!/^https?:\/\//i.test(href) || !href.includes('fiis.com.br')) {
+				match = anchorPattern.exec(scope);
+				continue;
+			}
+			if (/atualiza(?:ç|c)(?:[oõ]|oe)s?\s+do/i.test(title)) {
+				match = anchorPattern.exec(scope);
+				continue;
+			}
+
+			const contextStart = Math.max(0, (match.index || 0) - 220);
+			const contextEnd = Math.min(scope.length, (match.index || 0) + match[0].length + 220);
+			const context = scope.slice(contextStart, contextEnd);
+			const deliveryDate = parseFirstDateInText(context);
+
+			const key = `${href}|${title.toLowerCase()}|${deliveryDate || ''}`;
+			if (dedupe.has(key)) {
+				match = anchorPattern.exec(scope);
+				continue;
+			}
+			dedupe.add(key);
+
+			const categoryMatch = stripHtmlTags(context).match(
+				/\b(Fato Relevante|Assembleia|Relat[oó]rio(?:s)?|Informes?|Comunicado(?:s)?|Aviso(?:s)?)\b/i
+			);
+			const category = categoryMatch ? categoryMatch[1] : null;
+
+			items.push({
+				id: hashId(`${normalizedTicker}:fiis:${href}:${deliveryDate || ''}:${title}`),
+				category,
+				title,
+				deliveryDate,
+				referenceDate: deliveryDate,
+				url: href,
+				source: 'fiis',
+			});
+
+			match = anchorPattern.exec(scope);
+		}
+
+		return items.sort((left, right) => {
+			const leftDate = normalizeDate(left.deliveryDate || left.referenceDate || null) || '';
+			const rightDate = normalizeDate(right.deliveryDate || right.referenceDate || null) || '';
+			return rightDate.localeCompare(leftDate);
+		});
 	}
 
 	async #fetchFundsExplorerDividendEvents(ticker) {

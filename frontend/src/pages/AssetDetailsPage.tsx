@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import {
   CartesianGrid,
@@ -60,6 +60,7 @@ type AssetSplitEvent = {
 type ChartPeriodPreset = 'MAX' | '5A' | '2A' | '1A' | '6M' | '3M' | '1M' | 'CUSTOM';
 type FinancialStatementKind = 'income' | 'balance' | 'cashflow';
 type FinancialFrequency = 'annual' | 'quarterly';
+type AssetDetailsTab = 'overview' | 'portfolio' | 'emissions' | 'financials' | 'history';
 type AssetInsightsSnapshot = {
   status: 'loading' | 'ready' | 'error';
   source: string | null;
@@ -180,6 +181,125 @@ type FinancialSeriesPoint = {
   period: string;
   label: string;
   value: number | null;
+};
+
+type PortfolioCityAllocation = {
+  cityKey: string;
+  city: string;
+  allocationPct: number;
+  sources: string[];
+};
+
+type PortfolioCityCoordinate = {
+  lat: number;
+  lon: number;
+  displayName: string | null;
+};
+
+type PortfolioCityPoint = PortfolioCityAllocation & PortfolioCityCoordinate;
+
+type LeafletMap = {
+  remove: () => void;
+  removeLayer: (layer: LeafletLayerGroup) => void;
+  fitBounds: (bounds: unknown, options?: { padding?: [number, number]; maxZoom?: number }) => void;
+  setView: (center: [number, number], zoom: number) => void;
+  invalidateSize: () => void;
+};
+
+type LeafletMarker = {
+  bindPopup: (content: string) => LeafletMarker;
+};
+
+type LeafletLayerGroup = {
+  addTo: (map: LeafletMap) => LeafletLayerGroup;
+};
+
+type LeafletFeatureGroup = {
+  getBounds: () => unknown;
+};
+
+type LeafletScaleControl = {
+  addTo: (map: LeafletMap) => LeafletScaleControl;
+};
+
+type LeafletRuntime = {
+  map: (
+    container: HTMLElement,
+    options?: { zoomControl?: boolean; scrollWheelZoom?: boolean }
+  ) => LeafletMap;
+  tileLayer: (
+    urlTemplate: string,
+    options?: { attribution?: string }
+  ) => { addTo: (map: LeafletMap) => unknown };
+  marker: (latlng: [number, number]) => LeafletMarker;
+  layerGroup: (layers: LeafletMarker[]) => LeafletLayerGroup;
+  featureGroup: (layers: LeafletMarker[]) => LeafletFeatureGroup;
+  control: {
+    scale: (options?: { imperial?: boolean }) => LeafletScaleControl;
+  };
+};
+
+declare global {
+  interface Window {
+    L?: LeafletRuntime;
+  }
+}
+
+const LEAFLET_CSS_ID = 'asset-details-leaflet-css';
+const LEAFLET_SCRIPT_ID = 'asset-details-leaflet-script';
+const LEAFLET_SCRIPT_URL = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+const LEAFLET_CSS_URL = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+const BRAZIL_MAP_DEFAULT_CENTER: [number, number] = [-14.235, -51.9253];
+const BRAZIL_MAP_DEFAULT_ZOOM = 4;
+const CITY_GEOCODE_LIMIT = 12;
+
+let leafletLoaderPromise: Promise<LeafletRuntime | null> | null = null;
+
+const ensureLeafletLoaded = () => {
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return Promise.resolve(null);
+  }
+  if (window.L) return Promise.resolve(window.L);
+  if (leafletLoaderPromise) return leafletLoaderPromise;
+
+  if (!document.getElementById(LEAFLET_CSS_ID)) {
+    const link = document.createElement('link');
+    link.id = LEAFLET_CSS_ID;
+    link.rel = 'stylesheet';
+    link.href = LEAFLET_CSS_URL;
+    document.head.appendChild(link);
+  }
+
+  leafletLoaderPromise = new Promise((resolve, reject) => {
+    const resolveLeaflet = () => {
+      if (window.L) {
+        resolve(window.L);
+        return;
+      }
+      reject(new Error('leaflet_load_failed'));
+    };
+
+    const existingScript = document.getElementById(LEAFLET_SCRIPT_ID) as HTMLScriptElement | null;
+    if (existingScript) {
+      if (window.L) {
+        resolve(window.L);
+        return;
+      }
+      existingScript.addEventListener('load', resolveLeaflet, { once: true });
+      existingScript.addEventListener('error', () => reject(new Error('leaflet_load_failed')), { once: true });
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.id = LEAFLET_SCRIPT_ID;
+    script.src = LEAFLET_SCRIPT_URL;
+    script.async = true;
+    script.onload = resolveLeaflet;
+    script.onerror = () => reject(new Error('leaflet_load_failed'));
+    document.body.appendChild(script);
+  });
+
+  return leafletLoaderPromise;
 };
 
 const COUNTRY_FLAG_MAP: Record<string, string> = {
@@ -307,6 +427,37 @@ const normalizeComparableText = (value: unknown): string => (
     .toLowerCase()
     .replace(/\.sa$/i, '')
     .replace(/\s+/g, ' ')
+);
+
+const normalizeCityLabel = (value: unknown): string | null => {
+  const text = String(value || '')
+    .replace(/[|]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return null;
+
+  // Ignore generic portfolio buckets that are not geographic locations.
+  const lowered = text.toLowerCase();
+  const blockedTokens = ['total investido', 'informe', 'segmento', 'setor', 'categoria', 'outros'];
+  if (blockedTokens.some((token) => lowered.includes(token))) return null;
+
+  // Normalize "Cidade - UF" / "Cidade/UF" / "Cidade, UF".
+  const normalized = text
+    .replace(/\s*[-/,]\s*([A-Z]{2})$/, ' $1')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (normalized.length < 3) return null;
+  return normalized;
+};
+
+const cityLabelToKey = (value: string): string => (
+  value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '')
 );
 
 const buildAssetExternalLinks = (ticker: string, assetClass: string) => {
@@ -930,7 +1081,7 @@ const AssetDetailsPage = () => {
   } = usePortfolioData();
   const portfolioId = selectedPortfolio;
   const portfolioMarketValueByAssetId = useMemo(() => metrics?.marketValues || {}, [metrics]);
-  const [activeTab, setActiveTab] = useState<'overview' | 'portfolio' | 'emissions' | 'financials' | 'history'>('overview');
+  const [activeTab, setActiveTab] = useState<AssetDetailsTab>('overview');
   const [portfolioSearchTerm, setPortfolioSearchTerm] = useState('');
   const [portfolioItemsPerPage, setPortfolioItemsPerPage] = useState(5);
   const [currentQuote, setCurrentQuote] = useState<number | null>(null);
@@ -966,6 +1117,13 @@ const AssetDetailsPage = () => {
   const [fiiEmissionsLoading, setFiiEmissionsLoading] = useState(false);
   const [emissionsSearchTerm, setEmissionsSearchTerm] = useState('');
   const [emissionsItemsPerPage, setEmissionsItemsPerPage] = useState(5);
+  const [portfolioCityCoordinates, setPortfolioCityCoordinates] = useState<Record<string, PortfolioCityCoordinate | null>>({});
+  const [portfolioCityLoading, setPortfolioCityLoading] = useState(false);
+  const [portfolioMapError, setPortfolioMapError] = useState<string | null>(null);
+  const portfolioMapContainerRef = useRef<HTMLDivElement | null>(null);
+  const portfolioLeafletMapRef = useRef<LeafletMap | null>(null);
+  const portfolioLeafletLayerRef = useRef<LeafletLayerGroup | null>(null);
+  const portfolioLeafletScaleControlRef = useRef<LeafletScaleControl | null>(null);
 
   const numberLocale = i18n.language?.startsWith('pt') ? 'pt-BR' : 'en-US';
 
@@ -1480,9 +1638,10 @@ const AssetDetailsPage = () => {
     setFiiUpdatesLoading(true);
 
     api.getFiiUpdates(selectedAsset.ticker, portfolioId)
-      .then((payload: Record<string, unknown>) => {
+      .then((payload) => {
         if (cancelled) return;
-        const items = Array.isArray(payload?.items) ? payload.items : [];
+        const payloadRecord = toObjectRecord(payload);
+        const items = Array.isArray(payloadRecord.items) ? payloadRecord.items : [];
         setFiiUpdates(items);
       })
       .catch(() => {
@@ -1510,9 +1669,10 @@ const AssetDetailsPage = () => {
     setFiiEmissionsLoading(true);
 
     api.getFiiEmissions(selectedAsset.ticker, portfolioId)
-      .then((payload: Record<string, unknown>) => {
+      .then((payload) => {
         if (cancelled) return;
-        const items = Array.isArray(payload?.emissions) ? payload.emissions : [];
+        const payloadRecord = toObjectRecord(payload);
+        const items = Array.isArray(payloadRecord.emissions) ? payloadRecord.emissions : [];
         setFiiEmissions(items);
       })
       .catch(() => {
@@ -2585,6 +2745,202 @@ const AssetDetailsPage = () => {
     parseFundPortfolioPayload(assetFinancials?.fund_portfolio)
   ), [assetFinancials?.fund_portfolio]);
 
+  const portfolioCityAllocations = useMemo<PortfolioCityAllocation[]>(() => {
+    const rows = fundPortfolioRows.filter((row) => (
+      String(row.source || '').toLowerCase().includes('fundsexplorer')
+      && Boolean(row.category)
+      && Number.isFinite(row.allocationPct)
+      && row.allocationPct > 0
+    ));
+    if (rows.length === 0) return [];
+
+    const byCity = new Map<string, PortfolioCityAllocation>();
+    for (const row of rows) {
+      const normalizedCity = normalizeCityLabel(row.category);
+      if (!normalizedCity) continue;
+      const cityKey = cityLabelToKey(normalizedCity);
+      if (!cityKey) continue;
+
+      const existing = byCity.get(cityKey);
+      if (existing) {
+        existing.allocationPct += row.allocationPct;
+        if (row.source && !existing.sources.includes(row.source)) {
+          existing.sources.push(row.source);
+        }
+      } else {
+        byCity.set(cityKey, {
+          cityKey,
+          city: normalizedCity,
+          allocationPct: row.allocationPct,
+          sources: row.source ? [row.source] : [],
+        });
+      }
+    }
+
+    return Array.from(byCity.values())
+      .map((row) => ({ ...row, allocationPct: Number(row.allocationPct.toFixed(4)) }))
+      .sort((left, right) => right.allocationPct - left.allocationPct);
+  }, [fundPortfolioRows]);
+
+  const portfolioCityPoints = useMemo<PortfolioCityPoint[]>(() => (
+    portfolioCityAllocations
+      .map((row) => {
+        const coords = portfolioCityCoordinates[row.cityKey];
+        if (!coords || !Number.isFinite(coords.lat) || !Number.isFinite(coords.lon)) return null;
+        return {
+          ...row,
+          lat: coords.lat,
+          lon: coords.lon,
+          displayName: coords.displayName,
+        };
+      })
+      .filter((row): row is PortfolioCityPoint => Boolean(row))
+  ), [portfolioCityAllocations, portfolioCityCoordinates]);
+
+  useEffect(() => {
+    if (portfolioCityAllocations.length === 0) {
+      setPortfolioCityLoading(false);
+      return;
+    }
+
+    const missing = portfolioCityAllocations
+      .filter((row) => !(row.cityKey in portfolioCityCoordinates))
+      .slice(0, CITY_GEOCODE_LIMIT);
+    if (missing.length === 0) {
+      setPortfolioCityLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setPortfolioCityLoading(true);
+
+    const resolveCities = async () => {
+      for (const city of missing) {
+        if (cancelled) return;
+        try {
+          const query = encodeURIComponent(`${city.city}, Brasil`);
+          const response = await fetch(
+            `https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=${query}`,
+            { headers: { Accept: 'application/json' } }
+          );
+          if (cancelled) return;
+          if (!response.ok) {
+            setPortfolioCityCoordinates((prev) => ({ ...prev, [city.cityKey]: null }));
+            continue;
+          }
+          const payload = await response.json();
+          if (cancelled) return;
+          const first = Array.isArray(payload) && payload.length > 0 ? payload[0] : null;
+          const lat = first ? Number(first.lat) : NaN;
+          const lon = first ? Number(first.lon) : NaN;
+          if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+            setPortfolioCityCoordinates((prev) => ({ ...prev, [city.cityKey]: null }));
+            continue;
+          }
+          setPortfolioCityCoordinates((prev) => ({
+            ...prev,
+            [city.cityKey]: {
+              lat,
+              lon,
+              displayName: toNonEmptyString(first.display_name),
+            },
+          }));
+        } catch {
+          setPortfolioCityCoordinates((prev) => ({ ...prev, [city.cityKey]: null }));
+        }
+
+        // Respect free geocoder limits by spacing requests.
+        await new Promise((resolve) => setTimeout(resolve, 280));
+      }
+    };
+
+    resolveCities()
+      .catch(() => null)
+      .finally(() => {
+        if (!cancelled) setPortfolioCityLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [portfolioCityAllocations, portfolioCityCoordinates]);
+
+  useEffect(() => {
+    if (activeTab !== 'portfolio') return;
+    if (!portfolioMapContainerRef.current) return;
+
+    let cancelled = false;
+    setPortfolioMapError(null);
+
+    ensureLeafletLoaded()
+      .then((L) => {
+        if (cancelled || !L || !portfolioMapContainerRef.current) return;
+
+        if (!portfolioLeafletMapRef.current) {
+          const map = L.map(portfolioMapContainerRef.current, {
+            zoomControl: true,
+            scrollWheelZoom: true,
+          });
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors',
+          }).addTo(map);
+          portfolioLeafletMapRef.current = map;
+        }
+
+        const map = portfolioLeafletMapRef.current;
+        if (!portfolioLeafletScaleControlRef.current) {
+          portfolioLeafletScaleControlRef.current = L.control.scale({ imperial: false }).addTo(map);
+        }
+
+        if (portfolioLeafletLayerRef.current) {
+          map.removeLayer(portfolioLeafletLayerRef.current);
+          portfolioLeafletLayerRef.current = null;
+        }
+
+        const markers = portfolioCityPoints.map((point) => {
+          const marker = L.marker([point.lat, point.lon]);
+          marker.bindPopup(`
+            <strong>${point.city}</strong><br/>
+            ${t('assets.modal.portfolio.map.popup.allocation', { defaultValue: 'Allocation' })}: ${formatPercent(point.allocationPct / 100)}<br/>
+            ${t('assets.modal.portfolio.map.popup.source', { defaultValue: 'Source' })}: ${(point.sources.join(', ') || '-')}
+          `);
+          return marker;
+        });
+
+        const layer = L.layerGroup(markers);
+        layer.addTo(map);
+        portfolioLeafletLayerRef.current = layer;
+
+        if (markers.length > 0) {
+          const featureGroup = L.featureGroup(markers);
+          map.fitBounds(featureGroup.getBounds(), { padding: [28, 28], maxZoom: 11 });
+        } else {
+          map.setView(BRAZIL_MAP_DEFAULT_CENTER, BRAZIL_MAP_DEFAULT_ZOOM);
+        }
+
+        setTimeout(() => {
+          map.invalidateSize();
+        }, 0);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setPortfolioMapError(t('assets.modal.portfolio.map.loadError', { defaultValue: 'Unable to load map.' }));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, formatPercent, portfolioCityPoints, t]);
+
+  useEffect(() => () => {
+    if (portfolioLeafletMapRef.current) {
+      portfolioLeafletMapRef.current.remove();
+      portfolioLeafletMapRef.current = null;
+      portfolioLeafletLayerRef.current = null;
+      portfolioLeafletScaleControlRef.current = null;
+    }
+  }, []);
+
   const shouldRenderFundInfo = useMemo(() => {
     if (!selectedAsset) return false;
     const isFii = String(selectedAsset.assetClass || '').toLowerCase() === 'fii';
@@ -2603,17 +2959,17 @@ const AssetDetailsPage = () => {
   }, [selectedAsset]);
 
   const tabOptions = useMemo(() => {
-    const tabs = [
-      { value: 'overview' as const, label: t('assets.detail.tabs.overview', { defaultValue: 'Overview' }) },
-      { value: 'financials' as const, label: t('assets.detail.tabs.financials', { defaultValue: 'Financials' }) },
-      { value: 'history' as const, label: t('assets.detail.tabs.history', { defaultValue: 'History' }) },
+    const tabs: Array<{ value: AssetDetailsTab; label: string }> = [
+      { value: 'overview', label: t('assets.detail.tabs.overview', { defaultValue: 'Overview' }) },
+      { value: 'financials', label: t('assets.detail.tabs.financials', { defaultValue: 'Financials' }) },
+      { value: 'history', label: t('assets.detail.tabs.history', { defaultValue: 'History' }) },
     ];
     if (shouldRenderFundPortfolio) {
-      tabs.splice(1, 0, { value: 'portfolio' as const, label: t('assets.detail.tabs.portfolio', { defaultValue: 'Portfolio' }) });
+      tabs.splice(1, 0, { value: 'portfolio', label: t('assets.detail.tabs.portfolio', { defaultValue: 'Portfolio' }) });
     }
     if (isFiiAsset) {
       const financialsIndex = tabs.findIndex((tab) => tab.value === 'financials');
-      tabs.splice(financialsIndex, 0, { value: 'emissions' as const, label: t('assets.detail.tabs.emissions', { defaultValue: 'Emissões' }) });
+      tabs.splice(financialsIndex, 0, { value: 'emissions', label: t('assets.detail.tabs.emissions', { defaultValue: 'Emissões' }) });
     }
     return tabs;
   }, [t, shouldRenderFundPortfolio, isFiiAsset]);
@@ -4064,6 +4420,51 @@ const AssetDetailsPage = () => {
                   showing: (start, end, total) => t('assets.pagination.showing', { start, end, total }),
                 }}
               />
+            </section>
+
+            <section className="asset-details-page__card asset-details-page__card--full asset-details-page__card--portfolio-map">
+              <div className="asset-details-page__portfolio-map-header">
+                <h2>{t('assets.modal.portfolio.map.title', { defaultValue: 'Portfolio Cities Map' })}</h2>
+                <span className="asset-details-page__portfolio-map-count">
+                  {t('assets.modal.portfolio.map.count', {
+                    defaultValue: '{{count}} cities',
+                    count: portfolioCityAllocations.length,
+                  })}
+                </span>
+              </div>
+
+              <p className="asset-details-page__portfolio-map-subtitle">
+                {t('assets.modal.portfolio.map.subtitle', {
+                  defaultValue: 'Map based on properties and city data from portfolio composition sources.',
+                })}
+              </p>
+
+              {portfolioMapError ? (
+                <p className="asset-details-page__financials-state asset-details-page__financials-state--error">
+                  {portfolioMapError}
+                </p>
+              ) : null}
+
+              {portfolioCityLoading ? (
+                <p className="asset-details-page__financials-state">
+                  {t('assets.modal.portfolio.map.loading', { defaultValue: 'Loading map points...' })}
+                </p>
+              ) : null}
+
+              {!portfolioCityLoading && portfolioCityAllocations.length === 0 ? (
+                <p className="asset-details-page__financials-state">
+                  {t('assets.modal.portfolio.map.empty', { defaultValue: 'No city-level portfolio locations available for this asset.' })}
+                </p>
+              ) : null}
+
+              {portfolioCityAllocations.length > 0 ? (
+                <div
+                  ref={portfolioMapContainerRef}
+                  className="asset-details-page__portfolio-map"
+                  role="region"
+                  aria-label={t('assets.modal.portfolio.map.ariaLabel', { defaultValue: 'Portfolio cities map' })}
+                />
+              ) : null}
             </section>
             </>)}
           </>

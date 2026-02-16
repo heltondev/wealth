@@ -552,6 +552,20 @@
           "allocation": "Allocation",
           "category": "Category",
           "source": "Source"
+        },
+        "map": {
+          "title": "Portfolio Cities Map",
+          "count_one": "{{count}} city",
+          "count_other": "{{count}} cities",
+          "subtitle": "Map based on properties and city data from portfolio composition sources.",
+          "loading": "Loading map points...",
+          "empty": "No city-level portfolio locations available for this asset.",
+          "loadError": "Unable to load map.",
+          "ariaLabel": "Portfolio cities map",
+          "popup": {
+            "allocation": "Allocation",
+            "source": "Source"
+          }
         }
       },
       "splits": {
