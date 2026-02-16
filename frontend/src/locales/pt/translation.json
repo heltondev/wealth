@@ -470,6 +470,7 @@
         "insights": "Fundamentos e Preço Justo",
         "fundInfo": "Informações Gerais",
         "summary": "Resumo",
+        "dividendYieldComparator": "Comparador de Dividend Yield",
         "dividendsResume": "Resumo de Dividendos",
         "provents": "Proventos e Calendário",
         "metadata": "Metadados",
@@ -741,6 +742,15 @@
           "metric": "Métrica",
           "returnByUnit": "Retorno por cota",
           "relativeToQuote": "Em relação ao valor de cota atual"
+        }
+      },
+      "dyComparator": {
+        "labels": {
+          "principal": "Ativo",
+          "sector": "Setor",
+          "category": "Categoria",
+          "market": "Mercado",
+          "reference": "Referência"
         }
       }
     },

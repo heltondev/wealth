@@ -35,6 +35,41 @@
           ]
         },
         "source": "fundsexplorer"
+      },
+      "dividend_yield_comparator": {
+        "title": "Comparador de Dividend Yield",
+        "description": "Cálculo baseado no Dividend Yield (DY) dos últimos 12 meses do Fundo em comparação com o seu Setor, Classificação e com o Mercado.",
+        "items": [
+          {
+            "kind": "principal",
+            "label": "HGLG11",
+            "detail": null,
+            "value": "8,36%",
+            "score": 64.2089093702
+          },
+          {
+            "kind": "sector",
+            "label": "SETOR",
+            "detail": "IMÓVEIS INDUSTRIAIS E LOGÍSTICOS",
+            "value": "10,97%",
+            "score": 84.254992319508
+          },
+          {
+            "kind": "category",
+            "label": "CATEGORIA",
+            "detail": "FUNDO DE TIJOLO",
+            "value": "11,03%",
+            "score": 84.715821812596
+          },
+          {
+            "kind": "market",
+            "label": "MERCADO",
+            "detail": "IFIX",
+            "value": "13,02%",
+            "score": 100
+          }
+        ],
+        "source": "fundsexplorer"
       }
     }
   }

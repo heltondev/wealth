@@ -75,6 +75,7 @@ class FundsExplorerProvider {
 			const descriptionHtml = this.#parseDescriptionHtml(html);
 			const description = this.#parseDescription(html, descriptionHtml);
 			const dividendsResume = this.#parseDividendsResume(html);
+			const dividendYieldComparator = this.#parseDividendYieldComparator(html);
 			const fundInfo = {
 				source: 'fundsexplorer',
 			};
@@ -84,6 +85,9 @@ class FundsExplorerProvider {
 			}
 			if (dividendsResume) {
 				fundInfo.dividends_resume = dividendsResume;
+			}
+			if (dividendYieldComparator) {
+				fundInfo.dividend_yield_comparator = dividendYieldComparator;
 			}
 			return {
 				data_source: 'fundsexplorer',
@@ -96,15 +100,16 @@ class FundsExplorerProvider {
 			if (!localFallback) return null;
 			return {
 				data_source: localFallback.source || 'fundsexplorer_local_cache',
-				fund_info: {
-					description: localFallback.description || null,
-					description_html: localFallback.description_html || null,
-					dividends_resume: localFallback.dividends_resume || null,
-					source: localFallback.source || 'fundsexplorer_local_cache',
-				},
-				fund_portfolio: [],
-				portfolio_composition: [],
-			};
+					fund_info: {
+						description: localFallback.description || null,
+						description_html: localFallback.description_html || null,
+						dividends_resume: localFallback.dividends_resume || null,
+						dividend_yield_comparator: localFallback.dividend_yield_comparator || null,
+						source: localFallback.source || 'fundsexplorer_local_cache',
+					},
+					fund_portfolio: [],
+					portfolio_composition: [],
+				};
 		}
 	}
 
@@ -430,6 +435,71 @@ class FundsExplorerProvider {
 		};
 	}
 
+	#parseDividendYieldComparator(html) {
+		const container = this.#extractDivContainerByClass(html, 'valuationFunds__comparator');
+		if (!container?.html) return null;
+
+		const block = container.html;
+		const title = this.#normalizeInlineText(
+			(block.match(/<h3[^>]*>([\s\S]*?)<\/h3>/i) || [])[1] || ''
+		);
+		const description = this.#normalizeInlineText(
+			(block.match(/<p[^>]*>([\s\S]*?)<\/p>/i) || [])[1] || ''
+		);
+
+		const itemBlocks = this.#extractAllDivContainersByClass(block, 'valuationFunds__comparator__item');
+		const items = itemBlocks
+			.map((itemBlock) => {
+				const htmlText = String(itemBlock.html || '');
+				const className = (
+					htmlText.match(/class=["']([^"']+)["']/i) || []
+				)[1] || '';
+				const normalizedClass = className.toLowerCase();
+				const kind = normalizedClass.includes('--principal')
+					? 'principal'
+					: normalizedClass.includes('--fundos')
+						? 'sector'
+						: normalizedClass.includes('--papel')
+							? 'category'
+							: normalizedClass.includes('--ifix')
+								? 'market'
+								: 'other';
+
+				const spans = [...htmlText.matchAll(/<span[^>]*>([\s\S]*?)<\/span>/gi)];
+				const firstSpan = spans[0]?.[1] || '';
+				const secondSpan = spans[1]?.[1] || '';
+				const detail = this.#normalizeInlineText(
+					(firstSpan.match(/<i[^>]*>([\s\S]*?)<\/i>/i) || [])[1] || ''
+				);
+				const label = this.#normalizeInlineText(
+					firstSpan.replace(/<i[^>]*>[\s\S]*?<\/i>/gi, ' ')
+				);
+				const value = this.#normalizeInlineText(secondSpan);
+				const scoreText = (
+					htmlText.match(/--score\s*:\s*([0-9.,]+)\s*%/i) || []
+				)[1] || '';
+				const score = scoreText ? parseBrNumber(scoreText) : null;
+
+				if (!label && !value && score === null) return null;
+				return {
+					kind,
+					label: label || null,
+					detail: detail || null,
+					value: value || null,
+					score: Number.isFinite(score) ? Math.max(0, Math.min(100, score)) : null,
+				};
+			})
+			.filter(Boolean);
+
+		if (!title && !description && items.length === 0) return null;
+		return {
+			title: title || null,
+			description: description || null,
+			items,
+			source: 'fundsexplorer',
+		};
+	}
+
 	#extractTableLines(html) {
 		const lines = [];
 		const linePattern = /<div[^>]*class=["'][^"']*table__linha[^"']*["'][^>]*>([\s\S]*?)<\/div>/gi;
@@ -657,12 +727,15 @@ class FundsExplorerProvider {
 			this.#normalizeDescriptionText(entry.description || null) ||
 			this.#normalizeDescriptionText(descriptionHtml || null);
 		const dividendsResume = entry.dividends_resume || entry.dividendsResume || null;
-		if (!description && !descriptionHtml && !dividendsResume) return null;
+		const dividendYieldComparator =
+			entry.dividend_yield_comparator || entry.dividendYieldComparator || null;
+		if (!description && !descriptionHtml && !dividendsResume && !dividendYieldComparator) return null;
 
 		return {
 			description,
 			description_html: descriptionHtml,
 			dividends_resume: dividendsResume,
+			dividend_yield_comparator: dividendYieldComparator,
 			source: 'fundsexplorer_local_cache',
 		};
 	}

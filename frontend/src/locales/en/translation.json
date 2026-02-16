@@ -470,6 +470,7 @@
         "insights": "Fundamentals & Fair Value",
         "fundInfo": "General Info",
         "summary": "Summary",
+        "dividendYieldComparator": "Dividend Yield Comparator",
         "dividendsResume": "Dividends Snapshot",
         "provents": "Provents & Calendar",
         "metadata": "Metadata",
@@ -741,6 +742,15 @@
           "metric": "Metric",
           "returnByUnit": "Return per quota",
           "relativeToQuote": "Relative to current quote"
+        }
+      },
+      "dyComparator": {
+        "labels": {
+          "principal": "Asset",
+          "sector": "Sector",
+          "category": "Category",
+          "market": "Market",
+          "reference": "Reference"
         }
       }
     },

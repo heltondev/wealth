@@ -61,12 +61,47 @@ const DESCRIPTION_SECTION = `
 </section>
 `;
 
+const DY_COMPARATOR_SECTION = `
+<div class="valuationFunds__comparator">
+	<h3 class="subTitle">Comparador de Dividend Yield</h3>
+	<p>Cálculo baseado no Dividend Yield (DY) dos últimos 12 meses do Fundo em comparação com o seu Setor, Classificação e com o Mercado.</p>
+	<div class="valuationFunds__comparator__item valuationFunds__comparator__item--principal">
+		<span>HGLG11</span>
+		<span>8,36%</span>
+		<div class="valuationFunds__comparator__item__progress">
+			<div class="valuationFunds__comparator__item__progress__bar" style="--score:64.2089093702%"></div>
+		</div>
+	</div>
+	<div class="valuationFunds__comparator__item valuationFunds__comparator__item--fundos">
+		<span>SETOR <i>IMÓVEIS INDUSTRIAIS E LOGÍSTICOS</i></span>
+		<span>10,97%</span>
+		<div class="valuationFunds__comparator__item__progress">
+			<div class="valuationFunds__comparator__item__progress__bar" style="--score:84.254992319508%"></div>
+		</div>
+	</div>
+	<div class="valuationFunds__comparator__item valuationFunds__comparator__item--papel">
+		<span>CATEGORIA <i>FUNDO DE TIJOLO</i></span>
+		<span>11,03%</span>
+		<div class="valuationFunds__comparator__item__progress">
+			<div class="valuationFunds__comparator__item__progress__bar" style="--score:84.715821812596%"></div>
+		</div>
+	</div>
+	<div class="valuationFunds__comparator__item valuationFunds__comparator__item--ifix">
+		<span>MERCADO <i>IFIX</i></span>
+		<span>13,02%</span>
+		<div class="valuationFunds__comparator__item__progress">
+			<div class="valuationFunds__comparator__item__progress__bar" style="--score:100%"></div>
+		</div>
+	</div>
+</div>
+`;
+
 test('FundsExplorerProvider parses property slides into portfolio rows', async () => {
 	const provider = new FundsExplorerProvider({ timeoutMs: 1000 });
 
 	const fetchImpl = async (url) => {
 		if (url.includes('fundsexplorer.com.br/funds/hglg11')) {
-			return new Response(buildHtml(HGLG_SLIDES, DESCRIPTION_SECTION), {
+			return new Response(buildHtml(HGLG_SLIDES, `${DESCRIPTION_SECTION}${DY_COMPARATOR_SECTION}`), {
 				status: 200,
 				headers: { 'content-type': 'text/html' },
 			});
@@ -100,6 +135,12 @@ test('FundsExplorerProvider parses property slides into portfolio rows', async (
 		payload.fund_info.description.includes('HGLG11 é um fundo imobiliário do tipo tijolo.')
 	);
 	assert.ok(payload.fund_info.description.includes('Atua em galpões logísticos.'));
+	assert.equal(payload.fund_info.dividend_yield_comparator.title, 'Comparador de Dividend Yield');
+	assert.equal(payload.fund_info.dividend_yield_comparator.items.length, 4);
+	assert.equal(payload.fund_info.dividend_yield_comparator.items[0].kind, 'principal');
+	assert.equal(payload.fund_info.dividend_yield_comparator.items[0].value, '8,36%');
+	assert.equal(payload.fund_info.dividend_yield_comparator.items[1].kind, 'sector');
+	assert.equal(payload.fund_info.dividend_yield_comparator.items[1].detail, 'IMÓVEIS INDUSTRIAIS E LOGÍSTICOS');
 });
 
 test('FundsExplorerProvider returns null for non-BR market', async () => {

@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import {
   CartesianGrid,
@@ -127,6 +127,7 @@ type AssetFundGeneralInfo = {
   description: string | null;
   descriptionHtml: string | null;
   dividendsResume: AssetFundDividendsResume | null;
+  dividendYieldComparator: AssetFundDividendYieldComparator | null;
   classification: string | null;
   segment: string | null;
   administrator: string | null;
@@ -155,6 +156,21 @@ type AssetFundDividendsResume = {
   title: string | null;
   paragraphs: string[];
   table: AssetFundDividendsResumeTable | null;
+  source: string | null;
+};
+
+type AssetFundDividendYieldComparatorItem = {
+  kind: 'principal' | 'sector' | 'category' | 'market' | 'other';
+  label: string | null;
+  detail: string | null;
+  value: string | null;
+  score: number | null;
+};
+
+type AssetFundDividendYieldComparator = {
+  title: string | null;
+  description: string | null;
+  items: AssetFundDividendYieldComparatorItem[];
   source: string | null;
 };
 
@@ -702,6 +718,63 @@ const parseFundDividendsResumePayload = (payload: unknown): AssetFundDividendsRe
   };
 };
 
+const parseDividendYieldComparatorKind = (
+  value: unknown
+): AssetFundDividendYieldComparatorItem['kind'] => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'principal') return 'principal';
+  if (normalized === 'sector' || normalized === 'setor' || normalized === 'fundos') return 'sector';
+  if (normalized === 'category' || normalized === 'categoria' || normalized === 'papel') return 'category';
+  if (normalized === 'market' || normalized === 'mercado' || normalized === 'ifix') return 'market';
+  return 'other';
+};
+
+const normalizeScoreToPercent = (value: number | null): number | null => {
+  if (value === null || !Number.isFinite(value)) return null;
+  const normalized = Math.abs(value) <= 1 ? value * 100 : value;
+  return Math.max(0, Math.min(100, normalized));
+};
+
+const parseFundDividendYieldComparatorPayload = (
+  payload: unknown
+): AssetFundDividendYieldComparator | null => {
+  const entry = toObjectRecord(payload);
+  if (Object.keys(entry).length === 0) return null;
+
+  const title = toNonEmptyString(entry.title ?? entry.titulo ?? entry.heading);
+  const description = toNonEmptyString(entry.description ?? entry.descricao ?? entry.text);
+  const items = Array.isArray(entry.items) ? entry.items.map((rawItem) => {
+    const item = toObjectRecord(rawItem);
+    if (Object.keys(item).length === 0) return null;
+
+    const kind = parseDividendYieldComparatorKind(item.kind ?? item.type);
+    const label = toNonEmptyString(item.label ?? item.title ?? item.name);
+    const detail = toNonEmptyString(item.detail ?? item.subtitle ?? item.context);
+    const value = toNonEmptyString(item.value ?? item.dy ?? item.yield);
+    const score = normalizeScoreToPercent(
+      firstFiniteNumber(item.score, item.score_percent, item.scorePercent, item.progress)
+    );
+
+    if (!label && !value && score === null) return null;
+    return {
+      kind,
+      label,
+      detail,
+      value,
+      score,
+    };
+  }).filter((item): item is AssetFundDividendYieldComparatorItem => Boolean(item)) : [];
+  const source = toNonEmptyString(entry.source);
+
+  if (!title && !description && items.length === 0) return null;
+  return {
+    title,
+    description,
+    items,
+    source,
+  };
+};
+
 const normalizeComparableText = (value: unknown): string => (
   String(value || '')
     .trim()
@@ -1187,6 +1260,12 @@ const parseFundGeneralInfoPayload = (payload: unknown): AssetFundGeneralInfo | n
     ?? entry.dividend_resume
     ?? entry.dividendResume
   );
+  const dividendYieldComparator = parseFundDividendYieldComparatorPayload(
+    entry.dividend_yield_comparator
+    ?? entry.dividendYieldComparator
+    ?? entry.yield_comparator
+    ?? entry.yieldComparator
+  );
   const classification = toNonEmptyString(entry.classification);
   const segment = toNonEmptyString(entry.segment);
   const administrator = toNonEmptyString(entry.administrator);
@@ -1210,6 +1289,7 @@ const parseFundGeneralInfoPayload = (payload: unknown): AssetFundGeneralInfo | n
     description,
     descriptionHtml,
     dividendsResume,
+    dividendYieldComparator,
     classification,
     segment,
     administrator,
@@ -3473,6 +3553,10 @@ const AssetDetailsPage = () => {
     fundGeneralInfo?.dividendsResume || null
   ), [fundGeneralInfo?.dividendsResume]);
 
+  const fundDividendYieldComparator = useMemo(() => (
+    fundGeneralInfo?.dividendYieldComparator || null
+  ), [fundGeneralInfo?.dividendYieldComparator]);
+
   const fallbackFinancialDocuments = useMemo(() => {
     if (!selectedAsset) return [];
     const links = buildAssetExternalLinks(selectedAsset.ticker, selectedAsset.assetClass);
@@ -3795,6 +3879,53 @@ const AssetDetailsPage = () => {
                       </div>
                     </article>
                   </div>
+                </div>
+              </section>
+            ) : null}
+
+            {fundDividendYieldComparator ? (
+              <section className="asset-details-page__card asset-details-page__card--full asset-details-page__dy-comparator">
+                <h2>{t('assets.modal.sections.dividendYieldComparator', { defaultValue: 'Dividend Yield Comparator' })}</h2>
+                {fundDividendYieldComparator.title ? (
+                  <h3 className="asset-details-page__dy-comparator-title">{fundDividendYieldComparator.title}</h3>
+                ) : null}
+                {fundDividendYieldComparator.description ? (
+                  <p className="asset-details-page__dy-comparator-description">{fundDividendYieldComparator.description}</p>
+                ) : null}
+
+                <div className="asset-details-page__dy-comparator-list">
+                  {fundDividendYieldComparator.items.map((item, index) => {
+                    const fallbackLabel = item.kind === 'principal'
+                      ? (selectedAsset?.ticker || t('assets.modal.dyComparator.labels.principal', { defaultValue: 'Asset' }))
+                      : item.kind === 'sector'
+                        ? t('assets.modal.dyComparator.labels.sector', { defaultValue: 'Sector' })
+                        : item.kind === 'category'
+                          ? t('assets.modal.dyComparator.labels.category', { defaultValue: 'Category' })
+                          : item.kind === 'market'
+                            ? t('assets.modal.dyComparator.labels.market', { defaultValue: 'Market' })
+                            : t('assets.modal.dyComparator.labels.reference', { defaultValue: 'Reference' });
+                    const score = item.score ?? 0;
+                    return (
+                      <article
+                        key={`dy-comparator-${item.kind}-${index}`}
+                        className={`asset-details-page__dy-comparator-item asset-details-page__dy-comparator-item--${item.kind}`}
+                      >
+                        <div className="asset-details-page__dy-comparator-row">
+                          <span className="asset-details-page__dy-comparator-label">{item.label || fallbackLabel}</span>
+                          <strong className="asset-details-page__dy-comparator-value">{item.value || formatDetailValue(null)}</strong>
+                        </div>
+                        {item.detail ? (
+                          <div className="asset-details-page__dy-comparator-detail">{item.detail}</div>
+                        ) : null}
+                        <div className="asset-details-page__dy-comparator-progress">
+                          <div
+                            className="asset-details-page__dy-comparator-progress-bar"
+                            style={{ '--score': `${score}%` } as CSSProperties}
+                          />
+                        </div>
+                      </article>
+                    );
+                  })}
                 </div>
               </section>
             ) : null}

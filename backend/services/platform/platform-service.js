@@ -938,6 +938,13 @@ const readFundGeneralInfoFromPayload = (payload, sourceHint) => {
 				'dividend_resume',
 				'dividendResume',
 			]) || null,
+		dividend_yield_comparator:
+			readValueFromRecordKeys(allRecords, [
+				'dividend_yield_comparator',
+				'dividendYieldComparator',
+				'yield_comparator',
+				'yieldComparator',
+			]) || null,
 		classification: readString(['classification', 'classificacao']),
 		segment: readString(['segment']),
 		administrator: readString(['positionmanager', 'administrator', 'administrador']),
