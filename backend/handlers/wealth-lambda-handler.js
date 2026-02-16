@@ -1062,6 +1062,12 @@ async function handleAssetTools(method, id, body, userId, query = {}) {
 			portfolioId: query.portfolioId || null,
 		});
 	}
+	if (query.action === 'fii-updates') {
+		if (method !== 'GET') throw errorResponse(405, 'Method not allowed');
+		return platformService.getFiiUpdates(id, {
+			portfolioId: query.portfolioId || null,
+		});
+	}
 	if (query.action === 'financials') {
 		if (method !== 'GET') throw errorResponse(405, 'Method not allowed');
 		return platformService.getAssetFinancialStatements(id, {

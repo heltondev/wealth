@@ -929,6 +929,16 @@ const AssetDetailsPage = () => {
   const [selectedFinancialMetric, setSelectedFinancialMetric] = useState('');
   const [selectedDocumentCategory, setSelectedDocumentCategory] = useState('all');
   const [selectedDocumentType, setSelectedDocumentType] = useState('all');
+  const [fiiUpdates, setFiiUpdates] = useState<Array<{
+    id: number;
+    category: string | null;
+    title: string;
+    deliveryDate: string | null;
+    referenceDate: string | null;
+    url: string;
+    source: string;
+  }>>([]);
+  const [fiiUpdatesLoading, setFiiUpdatesLoading] = useState(false);
 
   const numberLocale = i18n.language?.startsWith('pt') ? 'pt-BR' : 'en-US';
 
@@ -1425,6 +1435,36 @@ const AssetDetailsPage = () => {
       .finally(() => {
         if (cancelled) return;
         setAssetFinancialsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [portfolioId, selectedAsset]);
+
+  useEffect(() => {
+    if (!selectedAsset || !portfolioId) return;
+    const isFii = String(selectedAsset.assetClass || '').toLowerCase() === 'fii';
+    if (!isFii) {
+      setFiiUpdates([]);
+      return;
+    }
+    let cancelled = false;
+    setFiiUpdatesLoading(true);
+
+    api.getFiiUpdates(selectedAsset.ticker, portfolioId)
+      .then((payload: Record<string, unknown>) => {
+        if (cancelled) return;
+        const items = Array.isArray(payload?.items) ? payload.items : [];
+        setFiiUpdates(items);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setFiiUpdates([]);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setFiiUpdatesLoading(false);
       });
 
     return () => {
@@ -2698,6 +2738,77 @@ const AssetDetailsPage = () => {
     setSelectedDocumentType('all');
   }, [documentTypeOptions, selectedDocumentType]);
 
+  const UPDATES_CATEGORY_MAP: Record<string, string> = useMemo(() => ({
+    'Fato Relevante': 'fato_relevante',
+    'Fatos Relevantes': 'fato_relevante',
+    'Relatórios': 'relatorio',
+    'Informes Periódicos': 'informe',
+    'Assembleia': 'assembleia',
+    'Aviso aos Cotistas': 'outros',
+    'Aviso aos Cotistas - Estruturado': 'outros',
+    'Comunicado ao Mercado': 'outros',
+    'Oferta Pública de Distribuição de Cotas': 'outros',
+    'Regulamento': 'outros',
+    'Atos de Deliberação do Administrador': 'outros',
+  }), []);
+
+  const UPDATES_CATEGORY_LABELS: Record<string, string> = useMemo(() => ({
+    relatorio: t('assets.modal.updates.categories.relatorio', { defaultValue: 'Reports' }),
+    assembleia: t('assets.modal.updates.categories.assembleia', { defaultValue: 'Assemblies' }),
+    fato_relevante: t('assets.modal.updates.categories.fatoRelevante', { defaultValue: 'Material Facts' }),
+    informe: t('assets.modal.updates.categories.informe', { defaultValue: 'Periodic Reports' }),
+    outros: t('assets.modal.updates.categories.outros', { defaultValue: 'Other' }),
+  }), [t]);
+
+  const updatesTimeline = useMemo(() => {
+    if (fiiUpdates.length === 0) return [];
+
+    type FiiUpdateItem = typeof fiiUpdates[number];
+    const resolveCategory = (item: FiiUpdateItem): string => {
+      const cat = item.category || '';
+      for (const [prefix, mapped] of Object.entries(UPDATES_CATEGORY_MAP)) {
+        if (cat.startsWith(prefix)) return mapped;
+      }
+      return 'outros';
+    };
+
+    const byDate = new Map<string, Array<{ item: FiiUpdateItem; category: string }>>();
+    for (const item of fiiUpdates) {
+      const rawDate = item.deliveryDate || item.referenceDate || '';
+      const date = rawDate.includes('T') ? rawDate.split('T')[0] : rawDate;
+      if (!date) continue;
+      if (!byDate.has(date)) byDate.set(date, []);
+      byDate.get(date)!.push({ item, category: resolveCategory(item) });
+    }
+
+    return Array.from(byDate.entries())
+      .sort(([a], [b]) => b.localeCompare(a))
+      .map(([date, items]) => ({ date, items }));
+  }, [fiiUpdates, UPDATES_CATEGORY_MAP]);
+
+  const [selectedUpdateCategories, setSelectedUpdateCategories] = useState<Set<string>>(
+    new Set(['relatorio', 'assembleia', 'fato_relevante', 'informe', 'outros'])
+  );
+
+  const filteredUpdatesTimeline = useMemo(() => (
+    updatesTimeline
+      .map(({ date, items }) => ({
+        date,
+        items: items.filter(({ category }) => selectedUpdateCategories.has(category)),
+      }))
+      .filter(({ items }) => items.length > 0)
+  ), [updatesTimeline, selectedUpdateCategories]);
+
+  const updatesCategoryCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const { items } of updatesTimeline) {
+      for (const { category } of items) {
+        counts[category] = (counts[category] || 0) + 1;
+      }
+    }
+    return counts;
+  }, [updatesTimeline]);
+
   return (
     <Layout>
       <div className="asset-details-page">
@@ -2870,6 +2981,7 @@ const AssetDetailsPage = () => {
               </section>
             ) : null}
 
+            {String(selectedAsset?.assetClass || '').toLowerCase() !== 'fii' ? (
             <section className="asset-details-page__card asset-details-page__card--full asset-details-page__card--financials">
               <div className="asset-details-page__financials-header">
                 <h2>{t('assets.modal.financials.title', { defaultValue: 'Financial Statements' })}</h2>
@@ -3043,7 +3155,9 @@ const AssetDetailsPage = () => {
                 </div>
               ) : null}
             </section>
+            ) : null}
 
+            {String(selectedAsset?.assetClass || '').toLowerCase() !== 'fii' ? (
             <section className="asset-details-page__card asset-details-page__card--full asset-details-page__card--documents">
               <div className="asset-details-page__documents-header">
                 <h2>{t('assets.modal.documents.title', { defaultValue: 'Documents & Filings' })}</h2>
@@ -3174,6 +3288,90 @@ const AssetDetailsPage = () => {
                 </>
               ) : null}
             </section>
+            ) : null}
+
+            {updatesTimeline.length > 0 || fiiUpdatesLoading ? (
+              <section className="asset-details-page__card asset-details-page__card--full asset-details-page__card--updates">
+                <div className="asset-details-page__updates-header">
+                  <h2>{t('assets.modal.updates.title', { defaultValue: 'Updates' })}</h2>
+                  {!fiiUpdatesLoading && updatesTimeline.length > 0 ? (
+                    <span className="asset-details-page__updates-count">
+                      {t('assets.modal.updates.count', {
+                        defaultValue: '{{count}} updates',
+                        count: filteredUpdatesTimeline.reduce((total, group) => total + group.items.length, 0),
+                      })}
+                    </span>
+                  ) : null}
+                </div>
+
+                {fiiUpdatesLoading ? (
+                  <p className="asset-details-page__financials-state">{t('common.loading')}</p>
+                ) : null}
+
+                {!fiiUpdatesLoading && updatesTimeline.length > 0 ? (
+                  <>
+                    <div className="asset-details-page__updates-filters">
+                      {(['relatorio', 'assembleia', 'fato_relevante', 'informe', 'outros'] as const).map((cat) => (
+                        <label key={cat} className="asset-details-page__updates-filter">
+                          <input
+                            type="checkbox"
+                            checked={selectedUpdateCategories.has(cat)}
+                            onChange={() => {
+                              setSelectedUpdateCategories((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(cat)) next.delete(cat);
+                                else next.add(cat);
+                                return next;
+                              });
+                            }}
+                          />
+                          <span className="asset-details-page__updates-filter-label">
+                            {UPDATES_CATEGORY_LABELS[cat] || cat}
+                          </span>
+                          <span className="asset-details-page__updates-filter-count">
+                            ({updatesCategoryCounts[cat] || 0})
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+
+                    {filteredUpdatesTimeline.length === 0 ? (
+                      <p className="asset-details-page__financials-state">
+                        {t('assets.modal.updates.empty', { defaultValue: 'No updates match the selected filters.' })}
+                      </p>
+                    ) : (
+                      <div className="asset-details-page__updates-timeline">
+                        {filteredUpdatesTimeline.map(({ date, items }) => (
+                          <div key={date} className="asset-details-page__updates-group">
+                            <div className="asset-details-page__updates-date">
+                              {formatDate(date, numberLocale)}
+                            </div>
+                            <div className="asset-details-page__updates-items">
+                              {items.map(({ item, category }) => (
+                                <a
+                                  key={`${item.url}|${item.id}`}
+                                  href={item.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="asset-details-page__updates-item"
+                                >
+                                  <span className={`asset-details-page__updates-category asset-details-page__updates-category--${category}`}>
+                                    {UPDATES_CATEGORY_LABELS[category] || category}
+                                  </span>
+                                  <span className="asset-details-page__updates-item-title">
+                                    {item.title}
+                                  </span>
+                                </a>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                ) : null}
+              </section>
+            ) : null}
 
             {selectedAssetWeightMetrics ? (
               <section className="asset-details-page__card asset-details-page__card--full">

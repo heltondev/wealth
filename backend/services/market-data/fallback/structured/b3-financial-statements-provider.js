@@ -72,6 +72,45 @@ const STATEMENT_TYPE_HINTS = {
 	],
 };
 
+const MONTHLY_STRUCTURED_REPORT_HINTS = [
+	'informemensalestruturado',
+	'informemensal',
+	'estruturado',
+];
+
+const FUND_PORTFOLIO_SECTION_TAG = 'TotalInvestido';
+const FUND_PORTFOLIO_SECTION_LABEL = 'Total Investido';
+const FUND_PORTFOLIO_MAX_ITEMS = 30;
+
+const FUND_PORTFOLIO_LABEL_OVERRIDES = {
+	direitosbensimoveis: 'Direitos e bens imóveis',
+	terrenos: 'Terrenos',
+	imoveisrendaacabados: 'Imóveis para renda (acabados)',
+	imoveisrendaconstrucao: 'Imóveis para renda (construção)',
+	imoveisvendaacabados: 'Imóveis para venda (acabados)',
+	imoveisvendaconstrucao: 'Imóveis para venda (construção)',
+	outrosdireitosreais: 'Outros direitos reais',
+	acoes: 'Ações',
+	debentures: 'Debêntures',
+	bonussubscricao: 'Bônus de subscrição',
+	certificadosdepositovalmob: 'Certificados de Depósito de Valores Mobiliários',
+	fia: 'FIA',
+	fip: 'FIP',
+	fii: 'FII',
+	fdic: 'FIDC',
+	outrascotasfi: 'Outras cotas de FI',
+	notaspromissorias: 'Notas promissórias',
+	notascomerciais: 'Notas comerciais',
+	acoessociedadesativfii: 'Ações de sociedades de ativo FII',
+	cotassociedadesativfii: 'Cotas de sociedades de ativo FII',
+	cepac: 'CEPAC',
+	cricra: 'CRI/CRA',
+	letrashipotecarias: 'Letras hipotecárias',
+	lcilca: 'LCI/LCA',
+	lig: 'LIG',
+	outrosvaloresmobiliarios: 'Outros valores mobiliários',
+};
+
 const isObjectRecord = (value) =>
 	value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -147,6 +186,181 @@ const parseLocalizedNumber = (value) => {
 
 	const parsed = Number(text);
 	return Number.isFinite(parsed) ? parsed : null;
+};
+
+const readXmlAttribute = (rawAttributes, attributeName) => {
+	const normalizedName = String(attributeName || '').trim();
+	if (!normalizedName) return null;
+	const serialized = String(rawAttributes || '');
+	const regex = new RegExp(`${normalizedName}\\s*=\\s*"([^"]+)"`, 'i');
+	const match = serialized.match(regex);
+	if (!match) return null;
+	return String(match[1] || '').trim() || null;
+};
+
+const extractXmlFirstLevelElements = (xmlFragment) => {
+	const rows = [];
+	const fragment = String(xmlFragment || '');
+	if (!fragment) return rows;
+
+	const regex = /<([A-Za-z0-9_]+)\b([^>]*)>([\s\S]*?)<\/\1>/g;
+	let match = regex.exec(fragment);
+	while (match) {
+		rows.push({
+			tagName: String(match[1] || '').trim(),
+			attributes: String(match[2] || ''),
+			inner: String(match[3] || ''),
+		});
+		match = regex.exec(fragment);
+	}
+
+	return rows;
+};
+
+const toFundPortfolioLabel = (rawTagName) => {
+	const normalizedTag = normalizeTextKey(rawTagName);
+	if (!normalizedTag) return null;
+	if (FUND_PORTFOLIO_LABEL_OVERRIDES[normalizedTag]) {
+		return FUND_PORTFOLIO_LABEL_OVERRIDES[normalizedTag];
+	}
+
+	const text = String(rawTagName || '')
+		.replace(/_/g, ' ')
+		.replace(/([a-z])([A-Z0-9])/g, '$1 $2')
+		.replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+		.trim();
+	if (!text) return null;
+	return text;
+};
+
+const decodeFundosNetPayloadToXml = (payloadText) => {
+	let serialized = String(payloadText || '').trim();
+	if (!serialized) return null;
+
+	if (
+		(serialized.startsWith('"') && serialized.endsWith('"')) ||
+		(serialized.startsWith('\'') && serialized.endsWith('\''))
+	) {
+		try {
+			serialized = JSON.parse(serialized);
+		} catch {
+			serialized = serialized.slice(1, -1);
+		}
+	}
+
+	const trimmed = String(serialized || '').trim();
+	if (!trimmed) return null;
+	if (trimmed.startsWith('<')) return trimmed;
+
+	const base64Payload = trimmed.replace(/\s+/g, '');
+	if (!/^[A-Za-z0-9+/=]+$/.test(base64Payload)) return null;
+	try {
+		const decoded = Buffer.from(base64Payload, 'base64').toString('utf8');
+		if (!decoded || !decoded.includes('<')) return null;
+		return decoded;
+	} catch {
+		return null;
+	}
+};
+
+const normalizeFundosNetDownloadUrl = (value) => {
+	const normalized = normalizeDocumentUrl(value);
+	if (!normalized) return null;
+	if (normalized.includes('/downloadDocumento?')) return normalized;
+	if (normalized.includes('/visualizarDocumento?')) {
+		return normalized.replace('/visualizarDocumento?', '/downloadDocumento?');
+	}
+	const idMatch = normalized.match(/[?&]id=(\d+)/i);
+	if (!idMatch) return normalized;
+	return `https://fnet.bmfbovespa.com.br/fnet/publico/downloadDocumento?id=${idMatch[1]}`;
+};
+
+const normalizeReportRowReferenceDate = (row) => (
+	toIsoDate(row?.referenceDate) ||
+	toIsoDate(row?.referenceDateFormat) ||
+	toIsoDate(row?.deliveryDate) ||
+	toIsoDate(row?.deliveryDateFormat) ||
+	null
+);
+
+const looksLikeMonthlyStructuredReport = (reportTypeLabel, row) => {
+	const candidateTexts = [
+		reportTypeLabel,
+		row?.describleType,
+		row?.typeName,
+		row?.label,
+		row?.ariaLabel,
+	];
+	const normalizedText = candidateTexts
+		.map((value) => normalizeTextKey(value))
+		.filter(Boolean)
+		.join(' ');
+	if (!normalizedText) return false;
+	return MONTHLY_STRUCTURED_REPORT_HINTS.some((hint) => normalizedText.includes(hint));
+};
+
+const extractFundPortfolioFromMonthlyStructuredXml = (xmlText, source) => {
+	const xml = String(xmlText || '');
+	if (!xml) return [];
+
+	const sectionRegex = new RegExp(`<${FUND_PORTFOLIO_SECTION_TAG}\\b([^>]*)>([\\s\\S]*?)<\\/${FUND_PORTFOLIO_SECTION_TAG}>`, 'i');
+	const sectionMatch = xml.match(sectionRegex);
+	if (!sectionMatch) return [];
+
+	const sectionAttributes = String(sectionMatch[1] || '');
+	const sectionBody = String(sectionMatch[2] || '');
+	const totalFromAttribute = parseLocalizedNumber(readXmlAttribute(sectionAttributes, 'total'));
+
+	const rawRows = extractXmlFirstLevelElements(sectionBody)
+		.map((entry) => {
+			const label = toFundPortfolioLabel(entry.tagName);
+			if (!label) return null;
+
+			let value = parseLocalizedNumber(readXmlAttribute(entry.attributes, 'total'));
+			if (value === null) {
+				const innerText = String(entry.inner || '').trim();
+				if (innerText && !innerText.includes('<')) {
+					value = parseLocalizedNumber(innerText);
+				}
+			}
+			if (value === null || !Number.isFinite(value) || value <= 0) return null;
+
+			return {
+				label,
+				value,
+				category: FUND_PORTFOLIO_SECTION_LABEL,
+			};
+		})
+		.filter(Boolean);
+
+	if (rawRows.length === 0) return [];
+
+	const denominator = (Number.isFinite(totalFromAttribute) && totalFromAttribute > 0)
+		? totalFromAttribute
+		: rawRows.reduce((sum, entry) => sum + entry.value, 0);
+	if (!Number.isFinite(denominator) || denominator <= 0) return [];
+
+	const dedupe = new Set();
+	const rows = [];
+	for (const entry of rawRows) {
+		const allocation = (entry.value / denominator) * 100;
+		if (!Number.isFinite(allocation) || allocation <= 0 || allocation > 100.5) continue;
+
+		const key = normalizeTextKey(entry.label);
+		if (!key || dedupe.has(key)) continue;
+		dedupe.add(key);
+
+		rows.push({
+			label: entry.label,
+			allocation_pct: Number(allocation.toFixed(4)),
+			category: entry.category,
+			source: source || 'b3_informe_mensal_estruturado',
+		});
+	}
+
+	return rows
+		.sort((left, right) => right.allocation_pct - left.allocation_pct)
+		.slice(0, FUND_PORTFOLIO_MAX_ITEMS);
 };
 
 const encodePayload = (payload) =>
@@ -482,6 +696,10 @@ class B3FinancialStatementsProvider {
 			.map((row) => normalizeFilingDocumentRow(row, 'b3_reports_relevants'))
 			.filter(Boolean);
 		const documents = dedupeDocuments([...structuredDocuments, ...relevantDocuments]);
+		const fundPortfolioPayload = await this.#fetchFundPortfolioFromStructuredReports(reports);
+		const fundPortfolioRows = Array.isArray(fundPortfolioPayload?.rows)
+			? fundPortfolioPayload.rows
+			: null;
 
 		const statements = parseStructuredReportsStatements(reports);
 		const currentPrice = parseLocalizedNumber(detail.quote);
@@ -507,6 +725,8 @@ class B3FinancialStatementsProvider {
 				quarterly_balance_sheet: statements.quarterly_balance_sheet,
 				cashflow: statements.cashflow,
 				quarterly_cashflow: statements.quarterly_cashflow,
+				fund_portfolio: fundPortfolioRows,
+				portfolio_composition: fundPortfolioRows,
 				b3: {
 					fund: fundDescriptor,
 					report_types: reportTypes,
@@ -517,8 +737,18 @@ class B3FinancialStatementsProvider {
 						0
 					),
 					relevant_reports_total: relevantReports.rows.length,
+					fund_portfolio_reference_date: fundPortfolioPayload?.reference_date || null,
+					fund_portfolio_source_url: fundPortfolioPayload?.source_url || null,
 				},
 			},
+			fund_portfolio: fundPortfolioRows,
+			portfolio_composition: fundPortfolioRows,
+			portfolio_composition_meta: fundPortfolioPayload
+				? {
+					reference_date: fundPortfolioPayload.reference_date || null,
+					source_url: fundPortfolioPayload.source_url || null,
+				}
+				: null,
 			documents,
 			historical: {
 				history_30d: [],
@@ -539,8 +769,98 @@ class B3FinancialStatementsProvider {
 				cashflow: statements.cashflow,
 				quarterly_cashflow: statements.quarterly_cashflow,
 				documents,
+				fund_portfolio: fundPortfolioRows,
+				fund_portfolio_meta: fundPortfolioPayload
+					? {
+						reference_date: fundPortfolioPayload.reference_date || null,
+						source_url: fundPortfolioPayload.source_url || null,
+					}
+					: null,
 			},
 		};
+	}
+
+	async #fetchFundPortfolioFromStructuredReports(reports) {
+		const candidates = [];
+		for (const report of Array.isArray(reports) ? reports : []) {
+			const reportLabel = report?.typeLabel || report?.label || null;
+			for (const row of Array.isArray(report?.rows) ? report.rows : []) {
+				if (!isObjectRecord(row)) continue;
+				if (!looksLikeMonthlyStructuredReport(reportLabel, row)) continue;
+
+				const downloadUrl = normalizeFundosNetDownloadUrl(
+					row.urlFundosNet ||
+					row.urlfundosnet ||
+					row.urlViewerFundosNet ||
+					row.urlviewerfundosnet ||
+					null
+				);
+				if (!downloadUrl) continue;
+
+				candidates.push({
+					download_url: downloadUrl,
+					reference_date: normalizeReportRowReferenceDate(row),
+				});
+			}
+		}
+
+		if (candidates.length === 0) return null;
+
+		const dedupeUrls = new Set();
+		const orderedCandidates = candidates
+			.filter((entry) => {
+				const key = String(entry.download_url || '').trim();
+				if (!key || dedupeUrls.has(key)) return false;
+				dedupeUrls.add(key);
+				return true;
+			})
+			.sort((left, right) => {
+				const leftDate = String(left.reference_date || '');
+				const rightDate = String(right.reference_date || '');
+				return rightDate.localeCompare(leftDate);
+			});
+
+		for (const candidate of orderedCandidates) {
+			const xml = await this.#downloadFundosNetXml(candidate.download_url);
+			if (!xml) continue;
+			const rows = extractFundPortfolioFromMonthlyStructuredXml(
+				xml,
+				'b3_informe_mensal_estruturado'
+			);
+			if (!Array.isArray(rows) || rows.length === 0) continue;
+
+			return {
+				rows,
+				reference_date: candidate.reference_date || null,
+				source_url: candidate.download_url,
+			};
+		}
+
+		return null;
+	}
+
+	async #downloadFundosNetXml(downloadUrl) {
+		if (!downloadUrl) return null;
+		try {
+			const response = await withRetry(
+				() => fetchWithTimeout(downloadUrl, {
+					timeoutMs: this.timeoutMs,
+					headers: {
+						Accept: 'text/plain,application/xml,text/xml,*/*',
+					},
+				}),
+				{
+					retries: 1,
+					baseDelayMs: 300,
+					factor: 2,
+				}
+			);
+			if (!response.ok) return null;
+			const text = await response.text();
+			return decodeFundosNetPayloadToXml(text);
+		} catch {
+			return null;
+		}
 	}
 
 	async #fetchStructuredReports(reportIdCandidates, baseFilter) {

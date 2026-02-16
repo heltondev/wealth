@@ -28,7 +28,29 @@ test('B3FinancialStatementsProvider builds normalized statements from B3 structu
 		maxPages: 1,
 	});
 
+	const monthlyStructuredXml = [
+		'<?xml version="1.0" encoding="UTF-8"?>',
+		'<DadosEconomicoFinanceiros>',
+		'<InformeMensal>',
+		'<InformacoesAtivo>',
+		'<TotalInvestido total="1000">',
+		'<DireitosBensImoveis total="700"></DireitosBensImoveis>',
+		'<FII>200</FII>',
+		'<CriCra>100</CriCra>',
+		'</TotalInvestido>',
+		'</InformacoesAtivo>',
+		'</InformeMensal>',
+		'</DadosEconomicoFinanceiros>',
+	].join('');
+
 	const fetchImpl = async (url) => {
+		if (url.includes('/fnet/publico/downloadDocumento?id=1116550')) {
+			return new Response(JSON.stringify(Buffer.from(monthlyStructuredXml, 'utf8').toString('base64')), {
+				status: 200,
+				headers: { 'content-type': 'text/plain' },
+			});
+		}
+
 		if (url.includes('GetListFunds/')) {
 			return new Response(JSON.stringify({
 				page: {
@@ -61,6 +83,7 @@ test('B3FinancialStatementsProvider builds normalized statements from B3 structu
 			return new Response(JSON.stringify([
 				{ inputId: 47, label: 'Demonstracao de Resultado Anual' },
 				{ inputId: 45, label: 'Demonstracao Trimestral de Fluxo de Caixa e Balanco' },
+				{ inputId: 40, label: 'Informe Mensal Estruturado' },
 			]), { status: 200, headers: { 'content-type': 'application/json' } });
 		}
 
@@ -86,6 +109,19 @@ test('B3FinancialStatementsProvider builds normalized statements from B3 structu
 							referenceDate: '30/09/2025',
 							patrimonioLiquido: '12.345,67',
 							fluxoCaixaOperacional: '345,67',
+						},
+					],
+				}), { status: 200, headers: { 'content-type': 'application/json' } });
+			}
+			if (decodedPayload.type === 40) {
+				return new Response(JSON.stringify({
+					page: { totalRecords: 1, totalPages: 1 },
+					results: [
+						{
+							referenceDate: '2026-01-01T00:00:00-03:00',
+							referenceDateFormat: '01/2026',
+							describleType: 'Informe Mensal Estruturado',
+							urlViewerFundosNet: 'https://fnet.bmfbovespa.com.br/fnet/publico/visualizarDocumento?id=1116550',
 						},
 					],
 				}), { status: 200, headers: { 'content-type': 'application/json' } });
@@ -143,12 +179,18 @@ test('B3FinancialStatementsProvider builds normalized statements from B3 structu
 	assert.equal(payload.fundamentals.quarterly_balance_sheet?.[0]?.period, '2025-09-30');
 	assert.equal(payload.fundamentals.quarterly_balance_sheet?.[0]?.patrimonioliquido, 12345.67);
 	assert.equal(payload.fundamentals.quarterly_cashflow?.[0]?.fluxocaixaoperacional, 345.67);
-	assert.equal(payload.documents?.length, 1);
-	assert.equal(payload.documents?.[0]?.source, 'b3_reports_relevants');
-	assert.equal(payload.documents?.[0]?.category, 'Fato Relevante');
-	assert.equal(payload.documents?.[0]?.url, 'https://fnet.bmfbovespa.com.br/fnet/publico/visualizarDocumento?id=1106412');
-	assert.equal(payload.documents?.[0]?.reference_date, '2026-02-10');
-	assert.equal(payload.documents?.[0]?.delivery_date, '2026-02-10');
+	assert.ok((payload.documents?.length || 0) >= 1);
+	const relevantDoc = payload.documents?.find((entry) => entry.source === 'b3_reports_relevants');
+	assert.ok(relevantDoc);
+	assert.equal(relevantDoc?.category, 'Fato Relevante');
+	assert.equal(relevantDoc?.url, 'https://fnet.bmfbovespa.com.br/fnet/publico/visualizarDocumento?id=1106412');
+	assert.equal(relevantDoc?.reference_date, '2026-02-10');
+	assert.equal(relevantDoc?.delivery_date, '2026-02-10');
+	assert.equal(payload.fund_portfolio?.length, 3);
+	assert.equal(payload.fund_portfolio?.[0]?.label, 'Direitos e bens imóveis');
+	assert.equal(payload.fund_portfolio?.[0]?.allocation_pct, 70);
+	assert.equal(payload.fund_portfolio?.[0]?.source, 'b3_informe_mensal_estruturado');
+	assert.equal(payload.fundamentals?.b3?.fund_portfolio_reference_date, '2026-01-01');
 });
 
 test('B3FinancialStatementsProvider ignores non-BR and non-FII assets', async () => {

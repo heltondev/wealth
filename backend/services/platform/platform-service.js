@@ -1046,6 +1046,17 @@ const correlation = (left, right) => {
 const hashId = (value) =>
 	crypto.createHash('sha1').update(String(value || ''), 'utf8').digest('hex').slice(0, 16);
 
+const parseBrDatetime = (value) => {
+	if (!value) return null;
+	const text = String(value).trim();
+	const match = text.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2}))?/);
+	if (!match) return null;
+	const [, dd, mm, yyyy, hh, mi] = match;
+	const iso = `${yyyy}-${mm}-${dd}`;
+	if (hh && mi) return `${iso}T${hh}:${mi}:00`;
+	return iso;
+};
+
 const parseRssTag = (block, tag) => {
 	const regex = new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i');
 	const match = block.match(regex);
@@ -1331,6 +1342,152 @@ class PlatformService {
 			items: persisted,
 			fetched_at: nowIso(),
 		};
+	}
+
+	async getFiiUpdates(ticker, options = {}) {
+		const assets = await this.#resolveAssetsForTickerOrPortfolio(ticker, options.portfolioId);
+		const asset = assets[0];
+		if (!asset) return { ticker, items: [], fetched_at: nowIso() };
+
+		const normalizedClass = String(asset.assetClass || '').toLowerCase();
+		const normalizedTicker = String(asset.ticker || '').trim().toUpperCase();
+		if (normalizedClass !== 'fii' && !normalizedTicker.endsWith('11')) {
+			return { ticker: normalizedTicker, items: [], fetched_at: nowIso() };
+		}
+
+		try {
+			const cnpj = await this.#resolveFiiCnpj(normalizedTicker);
+			if (!cnpj) {
+				return { ticker: normalizedTicker, items: [], error: 'Could not resolve CNPJ', fetched_at: nowIso() };
+			}
+
+			const now = new Date();
+			const oneYearAgo = new Date(now);
+			oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+			const formatBrDate = (d) => `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+
+			const params = new URLSearchParams({
+				d: '0',
+				s: '0',
+				l: '100',
+				'o[0][0]': 'dataEntrega',
+				'o[0][1]': 'desc',
+				cnpjFundo: cnpj,
+				dataInicial: formatBrDate(oneYearAgo),
+				dataFinal: formatBrDate(now),
+			});
+
+			const url = `https://fnet.bmfbovespa.com.br/fnet/publico/pesquisarGerenciadorDocumentosDados?${params.toString()}`;
+			const response = await withRetry(
+				() => fetchWithTimeout(url, {
+					timeoutMs: 15000,
+					headers: {
+						Accept: 'application/json',
+						'X-Requested-With': 'XMLHttpRequest',
+					},
+				}),
+				{ retries: 2, baseDelayMs: 400, factor: 2 }
+			);
+			if (!response.ok) {
+				return { ticker: normalizedTicker, items: [], error: `FNET responded with ${response.status}`, fetched_at: nowIso() };
+			}
+
+			const payload = await response.json();
+			const rawItems = Array.isArray(payload?.data) ? payload.data : [];
+
+			const items = rawItems
+				.filter((item) => item.id && item.status === 'AC')
+				.map((item) => {
+					const detailParts = [item.tipoDocumento, item.especieDocumento].filter(Boolean);
+					const title = detailParts.length > 0
+						? detailParts.join(', ')
+						: (item.categoriaDocumento || 'Documento');
+					return {
+						id: item.id,
+						category: item.categoriaDocumento || null,
+						title,
+						deliveryDate: parseBrDatetime(item.dataEntrega),
+						referenceDate: parseBrDatetime(item.dataReferencia),
+						url: `https://fnet.bmfbovespa.com.br/fnet/publico/exibirDocumento?id=${item.id}&cvm=true`,
+						source: 'fnet',
+					};
+				});
+
+			return {
+				ticker: normalizedTicker,
+				total: payload.recordsTotal || items.length,
+				items,
+				fetched_at: nowIso(),
+			};
+		} catch (error) {
+			this.logger.error(JSON.stringify({
+				event: 'fii_updates_fetch_failed',
+				ticker: normalizedTicker,
+				error: error.message,
+				fetched_at: nowIso(),
+			}));
+			return { ticker: normalizedTicker, items: [], error: error.message, fetched_at: nowIso() };
+		}
+	}
+
+	async #resolveFiiCnpj(ticker) {
+		const normalizedTicker = String(ticker).trim().toUpperCase();
+		const acronym = normalizedTicker.endsWith('11') ? normalizedTicker.slice(0, -2) : normalizedTicker;
+
+		const candidateKeywords = Array.from(new Set([normalizedTicker, acronym].filter(Boolean)));
+		for (const keyword of candidateKeywords) {
+			const encodedPayload = Buffer.from(JSON.stringify({
+				language: 'pt-br',
+				typeFund: 'FII',
+				pageNumber: 1,
+				pageSize: 5,
+				keyword,
+			})).toString('base64');
+			const listUrl = `https://sistemaswebb3-listados.b3.com.br/fundsListedProxy/Search/GetListFunds/${encodedPayload}`;
+
+			try {
+				const listResp = await withRetry(
+					() => fetchWithTimeout(listUrl, {
+						timeoutMs: 15000,
+						headers: { Accept: 'application/json,text/plain,*/*' },
+					}),
+					{ retries: 1, baseDelayMs: 300, factor: 2 }
+				);
+				if (!listResp.ok) continue;
+				const listPayload = await listResp.json();
+				const results = Array.isArray(listPayload?.results) ? listPayload.results : [];
+				if (results.length === 0) continue;
+
+				const normalizedAcronym = acronym.toUpperCase();
+				const match = results.find((r) => String(r.acronym || '').toUpperCase() === normalizedAcronym) || results[0];
+				const idFNET = toNumberOrNull(match?.id);
+				const idCEM = String(match?.acronym || acronym).trim().toUpperCase();
+				if (idFNET === null) continue;
+
+				const detailEncoded = Buffer.from(JSON.stringify({
+					language: 'pt-br',
+					idFNET,
+					idCEM,
+					typeFund: 'FII',
+				})).toString('base64');
+				const detailUrl = `https://sistemaswebb3-listados.b3.com.br/fundsListedProxy/Search/GetDetailFund/${detailEncoded}`;
+
+				const detailResp = await withRetry(
+					() => fetchWithTimeout(detailUrl, {
+						timeoutMs: 15000,
+						headers: { Accept: 'application/json,text/plain,*/*' },
+					}),
+					{ retries: 1, baseDelayMs: 300, factor: 2 }
+				);
+				if (!detailResp.ok) continue;
+				const detail = await detailResp.json();
+				const cnpj = String(detail?.cnpj || '').replace(/\D/g, '');
+				if (cnpj.length === 14) return cnpj;
+			} catch {
+				continue;
+			}
+		}
+		return null;
 	}
 
 	async getDashboard(userId, options = {}) {

@@ -565,6 +565,11 @@ export const api = {
     if (portfolioId) query.set('portfolioId', portfolioId);
     return request(`/assets/${encodeURIComponent(ticker)}?${query.toString()}`);
   },
+  getFiiUpdates: (ticker: string, portfolioId?: string) => {
+    const query = new URLSearchParams({ action: 'fii-updates' });
+    if (portfolioId) query.set('portfolioId', portfolioId);
+    return request(`/assets/${encodeURIComponent(ticker)}?${query.toString()}`);
+  },
   screenAssets: (filters: Record<string, unknown>) =>
     request('/assets/screen', { method: 'POST', body: JSON.stringify(filters) }),
   compareAssets: (tickers: string[], portfolioId?: string) =>
