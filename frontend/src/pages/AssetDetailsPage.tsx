@@ -910,6 +910,12 @@ const AssetDetailsPage = () => {
   } = usePortfolioData();
   const portfolioId = selectedPortfolio;
   const portfolioMarketValueByAssetId = useMemo(() => metrics?.marketValues || {}, [metrics]);
+  const [activeTab, setActiveTab] = useState<'overview' | 'financials' | 'history'>('overview');
+  const tabOptions = useMemo(() => [
+    { value: 'overview' as const, label: t('assets.detail.tabs.overview', { defaultValue: 'Overview' }) },
+    { value: 'financials' as const, label: t('assets.detail.tabs.financials', { defaultValue: 'Financials' }) },
+    { value: 'history' as const, label: t('assets.detail.tabs.history', { defaultValue: 'History' }) },
+  ], [t]);
   const [currentQuote, setCurrentQuote] = useState<number | null>(null);
   const [averageCost, setAverageCost] = useState<number | null>(null);
   const [marketSeries, setMarketSeries] = useState<AssetPriceSeriesPoint[]>([]);
@@ -2847,6 +2853,22 @@ const AssetDetailsPage = () => {
 
         {!loading && selectedAsset ? (
           <>
+            <div className="asset-details-page__tabs" role="tablist" aria-label={t('assets.detail.tabs.ariaLabel', { defaultValue: 'Asset detail sections' })}>
+              {tabOptions.map((tab) => (
+                <button
+                  key={tab.value}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === tab.value}
+                  className={`asset-details-page__tab ${activeTab === tab.value ? 'asset-details-page__tab--active' : ''}`}
+                  onClick={() => setActiveTab(tab.value)}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {activeTab === 'overview' && (<>
             <div className="asset-details-page__grid">
               <section className="asset-details-page__card asset-details-page__card--two-cols">
                 <h2>{t('assets.modal.sections.overview')}</h2>
@@ -2980,7 +3002,9 @@ const AssetDetailsPage = () => {
                 )}
               </section>
             ) : null}
+            </>)}
 
+            {activeTab === 'financials' && (<>
             {String(selectedAsset?.assetClass || '').toLowerCase() !== 'fii' ? (
             <section className="asset-details-page__card asset-details-page__card--full asset-details-page__card--financials">
               <div className="asset-details-page__financials-header">
@@ -3372,8 +3396,9 @@ const AssetDetailsPage = () => {
                 ) : null}
               </section>
             ) : null}
+            </>)}
 
-            {selectedAssetWeightMetrics ? (
+            {activeTab === 'overview' && selectedAssetWeightMetrics ? (
               <section className="asset-details-page__card asset-details-page__card--full">
                 <div className="assets-page__weights">
                   <h3>{t('assets.modal.weights.title')}</h3>
@@ -3430,6 +3455,7 @@ const AssetDetailsPage = () => {
               </section>
             ) : null}
 
+            {activeTab === 'history' && (<>
             <section className="asset-details-page__card asset-details-page__card--full">
               <div className="assets-page__history">
                 <h3>{t('assets.modal.priceHistory.title')}</h3>
@@ -3835,6 +3861,7 @@ const AssetDetailsPage = () => {
                 })}
               </p>
             </section>
+            </>)}
           </>
         ) : null}
       </div>

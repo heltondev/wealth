@@ -29,6 +29,41 @@
     white-space: nowrap;
   }
 
+  &__tabs {
+    display: flex;
+    align-items: center;
+    gap: $spacing-xs;
+    overflow: auto;
+    padding: 0.36rem;
+    border-radius: 14px;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    background:
+      linear-gradient(135deg, rgba(56, 189, 248, 0.08), rgba(15, 23, 42, 0.14)),
+      var(--bg-secondary);
+    margin-bottom: $spacing-md;
+  }
+
+  &__tab {
+    @include button-base(0.76rem, 0.46rem, 0.72rem);
+    white-space: nowrap;
+    background: rgba(15, 23, 42, 0.32);
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    color: var(--text-secondary);
+
+    &:hover:not(:disabled) {
+      background: rgba(56, 189, 248, 0.16);
+      border-color: rgba(56, 189, 248, 0.4);
+      color: var(--text-primary);
+    }
+
+    &--active {
+      background: linear-gradient(135deg, rgba(37, 99, 235, 0.94), rgba(14, 165, 233, 0.9));
+      border-color: rgba(96, 165, 250, 0.55);
+      color: #ffffff;
+      box-shadow: 0 8px 20px rgba(2, 132, 199, 0.2);
+    }
+  }
+
   &__state {
     @include glass-card;
     padding: $spacing-xxl;
