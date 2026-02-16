@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import Layout from '../components/Layout';
 import DataTable, { type DataTableColumn, type DataTableFilter } from '../components/DataTable';
@@ -9,6 +9,7 @@ import ExpandableText from '../components/ExpandableText';
 import {
   api,
   type Asset,
+  type DividendsResponse,
   type Transaction,
   type DropdownConfigMap,
 } from '../services/api';
@@ -37,6 +38,52 @@ type AssetTradeHistoryPoint = AssetTradeHistoryRow & {
   x: number;
   y: number;
   index: number;
+};
+type AssetProventEvent = {
+  id: string;
+  ticker: string;
+  eventDate: string;
+  exDate: string | null;
+  paymentDate: string | null;
+  eventType: string | null;
+  amountPerUnit: number | null;
+  status: 'paid' | 'provisioned';
+  source: string | null;
+  sourceUrl: string | null;
+};
+type AssetProventSummary = {
+  events: AssetProventEvent[];
+  nextPaymentDate: string | null;
+  nextExDate: string | null;
+  nextAmountPerUnit: number | null;
+  lastPaymentDate: string | null;
+  lastAmountPerUnit: number | null;
+  paidCount12m: number;
+  paidPerUnit12m: number;
+  sources: string[];
+};
+type AssetInsightsSnapshot = {
+  status: 'loading' | 'ready' | 'error';
+  source: string | null;
+  fetchedAt: string | null;
+  sector: string | null;
+  industry: string | null;
+  marketCap: number | null;
+  averageVolume: number | null;
+  currentPrice: number | null;
+  fairPrice: number | null;
+  marginOfSafetyPct: number | null;
+  pe: number | null;
+  pb: number | null;
+  roe: number | null;
+  payout: number | null;
+  evEbitda: number | null;
+  netMargin: number | null;
+  statusInvestUrl: string | null;
+  b3Url: string | null;
+  clubeFiiUrl: string | null;
+  fiisUrl: string | null;
+  errorMessage: string | null;
 };
 
 const COUNTRY_FLAG_MAP: Record<string, string> = {
@@ -90,6 +137,104 @@ const summarizeSourceValue = (value: unknown): string | null => {
   return null;
 };
 
+const getLocalIsoDate = () => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const normalizeIsoDate = (value: unknown): string | null => {
+  if (!value) return null;
+  const text = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString().slice(0, 10);
+};
+
+const toNumericValue = (value: unknown): number | null => {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string' && value.trim() === '') return null;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const toObjectRecord = (value: unknown): Record<string, unknown> => (
+  value && typeof value === 'object' ? value as Record<string, unknown> : {}
+);
+
+const toNonEmptyString = (value: unknown): string | null => {
+  const text = String(value || '').trim();
+  return text || null;
+};
+
+const firstFiniteNumber = (...values: unknown[]): number | null => {
+  for (const candidate of values) {
+    const numeric = toNumericValue(candidate);
+    if (numeric !== null) return numeric;
+  }
+  return null;
+};
+
+const toTickerSlug = (ticker: string): string => (
+  String(ticker || '')
+    .toLowerCase()
+    .replace(/\.sa$/i, '')
+    .replace(/[^a-z0-9]/g, '')
+);
+
+const buildAssetExternalLinks = (ticker: string, assetClass: string) => {
+  const normalizedTicker = String(ticker || '').toUpperCase();
+  const slug = toTickerSlug(normalizedTicker);
+  const isFii = String(assetClass || '').toLowerCase() === 'fii';
+
+  return {
+    statusInvestUrl: slug
+      ? `https://statusinvest.com.br/${isFii ? 'fundos-imobiliarios' : 'acoes'}/${slug}`
+      : null,
+    b3Url: isFii
+      ? 'https://www.b3.com.br/pt_br/produtos-e-servicos/negociacao/renda-variavel/fundos-de-investimentos/fii/fiis-listados/'
+      : null,
+    clubeFiiUrl: isFii && slug ? `https://www.clubefii.com.br/fii/${slug}` : null,
+    fiisUrl: isFii && slug ? `https://fiis.com.br/${slug}/` : null,
+  };
+};
+
+const createEmptyInsightsSnapshot = (
+  status: AssetInsightsSnapshot['status'],
+  ticker: string,
+  assetClass: string,
+): AssetInsightsSnapshot => ({
+  status,
+  source: null,
+  fetchedAt: null,
+  sector: null,
+  industry: null,
+  marketCap: null,
+  averageVolume: null,
+  currentPrice: null,
+  fairPrice: null,
+  marginOfSafetyPct: null,
+  pe: null,
+  pb: null,
+  roe: null,
+  payout: null,
+  evEbitda: null,
+  netMargin: null,
+  ...buildAssetExternalLinks(ticker, assetClass),
+  errorMessage: null,
+});
+
+const dateMonthsBack = (months: number) => {
+  const date = new Date();
+  date.setDate(1);
+  date.setMonth(date.getMonth() - months + 1);
+  return date.toISOString().slice(0, 10);
+};
+
 const AssetsPage = () => {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
@@ -128,9 +273,12 @@ const AssetsPage = () => {
   const averageCostByAssetId = useMemo(() => metrics?.averageCosts || {}, [metrics]);
   const portfolioMarketValueByAssetId = useMemo(() => metrics?.marketValues || {}, [metrics]);
   const [selectedHistoryPoint, setSelectedHistoryPoint] = useState<AssetTradeHistoryPoint | null>(null);
+  const [assetInsightsByTicker, setAssetInsightsByTicker] = useState<Record<string, AssetInsightsSnapshot>>({});
+  const assetInsightsByTickerRef = useRef<Record<string, AssetInsightsSnapshot>>({});
   const [dropdownConfig, setDropdownConfig] = useState<DropdownConfigMap>(() =>
     normalizeDropdownConfig(DEFAULT_DROPDOWN_CONFIG)
   );
+  const [dividendsPayload, setDividendsPayload] = useState<DividendsResponse | null>(null);
   const [form, setForm] = useState<{
     ticker: string;
     name: string;
@@ -174,6 +322,192 @@ const AssetsPage = () => {
   useEffect(() => {
     setSelectedHistoryPoint(null);
   }, [selectedPortfolio]);
+
+  useEffect(() => {
+    assetInsightsByTickerRef.current = assetInsightsByTicker;
+  }, [assetInsightsByTicker]);
+
+  useEffect(() => {
+    setAssetInsightsByTicker({});
+    assetInsightsByTickerRef.current = {};
+  }, [selectedPortfolio]);
+
+  useEffect(() => {
+    if (!selectedPortfolio) {
+      setDividendsPayload(null);
+      return;
+    }
+
+    let cancelled = false;
+    api.getDividends(selectedPortfolio, { periodMonths: 24 })
+      .then((response) => {
+        if (cancelled) return;
+        setDividendsPayload(response);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setDividendsPayload(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedPortfolio]);
+
+  const buildInsightsSnapshot = useCallback((asset: AssetRow, detailsPayload: unknown, fairPayload: unknown): AssetInsightsSnapshot => {
+    const details = toObjectRecord(detailsPayload);
+    const fair = toObjectRecord(fairPayload);
+    const detail = toObjectRecord(details.detail);
+    const quote = toObjectRecord(detail.quote);
+    const fundamentals = toObjectRecord(detail.fundamentals);
+    const raw = toObjectRecord(detail.raw);
+    const finalPayload = toObjectRecord(raw.final_payload);
+    const primaryPayload = toObjectRecord(raw.primary_payload);
+    const finalInfo = toObjectRecord(finalPayload.info);
+    const primaryInfo = toObjectRecord(primaryPayload.info);
+    const latestPrice = toObjectRecord(details.latest_price);
+    const fairFundamentals = toObjectRecord(fair.fundamentals);
+
+    return {
+      ...createEmptyInsightsSnapshot('ready', asset.ticker, asset.assetClass),
+      status: 'ready',
+      source: toNonEmptyString(detail.data_source) || toNonEmptyString(latestPrice.source),
+      fetchedAt: toNonEmptyString(details.fetched_at) || toNonEmptyString(detail.fetched_at) || toNonEmptyString(fair.fetched_at),
+      sector: toNonEmptyString(finalInfo.sector) || toNonEmptyString(primaryInfo.sector) || toNonEmptyString(fundamentals.sector),
+      industry: toNonEmptyString(finalInfo.industry)
+        || toNonEmptyString(finalInfo.segment)
+        || toNonEmptyString(primaryInfo.industry)
+        || toNonEmptyString(primaryInfo.segment)
+        || toNonEmptyString(fundamentals.industry),
+      marketCap: firstFiniteNumber(finalInfo.marketCap, primaryInfo.marketCap, quote.marketCap, latestPrice.marketCap),
+      averageVolume: firstFiniteNumber(
+        finalInfo.averageVolume,
+        finalInfo.averageDailyVolume10Day,
+        primaryInfo.averageVolume,
+        primaryInfo.averageDailyVolume10Day,
+        quote.volume,
+        latestPrice.volume,
+      ),
+      currentPrice: firstFiniteNumber(fair.current_price, latestPrice.close, quote.currentPrice, asset.currentPrice),
+      fairPrice: firstFiniteNumber(fair.fair_price),
+      marginOfSafetyPct: firstFiniteNumber(fair.margin_of_safety_pct),
+      pe: firstFiniteNumber(
+        fairFundamentals.pe,
+        finalInfo.trailingPE,
+        finalInfo.pe,
+        primaryInfo.trailingPE,
+        primaryInfo.pe,
+        fundamentals.pe,
+      ),
+      pb: firstFiniteNumber(
+        fairFundamentals.pb,
+        finalInfo.priceToBook,
+        finalInfo.pvp,
+        primaryInfo.priceToBook,
+        primaryInfo.pvp,
+        fundamentals.pb,
+      ),
+      roe: firstFiniteNumber(
+        fairFundamentals.roe,
+        finalInfo.returnOnEquity,
+        finalInfo.roe,
+        primaryInfo.returnOnEquity,
+        primaryInfo.roe,
+        fundamentals.roe,
+      ),
+      payout: firstFiniteNumber(
+        fairFundamentals.payout,
+        finalInfo.payoutRatio,
+        finalInfo.payout,
+        primaryInfo.payoutRatio,
+        primaryInfo.payout,
+        fundamentals.payout,
+      ),
+      evEbitda: firstFiniteNumber(
+        fairFundamentals.evEbitda,
+        finalInfo.enterpriseToEbitda,
+        primaryInfo.enterpriseToEbitda,
+        fundamentals.evEbitda,
+      ),
+      netMargin: firstFiniteNumber(
+        fairFundamentals.netMargin,
+        finalInfo.profitMargins,
+        finalInfo.netMargin,
+        primaryInfo.profitMargins,
+        primaryInfo.netMargin,
+        fundamentals.netMargin,
+      ),
+      errorMessage: null,
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!selectedAsset || !selectedPortfolio) return;
+    const tickerKey = String(selectedAsset.ticker || '').trim().toUpperCase();
+    if (!tickerKey) return;
+
+    const cached = assetInsightsByTickerRef.current[tickerKey];
+    if (cached && (cached.status === 'loading' || cached.status === 'ready')) return;
+
+    let cancelled = false;
+    setAssetInsightsByTicker((previous) => ({
+      ...previous,
+      [tickerKey]: {
+        ...(previous[tickerKey] || createEmptyInsightsSnapshot('loading', selectedAsset.ticker, selectedAsset.assetClass)),
+        status: 'loading',
+        errorMessage: null,
+      },
+    }));
+
+    const loadPayloads = async () => {
+      const [details, fair] = await Promise.all([
+        api.getAssetDetails(tickerKey, selectedPortfolio),
+        api.getAssetFairPrice(tickerKey, selectedPortfolio),
+      ]);
+      return { details, fair };
+    };
+
+    loadPayloads()
+      .then(async (initialPayloads) => {
+        let detailsPayload = initialPayloads.details;
+        let fairPayload = initialPayloads.fair;
+        const detailsRecord = toObjectRecord(detailsPayload);
+
+        if (detailsRecord.detail == null) {
+          await api.refreshMarketData(selectedPortfolio, selectedAsset.assetId).catch(() => null);
+          try {
+            const refreshedPayloads = await loadPayloads();
+            detailsPayload = refreshedPayloads.details;
+            fairPayload = refreshedPayloads.fair;
+          } catch {
+            // Keep the initial payload when the refresh fetch fails.
+          }
+        }
+
+        if (cancelled) return;
+        setAssetInsightsByTicker((previous) => ({
+          ...previous,
+          [tickerKey]: buildInsightsSnapshot(selectedAsset, detailsPayload, fairPayload),
+        }));
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        const fallback = createEmptyInsightsSnapshot('error', selectedAsset.ticker, selectedAsset.assetClass);
+        fallback.errorMessage = error instanceof Error ? error.message : null;
+        setAssetInsightsByTicker((previous) => ({
+          ...previous,
+          [tickerKey]: fallback,
+        }));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    buildInsightsSnapshot,
+    selectedAsset,
+    selectedPortfolio,
+  ]);
 
   const assetClassOptions = useMemo(() => {
     const options = getDropdownOptions(dropdownConfig, 'assets.form.assetClass');
@@ -428,6 +762,97 @@ const AssetsPage = () => {
     }));
   }, [assetInvestedAmountById, assetQuantitiesById, assetSourcesById, assets]);
 
+  const proventSummaryByTicker = useMemo(() => {
+    const summaries = new Map<string, AssetProventSummary>();
+    const calendar = Array.isArray(dividendsPayload?.calendar) ? dividendsPayload.calendar : [];
+    if (calendar.length === 0) return summaries;
+
+    const todayIso = getLocalIsoDate();
+    const trailing12mStart = dateMonthsBack(12);
+    const eventsByTicker = new Map<string, AssetProventEvent[]>();
+
+    calendar.forEach((rawEvent, index) => {
+      const eventRecord = (rawEvent && typeof rawEvent === 'object')
+        ? (rawEvent as Record<string, unknown>)
+        : {};
+      const details = (eventRecord.details && typeof eventRecord.details === 'object')
+        ? (eventRecord.details as Record<string, unknown>)
+        : {};
+      const ticker = String(eventRecord.ticker || details.ticker || '').trim().toUpperCase();
+      if (!ticker) return;
+
+      const eventDate = normalizeIsoDate(
+        eventRecord.eventDate
+        || eventRecord.date
+        || details.paymentDate
+        || details.exDate
+      );
+      if (!eventDate) return;
+
+      const exDate = normalizeIsoDate(details.exDate || details.recordDate || details.dataCom);
+      const paymentDate = normalizeIsoDate(details.paymentDate) || eventDate;
+      const amountPerUnit = toNumericValue(details.value);
+      const eventType = String(eventRecord.eventType || details.rawType || details.type || '').trim() || null;
+      const source = String(eventRecord.data_source || details.value_source || '').trim() || null;
+      const sourceUrl = String(details.url || '').trim() || null;
+      const eventId = String(eventRecord.eventId || `${ticker}-${eventDate}-${eventType || index}`);
+      const status: 'paid' | 'provisioned' = eventDate < todayIso ? 'paid' : 'provisioned';
+
+      const normalizedEvent: AssetProventEvent = {
+        id: eventId,
+        ticker,
+        eventDate,
+        exDate,
+        paymentDate,
+        eventType,
+        amountPerUnit,
+        status,
+        source,
+        sourceUrl,
+      };
+      const bucket = eventsByTicker.get(ticker) || [];
+      bucket.push(normalizedEvent);
+      eventsByTicker.set(ticker, bucket);
+    });
+
+    for (const [ticker, events] of eventsByTicker.entries()) {
+      const ascendingEvents = [...events].sort((left, right) => (
+        left.eventDate.localeCompare(right.eventDate)
+      ));
+      const paidEvents = ascendingEvents.filter((event) => event.status === 'paid');
+      const paidLast12m = paidEvents.filter((event) => event.eventDate >= trailing12mStart);
+      const upcomingEvents = ascendingEvents.filter((event) => event.status === 'provisioned');
+      const nextPayment = upcomingEvents[0] || null;
+      const lastPayment = paidEvents.length > 0 ? paidEvents[paidEvents.length - 1] : null;
+      const paidPerUnit12m = paidLast12m.reduce((sum, event) => (
+        sum + (event.amountPerUnit !== null ? event.amountPerUnit : 0)
+      ), 0);
+      const sources = Array.from(
+        new Set(
+          ascendingEvents
+            .map((event) => event.source)
+            .filter((value): value is string => Boolean(value))
+        )
+      );
+
+      summaries.set(ticker, {
+        events: [...ascendingEvents].sort((left, right) => (
+          right.eventDate.localeCompare(left.eventDate)
+        )),
+        nextPaymentDate: nextPayment?.eventDate || null,
+        nextExDate: nextPayment?.exDate || null,
+        nextAmountPerUnit: nextPayment?.amountPerUnit ?? null,
+        lastPaymentDate: lastPayment?.eventDate || null,
+        lastAmountPerUnit: lastPayment?.amountPerUnit ?? null,
+        paidCount12m: paidLast12m.length,
+        paidPerUnit12m,
+        sources,
+      });
+    }
+
+    return summaries;
+  }, [dividendsPayload?.calendar]);
+
   const formatPercent = useCallback((ratio: number) => (
     `${(ratio * 100).toLocaleString(numberLocale, {
       minimumFractionDigits: 2,
@@ -657,6 +1082,60 @@ const AssetsPage = () => {
       },
     },
     {
+      key: 'provents',
+      label: t('assets.provents.column', { defaultValue: 'Provents' }),
+      sortable: true,
+      sortValue: (asset) => {
+        const summary = proventSummaryByTicker.get(String(asset.ticker || '').toUpperCase());
+        return summary?.nextPaymentDate || '';
+      },
+      render: (asset) => {
+        const summary = proventSummaryByTicker.get(String(asset.ticker || '').toUpperCase());
+        if (!summary) return t('assets.modal.noValue');
+
+        const quantity = Number(asset.quantity || 0);
+        const expectedNextCash = (
+          Number.isFinite(quantity)
+          && quantity > 0
+          && summary.nextAmountPerUnit !== null
+        )
+          ? summary.nextAmountPerUnit * quantity
+          : null;
+        const expected12mCash = (
+          Number.isFinite(quantity)
+          && quantity > 0
+          && summary.paidPerUnit12m > 0
+        )
+          ? summary.paidPerUnit12m * quantity
+          : null;
+
+        return (
+          <div className="assets-page__provents-cell">
+            <strong className="assets-page__provents-main">
+              {summary.nextPaymentDate
+                ? t('assets.provents.nextWithDate', {
+                  date: formatDate(summary.nextPaymentDate, numberLocale),
+                  defaultValue: `Next: ${formatDate(summary.nextPaymentDate, numberLocale)}`,
+                })
+                : t('assets.provents.noneUpcoming', { defaultValue: 'No upcoming' })}
+            </strong>
+            <span className="assets-page__provents-sub">
+              {summary.nextAmountPerUnit !== null
+                ? `${formatCurrency(summary.nextAmountPerUnit, asset.currency || 'BRL', numberLocale)}${expectedNextCash !== null ? ` • ${formatCurrency(expectedNextCash, asset.currency || 'BRL', numberLocale)}` : ''}`
+                : t('assets.modal.noValue')}
+            </span>
+            <span className="assets-page__provents-sub">
+              {t('assets.provents.last12m', {
+                count: summary.paidCount12m,
+                defaultValue: `${summary.paidCount12m} events (12M)`,
+              })}
+              {expected12mCash !== null ? ` • ${formatCurrency(expected12mCash, asset.currency || 'BRL', numberLocale)}` : ''}
+            </span>
+          </div>
+        );
+      },
+    },
+    {
       key: 'portfolioWeight',
       label: t('assets.portfolioWeight'),
       sortable: true,
@@ -794,6 +1273,19 @@ const AssetsPage = () => {
       if (Math.abs(balanceMinusInvested) <= Number.EPSILON) return 'neutral';
       return balanceMinusInvested > 0 ? 'positive' : 'negative';
     })();
+    const selectedProvents = proventSummaryByTicker.get(String(selectedAsset.ticker || '').toUpperCase()) || null;
+    const estimatedNextProventsCash = (() => {
+      if (!selectedProvents || selectedProvents.nextAmountPerUnit === null) return null;
+      const quantity = Number(selectedAsset.quantity || 0);
+      if (!Number.isFinite(quantity) || quantity <= 0) return null;
+      return selectedProvents.nextAmountPerUnit * quantity;
+    })();
+    const estimated12mProventsCash = (() => {
+      if (!selectedProvents || selectedProvents.paidPerUnit12m <= 0) return null;
+      const quantity = Number(selectedAsset.quantity || 0);
+      if (!Number.isFinite(quantity) || quantity <= 0) return null;
+      return selectedProvents.paidPerUnit12m * quantity;
+    })();
 
     return [
       {
@@ -906,8 +1398,97 @@ const AssetsPage = () => {
           },
         ],
       },
+      {
+        key: 'provents',
+        title: t('assets.modal.sections.provents', { defaultValue: 'Provents & Calendar' }),
+        columns: 2,
+        fields: [
+          {
+            key: 'nextPaymentDate',
+            label: t('assets.modal.provents.nextPaymentDate', { defaultValue: 'Next Payment' }),
+            value: selectedProvents?.nextPaymentDate
+              ? formatDate(selectedProvents.nextPaymentDate, numberLocale)
+              : formatDetailValue(null),
+          },
+          {
+            key: 'nextExDate',
+            label: t('assets.modal.provents.nextExDate', { defaultValue: 'Next Ex-Date' }),
+            value: selectedProvents?.nextExDate
+              ? formatDate(selectedProvents.nextExDate, numberLocale)
+              : formatDetailValue(null),
+          },
+          {
+            key: 'nextPerUnit',
+            label: t('assets.modal.provents.nextPerUnit', { defaultValue: 'Next Per Unit' }),
+            value: selectedProvents?.nextAmountPerUnit !== null && selectedProvents?.nextAmountPerUnit !== undefined
+              ? formatCurrency(selectedProvents.nextAmountPerUnit, selectedAsset.currency || 'BRL', numberLocale)
+              : formatDetailValue(null),
+          },
+          {
+            key: 'nextExpected',
+            label: t('assets.modal.provents.nextExpected', { defaultValue: 'Next Expected Cash' }),
+            value: estimatedNextProventsCash !== null
+              ? formatCurrency(estimatedNextProventsCash, selectedAsset.currency || 'BRL', numberLocale)
+              : formatDetailValue(null),
+          },
+          {
+            key: 'lastPaymentDate',
+            label: t('assets.modal.provents.lastPaymentDate', { defaultValue: 'Last Payment' }),
+            value: selectedProvents?.lastPaymentDate
+              ? formatDate(selectedProvents.lastPaymentDate, numberLocale)
+              : formatDetailValue(null),
+          },
+          {
+            key: 'lastPerUnit',
+            label: t('assets.modal.provents.lastPerUnit', { defaultValue: 'Last Per Unit' }),
+            value: selectedProvents?.lastAmountPerUnit !== null && selectedProvents?.lastAmountPerUnit !== undefined
+              ? formatCurrency(selectedProvents.lastAmountPerUnit, selectedAsset.currency || 'BRL', numberLocale)
+              : formatDetailValue(null),
+          },
+          {
+            key: 'paidEvents12m',
+            label: t('assets.modal.provents.paidEvents12m', { defaultValue: 'Paid Events (12M)' }),
+            value: selectedProvents?.paidCount12m !== undefined
+              ? selectedProvents.paidCount12m.toLocaleString(numberLocale)
+              : formatDetailValue(null),
+          },
+          {
+            key: 'paidPerUnit12m',
+            label: t('assets.modal.provents.paidPerUnit12m', { defaultValue: 'Paid Per Unit (12M)' }),
+            value: selectedProvents && selectedProvents.paidPerUnit12m > 0
+              ? formatCurrency(selectedProvents.paidPerUnit12m, selectedAsset.currency || 'BRL', numberLocale)
+              : formatDetailValue(null),
+          },
+          {
+            key: 'estimatedCash12m',
+            label: t('assets.modal.provents.estimatedCash12m', { defaultValue: 'Estimated Cash (12M)' }),
+            value: estimated12mProventsCash !== null
+              ? formatCurrency(estimated12mProventsCash, selectedAsset.currency || 'BRL', numberLocale)
+              : formatDetailValue(null),
+          },
+          {
+            key: 'sources',
+            label: t('assets.modal.provents.sources', { defaultValue: 'Sources' }),
+            value: selectedProvents && selectedProvents.sources.length > 0
+              ? selectedProvents.sources.join(', ')
+              : formatDetailValue(null),
+          },
+        ],
+      },
     ];
-  }, [averageCostByAssetId, currentQuotesByAssetId, formatAssetQuantity, formatCountryDetail, formatDetailValue, formatSignedCurrency, numberLocale, portfolioMarketValueByAssetId, selectedAsset, t]);
+  }, [
+    averageCostByAssetId,
+    currentQuotesByAssetId,
+    formatAssetQuantity,
+    formatCountryDetail,
+    formatDetailValue,
+    formatSignedCurrency,
+    numberLocale,
+    portfolioMarketValueByAssetId,
+    proventSummaryByTicker,
+    selectedAsset,
+    t,
+  ]);
 
   const selectedAssetWeightMetrics = useMemo(() => {
     if (!selectedAsset) return null;
@@ -1039,6 +1620,8 @@ const AssetsPage = () => {
   const assetDetailsExtraContent = useMemo(() => {
     if (!selectedAsset) return null;
     const weightMetrics = selectedAssetWeightMetrics;
+    const selectedProvents = proventSummaryByTicker.get(String(selectedAsset.ticker || '').toUpperCase()) || null;
+    const proventTimeline = selectedProvents?.events || [];
     const ringRadius = 44;
     const ringCircumference = 2 * Math.PI * ringRadius;
     const ringOffsetFor = (ratio: number) => ringCircumference * (1 - Math.max(0, Math.min(1, ratio)));
@@ -1112,6 +1695,63 @@ const AssetsPage = () => {
             </div>
           </div>
         ) : null}
+
+        <div className="assets-page__provents-history">
+          <h3>{t('assets.modal.provents.title', { defaultValue: 'Provents & Calendar' })}</h3>
+          {proventTimeline.length === 0 ? (
+            <p className="assets-page__history-empty">
+              {t('assets.modal.provents.empty', { defaultValue: 'No provent events found for this asset.' })}
+            </p>
+          ) : (
+            <div className="assets-page__provents-table-wrap">
+              <table className="assets-page__provents-table">
+                <thead>
+                  <tr>
+                    <th>{t('assets.modal.provents.timeline.date', { defaultValue: 'Date' })}</th>
+                    <th>{t('assets.modal.provents.timeline.status', { defaultValue: 'Status' })}</th>
+                    <th>{t('assets.modal.provents.timeline.type', { defaultValue: 'Type' })}</th>
+                    <th>{t('assets.modal.provents.timeline.perUnit', { defaultValue: 'Per Unit' })}</th>
+                    <th>{t('assets.modal.provents.timeline.exDate', { defaultValue: 'Ex-Date' })}</th>
+                    <th>{t('assets.modal.provents.timeline.source', { defaultValue: 'Source' })}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {proventTimeline.slice(0, 24).map((event) => (
+                    <tr key={`${event.id}-${event.eventDate}`}>
+                      <td>{formatDate(event.eventDate, numberLocale)}</td>
+                      <td>
+                        <span className={`assets-page__provent-status assets-page__provent-status--${event.status}`}>
+                          {event.status === 'paid'
+                            ? t('assets.modal.provents.statuses.paid', { defaultValue: 'Paid' })
+                            : t('assets.modal.provents.statuses.provisioned', { defaultValue: 'Provisioned' })}
+                        </span>
+                      </td>
+                      <td>{event.eventType || '-'}</td>
+                      <td>
+                        {event.amountPerUnit !== null
+                          ? formatCurrency(event.amountPerUnit, selectedAsset.currency || 'BRL', numberLocale)
+                          : '-'}
+                      </td>
+                      <td>{event.exDate ? formatDate(event.exDate, numberLocale) : '-'}</td>
+                      <td>
+                        {event.sourceUrl ? (
+                          <a
+                            href={event.sourceUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="assets-page__provents-source-link"
+                          >
+                            {event.source || '-'}
+                          </a>
+                        ) : (event.source || '-')}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
 
         <h3>{t('assets.modal.history.title')}</h3>
 
@@ -1276,7 +1916,7 @@ const AssetsPage = () => {
         )}
       </div>
     );
-  }, [assetRows, assetTradeHistoryChart, assetTradeHistoryRows, assetTradeHistoryStats, currentValueByAssetId, formatAssetQuantity, formatPercent, numberLocale, selectedAsset, selectedAssetWeightMetrics, selectedHistoryPoint, t]);
+  }, [assetTradeHistoryChart, assetTradeHistoryRows, assetTradeHistoryStats, formatAssetQuantity, formatPercent, numberLocale, proventSummaryByTicker, selectedAsset, selectedAssetWeightMetrics, selectedHistoryPoint, t]);
 
   return (
     <Layout>
@@ -1320,8 +1960,9 @@ const AssetsPage = () => {
             searchPlaceholder={t('assets.filters.searchPlaceholder')}
             searchTerm={searchTerm}
             onSearchTermChange={setSearchTerm}
-            matchesSearch={(asset, normalizedSearch) =>
-              [
+            matchesSearch={(asset, normalizedSearch) => {
+              const proventSummary = proventSummaryByTicker.get(String(asset.ticker || '').toUpperCase());
+              return [
                 asset.ticker,
                 asset.name,
                 asset.quantity,
@@ -1333,11 +1974,14 @@ const AssetsPage = () => {
                 asset.currency,
                 asset.status,
                 asset.source,
+                proventSummary?.nextPaymentDate || '',
+                proventSummary?.lastPaymentDate || '',
+                proventSummary?.sources.join(' ') || '',
               ]
                 .join(' ')
                 .toLowerCase()
-                .includes(normalizedSearch)
-            }
+                .includes(normalizedSearch);
+            }}
             filters={filters}
             itemsPerPage={itemsPerPage}
             onItemsPerPageChange={setItemsPerPage}

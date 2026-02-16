@@ -125,7 +125,7 @@ class AssetMarketDataService {
 					: null,
 				primary_payload: primarySource?.raw || null,
 				final_payload: selected?.raw || null,
-				fallback_trace: selected?.fallback_trace || [],
+				fallback_trace: selected?.fallback_trace || selected?.raw?.fallback_attempts || [],
 			},
 		};
 

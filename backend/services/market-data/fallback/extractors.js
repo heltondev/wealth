@@ -21,12 +21,51 @@ const extractMetaContent = (html, propertyName) => {
 	return match?.[1] ? normalizeWhitespace(match[1]) : null;
 };
 
+const hasGroupedThousands = (value, separator) => {
+	if (!value || !separator) return false;
+	const escaped = separator === '.' ? '\\.' : separator;
+	const groupedPattern = new RegExp(`^\\d{1,3}(?:${escaped}\\d{3})+$`);
+	return groupedPattern.test(value);
+};
+
+const normalizeNumberToken = (token) => {
+	const trimmed = String(token || '').trim();
+	if (!trimmed) return null;
+
+	const sign = trimmed.startsWith('-') ? '-' : '';
+	const unsigned = trimmed.replace(/^[-+]/, '');
+	const commaIndex = unsigned.lastIndexOf(',');
+	const dotIndex = unsigned.lastIndexOf('.');
+
+	let decimalSeparator = null;
+	if (commaIndex >= 0 && dotIndex >= 0) {
+		decimalSeparator = commaIndex > dotIndex ? ',' : '.';
+	} else if (commaIndex >= 0) {
+		decimalSeparator = hasGroupedThousands(unsigned, ',') ? null : ',';
+	} else if (dotIndex >= 0) {
+		decimalSeparator = hasGroupedThousands(unsigned, '.') ? null : '.';
+	}
+
+	let normalized = unsigned;
+	if (decimalSeparator) {
+		const thousandsSeparator = decimalSeparator === ',' ? '.' : ',';
+		const thousandsPattern = new RegExp(`\\${thousandsSeparator}`, 'g');
+		normalized = normalized.replace(thousandsPattern, '');
+		normalized = normalized.replace(decimalSeparator, '.');
+	} else {
+		normalized = normalized.replace(/[.,]/g, '');
+	}
+
+	return `${sign}${normalized}`;
+};
+
 const extractFirstNumber = (value) => {
 	if (value === undefined || value === null) return null;
-	const normalized = String(value).replace(/\./g, '').replace(',', '.');
-	const match = normalized.match(/-?\d+(?:\.\d+)?/);
+	const source = String(value);
+	const match = source.match(/[-+]?\d[\d.,]*/);
 	if (!match) return null;
-	return toNumberOrNull(match[0]);
+	const normalized = normalizeNumberToken(match[0]);
+	return toNumberOrNull(normalized);
 };
 
 const extractByRegex = (html, patterns) => {

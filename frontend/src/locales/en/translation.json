@@ -148,6 +148,12 @@
     "currency": "Currency",
     "status": "Status",
     "actions": "Actions",
+    "provents": {
+      "column": "Provents",
+      "nextWithDate": "Next: {{date}}",
+      "noneUpcoming": "No upcoming",
+      "last12m": "{{count}} events (12M)"
+    },
     "empty": "No assets yet. Add your first asset to start tracking.",
     "emptyFiltered": "No assets match the current filters.",
     "filters": {
@@ -182,6 +188,8 @@
       "sections": {
         "overview": "Overview",
         "market": "Market",
+        "insights": "Fundamentals & Fair Value",
+        "provents": "Provents & Calendar",
         "metadata": "Metadata",
         "raw": "Raw Payload"
       },
@@ -261,6 +269,63 @@
         "assetValue": "Asset Value",
         "portfolioTotal": "Portfolio Total",
         "classTotal": "Class Total"
+      },
+      "insights": {
+        "unavailable": "Unavailable",
+        "source": "Data Source",
+        "fetchedAt": "Last Sync",
+        "groups": {
+          "valuation": "Valuation",
+          "fundamentals": "Fundamentals",
+          "profile": "Company Profile",
+          "source": "Data Quality"
+        },
+        "sector": "Sector",
+        "industry": "Industry / Segment",
+        "marketCap": "Market Cap",
+        "averageVolume": "Avg Volume",
+        "currentPrice": "Current Price",
+        "fairPrice": "Fair Price",
+        "marginSafety": "Margin of Safety",
+        "pe": "P/L",
+        "pb": "P/VP",
+        "roe": "ROE",
+        "payout": "Payout",
+        "evEbitda": "EV/EBITDA",
+        "netMargin": "Net Margin",
+        "links": {
+          "label": "External Sources",
+          "statusInvest": "Status Invest",
+          "b3": "B3",
+          "clubeFii": "Clube FII",
+          "fiis": "FIIs.com.br"
+        }
+      },
+      "provents": {
+        "title": "Provents & Calendar",
+        "empty": "No provent events found for this asset.",
+        "nextPaymentDate": "Next Payment",
+        "nextExDate": "Next Ex-Date",
+        "nextPerUnit": "Next Per Unit",
+        "nextExpected": "Next Expected Cash",
+        "lastPaymentDate": "Last Payment",
+        "lastPerUnit": "Last Per Unit",
+        "paidEvents12m": "Paid Events (12M)",
+        "paidPerUnit12m": "Paid Per Unit (12M)",
+        "estimatedCash12m": "Estimated Cash (12M)",
+        "sources": "Sources",
+        "statuses": {
+          "paid": "Paid",
+          "provisioned": "Provisioned"
+        },
+        "timeline": {
+          "date": "Date",
+          "status": "Status",
+          "type": "Type",
+          "perUnit": "Per Unit",
+          "exDate": "Ex-Date",
+          "source": "Source"
+        }
       }
     },
     "detail": {

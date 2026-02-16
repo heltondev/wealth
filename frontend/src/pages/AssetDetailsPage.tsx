@@ -39,6 +39,29 @@ type AssetPriceSeriesPoint = {
 };
 
 type ChartPeriodPreset = 'MAX' | '5A' | '2A' | '1A' | '6M' | '3M' | '1M' | 'CUSTOM';
+type AssetInsightsSnapshot = {
+  status: 'loading' | 'ready' | 'error';
+  source: string | null;
+  fetchedAt: string | null;
+  sector: string | null;
+  industry: string | null;
+  marketCap: number | null;
+  averageVolume: number | null;
+  currentPrice: number | null;
+  fairPrice: number | null;
+  marginOfSafetyPct: number | null;
+  pe: number | null;
+  pb: number | null;
+  roe: number | null;
+  payout: number | null;
+  evEbitda: number | null;
+  netMargin: number | null;
+  statusInvestUrl: string | null;
+  b3Url: string | null;
+  clubeFiiUrl: string | null;
+  fiisUrl: string | null;
+  errorMessage: string | null;
+};
 
 const COUNTRY_FLAG_MAP: Record<string, string> = {
   BR: '🇧🇷',
@@ -70,6 +93,90 @@ const toIsoDate = (value: string) => {
   if (!Number.isFinite(parsed.getTime())) return null;
   return parsed.toISOString().slice(0, 10);
 };
+
+const toNumericValue = (value: unknown): number | null => {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string' && value.trim() === '') return null;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const toObjectRecord = (value: unknown): Record<string, unknown> => (
+  value && typeof value === 'object' ? value as Record<string, unknown> : {}
+);
+
+const toNonEmptyString = (value: unknown): string | null => {
+  const text = String(value || '').trim();
+  return text || null;
+};
+
+const firstFiniteNumber = (...values: unknown[]): number | null => {
+  for (const candidate of values) {
+    const numeric = toNumericValue(candidate);
+    if (numeric !== null) return numeric;
+  }
+  return null;
+};
+
+const normalizeRatioMetric = (value: number | null): number | null => {
+  if (value === null || !Number.isFinite(value)) return null;
+  return Math.abs(value) > 1.5 ? value / 100 : value;
+};
+
+const normalizePercentValueToRatio = (value: number | null): number | null => {
+  if (value === null || !Number.isFinite(value)) return null;
+  return Math.abs(value) > 1 ? value / 100 : value;
+};
+
+const toTickerSlug = (ticker: string): string => (
+  String(ticker || '')
+    .toLowerCase()
+    .replace(/\.sa$/i, '')
+    .replace(/[^a-z0-9]/g, '')
+);
+
+const buildAssetExternalLinks = (ticker: string, assetClass: string) => {
+  const normalizedTicker = String(ticker || '').toUpperCase();
+  const slug = toTickerSlug(normalizedTicker);
+  const isFii = String(assetClass || '').toLowerCase() === 'fii';
+
+  return {
+    statusInvestUrl: slug
+      ? `https://statusinvest.com.br/${isFii ? 'fundos-imobiliarios' : 'acoes'}/${slug}`
+      : null,
+    b3Url: isFii
+      ? 'https://www.b3.com.br/pt_br/produtos-e-servicos/negociacao/renda-variavel/fundos-de-investimentos/fii/fiis-listados/'
+      : null,
+    clubeFiiUrl: isFii && slug ? `https://www.clubefii.com.br/fii/${slug}` : null,
+    fiisUrl: isFii && slug ? `https://fiis.com.br/${slug}/` : null,
+  };
+};
+
+const createEmptyInsightsSnapshot = (
+  status: AssetInsightsSnapshot['status'],
+  ticker: string,
+  assetClass: string,
+): AssetInsightsSnapshot => ({
+  status,
+  source: null,
+  fetchedAt: null,
+  sector: null,
+  industry: null,
+  marketCap: null,
+  averageVolume: null,
+  currentPrice: null,
+  fairPrice: null,
+  marginOfSafetyPct: null,
+  pe: null,
+  pb: null,
+  roe: null,
+  payout: null,
+  evEbitda: null,
+  netMargin: null,
+  ...buildAssetExternalLinks(ticker, assetClass),
+  errorMessage: null,
+});
 
 const addDaysToIsoDate = (date: string, days: number): string => {
   const parsed = new Date(`${date}T00:00:00Z`);
@@ -122,6 +229,7 @@ const AssetDetailsPage = () => {
   const [chartPeriod, setChartPeriod] = useState<ChartPeriodPreset>('MAX');
   const [customRangeStart, setCustomRangeStart] = useState('');
   const [customRangeEnd, setCustomRangeEnd] = useState('');
+  const [assetInsights, setAssetInsights] = useState<AssetInsightsSnapshot | null>(null);
 
   const numberLocale = i18n.language?.startsWith('pt') ? 'pt-BR' : 'en-US';
 
@@ -160,6 +268,14 @@ const AssetDetailsPage = () => {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     })}%`
+  ), [numberLocale]);
+
+  const formatCompactNumber = useCallback((value: number) => (
+    value.toLocaleString(numberLocale, {
+      maximumFractionDigits: 2,
+      notation: 'compact',
+      compactDisplay: 'short',
+    })
   ), [numberLocale]);
 
   const formatCountryDetail = useCallback((country: string) =>
@@ -299,6 +415,93 @@ const AssetDetailsPage = () => {
     };
   }, [assetId, assetInvestedAmountById, assetQuantitiesById, assetSourcesById, assets]);
 
+  const buildInsightsSnapshot = useCallback((asset: AssetRow, detailsPayload: unknown, fairPayload: unknown): AssetInsightsSnapshot => {
+    const details = toObjectRecord(detailsPayload);
+    const fair = toObjectRecord(fairPayload);
+    const detail = toObjectRecord(details.detail);
+    const quote = toObjectRecord(detail.quote);
+    const fundamentals = toObjectRecord(detail.fundamentals);
+    const raw = toObjectRecord(detail.raw);
+    const finalPayload = toObjectRecord(raw.final_payload);
+    const primaryPayload = toObjectRecord(raw.primary_payload);
+    const finalInfo = toObjectRecord(finalPayload.info);
+    const primaryInfo = toObjectRecord(primaryPayload.info);
+    const latestPrice = toObjectRecord(details.latest_price);
+    const fairFundamentals = toObjectRecord(fair.fundamentals);
+
+    return {
+      ...createEmptyInsightsSnapshot('ready', asset.ticker, asset.assetClass),
+      status: 'ready',
+      source: toNonEmptyString(detail.data_source) || toNonEmptyString(latestPrice.source),
+      fetchedAt: toNonEmptyString(details.fetched_at) || toNonEmptyString(detail.fetched_at) || toNonEmptyString(fair.fetched_at),
+      sector: toNonEmptyString(finalInfo.sector) || toNonEmptyString(primaryInfo.sector) || toNonEmptyString(fundamentals.sector),
+      industry: toNonEmptyString(finalInfo.industry)
+        || toNonEmptyString(finalInfo.segment)
+        || toNonEmptyString(primaryInfo.industry)
+        || toNonEmptyString(primaryInfo.segment)
+        || toNonEmptyString(fundamentals.industry),
+      marketCap: firstFiniteNumber(finalInfo.marketCap, primaryInfo.marketCap, quote.marketCap, latestPrice.marketCap),
+      averageVolume: firstFiniteNumber(
+        finalInfo.averageVolume,
+        finalInfo.averageDailyVolume10Day,
+        primaryInfo.averageVolume,
+        primaryInfo.averageDailyVolume10Day,
+        quote.volume,
+        latestPrice.volume,
+      ),
+      currentPrice: firstFiniteNumber(fair.current_price, latestPrice.close, quote.currentPrice, asset.currentPrice),
+      fairPrice: firstFiniteNumber(fair.fair_price),
+      marginOfSafetyPct: firstFiniteNumber(fair.margin_of_safety_pct),
+      pe: firstFiniteNumber(
+        fairFundamentals.pe,
+        finalInfo.trailingPE,
+        finalInfo.pe,
+        primaryInfo.trailingPE,
+        primaryInfo.pe,
+        fundamentals.pe,
+      ),
+      pb: firstFiniteNumber(
+        fairFundamentals.pb,
+        finalInfo.priceToBook,
+        finalInfo.pvp,
+        primaryInfo.priceToBook,
+        primaryInfo.pvp,
+        fundamentals.pb,
+      ),
+      roe: firstFiniteNumber(
+        fairFundamentals.roe,
+        finalInfo.returnOnEquity,
+        finalInfo.roe,
+        primaryInfo.returnOnEquity,
+        primaryInfo.roe,
+        fundamentals.roe,
+      ),
+      payout: firstFiniteNumber(
+        fairFundamentals.payout,
+        finalInfo.payoutRatio,
+        finalInfo.payout,
+        primaryInfo.payoutRatio,
+        primaryInfo.payout,
+        fundamentals.payout,
+      ),
+      evEbitda: firstFiniteNumber(
+        fairFundamentals.evEbitda,
+        finalInfo.enterpriseToEbitda,
+        primaryInfo.enterpriseToEbitda,
+        fundamentals.evEbitda,
+      ),
+      netMargin: firstFiniteNumber(
+        fairFundamentals.netMargin,
+        finalInfo.profitMargins,
+        finalInfo.netMargin,
+        primaryInfo.profitMargins,
+        primaryInfo.netMargin,
+        fundamentals.netMargin,
+      ),
+      errorMessage: null,
+    };
+  }, []);
+
   const assetRows = useMemo<AssetRow[]>(() => {
     return assets.map((asset) => {
       const labels = new Set<string>();
@@ -371,14 +574,65 @@ const AssetDetailsPage = () => {
     setChartPeriod('MAX');
     setCustomRangeStart('');
     setCustomRangeEnd('');
-  }, [selectedAsset?.assetId]);
+    if (selectedAsset) {
+      setAssetInsights(createEmptyInsightsSnapshot('loading', selectedAsset.ticker, selectedAsset.assetClass));
+    } else {
+      setAssetInsights(null);
+    }
+  }, [selectedAsset]);
+
+  useEffect(() => {
+    if (!selectedAsset || !portfolioId) return;
+    let cancelled = false;
+
+    const loadPayloads = async () => {
+      const [details, fair] = await Promise.all([
+        api.getAssetDetails(selectedAsset.ticker, portfolioId),
+        api.getAssetFairPrice(selectedAsset.ticker, portfolioId),
+      ]);
+      return { details, fair };
+    };
+
+    loadPayloads()
+      .then(async (initialPayloads) => {
+        let detailsPayload = initialPayloads.details;
+        let fairPayload = initialPayloads.fair;
+        const detailsRecord = toObjectRecord(detailsPayload);
+
+        if (detailsRecord.detail == null) {
+          await api.refreshMarketData(portfolioId, selectedAsset.assetId).catch(() => null);
+          try {
+            const refreshedPayloads = await loadPayloads();
+            detailsPayload = refreshedPayloads.details;
+            fairPayload = refreshedPayloads.fair;
+          } catch {
+            // Keep initial payload when refresh fetch fails.
+          }
+        }
+
+        if (cancelled) return;
+        setAssetInsights(buildInsightsSnapshot(selectedAsset, detailsPayload, fairPayload));
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        const fallback = createEmptyInsightsSnapshot('error', selectedAsset.ticker, selectedAsset.assetClass);
+        fallback.errorMessage = error instanceof Error ? error.message : null;
+        setAssetInsights(fallback);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [buildInsightsSnapshot, portfolioId, selectedAsset]);
 
   useEffect(() => {
     if (!selectedAsset || !portfolioId) return;
     let cancelled = false;
 
     const directCurrentPrice = Number(selectedAsset.currentPrice);
-    if (Number.isFinite(directCurrentPrice)) {
+    const quantity = Number(selectedAsset.quantity);
+    const hasOpenPosition = Number.isFinite(quantity) && Math.abs(quantity) > Number.EPSILON;
+    if (Number.isFinite(directCurrentPrice) && (!hasOpenPosition || Math.abs(directCurrentPrice) > Number.EPSILON)) {
       setCurrentQuote(directCurrentPrice);
     } else {
       api.getPriceAtDate(portfolioId, selectedAsset.ticker, new Date().toISOString().slice(0, 10))
@@ -470,14 +724,23 @@ const AssetDetailsPage = () => {
     if (!selectedAsset) return null;
     if (typeof currentQuote === 'number' && Number.isFinite(currentQuote)) return currentQuote;
 
+    const quantity = Number(selectedAsset.quantity);
+    const hasOpenPosition = Number.isFinite(quantity) && Math.abs(quantity) > Number.EPSILON;
     const cachedQuote = metrics?.currentQuotes?.[selectedAsset.assetId];
-    if (typeof cachedQuote === 'number' && Number.isFinite(cachedQuote)) return cachedQuote;
+    if (
+      typeof cachedQuote === 'number'
+      && Number.isFinite(cachedQuote)
+      && (!hasOpenPosition || Math.abs(cachedQuote) > Number.EPSILON)
+    ) {
+      return cachedQuote;
+    }
 
     const directCurrentPrice = Number(selectedAsset.currentPrice);
-    if (Number.isFinite(directCurrentPrice)) return directCurrentPrice;
+    if (Number.isFinite(directCurrentPrice) && (!hasOpenPosition || Math.abs(directCurrentPrice) > Number.EPSILON)) {
+      return directCurrentPrice;
+    }
 
     const directCurrentValue = Number(selectedAsset.currentValue);
-    const quantity = Number(selectedAsset.quantity);
     if (!Number.isFinite(directCurrentValue) || !Number.isFinite(quantity)) return null;
     if (Math.abs(quantity) <= Number.EPSILON) return null;
     return directCurrentValue / quantity;
@@ -922,6 +1185,222 @@ const AssetDetailsPage = () => {
     ];
   }, [balanceMinusInvested, formatCountryDetail, formatDetailValue, formatSignedCurrency, positionStatus, quoteVsAverage, selectedAsset, t]);
 
+  const insightsLinks = useMemo(() => {
+    if (!assetInsights || assetInsights.status !== 'ready') return [];
+
+    const links = [
+      {
+        key: 'status-invest',
+        label: t('assets.modal.insights.links.statusInvest', { defaultValue: 'Status Invest' }),
+        href: assetInsights.statusInvestUrl,
+      },
+      {
+        key: 'b3',
+        label: t('assets.modal.insights.links.b3', { defaultValue: 'B3' }),
+        href: assetInsights.b3Url,
+      },
+      {
+        key: 'clube-fii',
+        label: t('assets.modal.insights.links.clubeFii', { defaultValue: 'Clube FII' }),
+        href: assetInsights.clubeFiiUrl,
+      },
+      {
+        key: 'fiis',
+        label: t('assets.modal.insights.links.fiis', { defaultValue: 'FIIs.com.br' }),
+        href: assetInsights.fiisUrl,
+      },
+    ];
+
+    return links.filter((entry): entry is { key: string; label: string; href: string } => Boolean(entry.href));
+  }, [assetInsights, t]);
+
+  const insightsGroups = useMemo(() => {
+    if (!selectedAsset) return [];
+
+    const renderInsightsValue = (value: React.ReactNode) => {
+      if (!assetInsights || assetInsights.status === 'loading') return t('common.loading');
+      if (assetInsights.status === 'error') {
+        return t('assets.modal.insights.unavailable', { defaultValue: 'Unavailable' });
+      }
+      return value;
+    };
+
+    const formatRatioAsPercent = (value: number | null, signed = false) => {
+      const normalized = normalizeRatioMetric(value);
+      if (normalized === null) return formatDetailValue(null);
+      return signed
+        ? formatSignedPercent(normalized * 100)
+        : formatPercent(normalized);
+    };
+
+    const marginOfSafetyValue = (() => {
+      if (!assetInsights || assetInsights.status !== 'ready') return renderInsightsValue(formatDetailValue(null));
+      const ratio = normalizePercentValueToRatio(assetInsights.marginOfSafetyPct);
+      if (ratio === null) return formatDetailValue(null);
+      const trend = Math.abs(ratio) <= Number.EPSILON
+        ? 'neutral'
+        : ratio > 0
+          ? 'positive'
+          : 'negative';
+      return (
+        <span className={`assets-page__delta assets-page__delta--${trend}`}>
+          {formatSignedPercent(ratio * 100)}
+        </span>
+      );
+    })();
+
+    return [
+      {
+        key: 'valuation',
+        title: t('assets.modal.insights.groups.valuation', { defaultValue: 'Valuation' }),
+        fields: [
+          {
+            key: 'fairPrice',
+            label: t('assets.modal.insights.fairPrice', { defaultValue: 'Fair Price' }),
+            value: renderInsightsValue(
+              assetInsights?.fairPrice != null
+                ? formatCurrency(assetInsights.fairPrice, selectedAsset.currency || 'BRL', numberLocale)
+                : formatDetailValue(null)
+            ),
+          },
+          {
+            key: 'marginSafety',
+            label: t('assets.modal.insights.marginSafety', { defaultValue: 'Margin of Safety' }),
+            value: marginOfSafetyValue,
+          },
+          {
+            key: 'pe',
+            label: t('assets.modal.insights.pe', { defaultValue: 'P/L' }),
+            value: renderInsightsValue(
+              assetInsights?.pe != null
+                ? assetInsights.pe.toLocaleString(numberLocale, { maximumFractionDigits: 2 })
+                : formatDetailValue(null)
+            ),
+          },
+          {
+            key: 'pb',
+            label: t('assets.modal.insights.pb', { defaultValue: 'P/VP' }),
+            value: renderInsightsValue(
+              assetInsights?.pb != null
+                ? assetInsights.pb.toLocaleString(numberLocale, { maximumFractionDigits: 2 })
+                : formatDetailValue(null)
+            ),
+          },
+        ],
+      },
+      {
+        key: 'fundamentals',
+        title: t('assets.modal.insights.groups.fundamentals', { defaultValue: 'Fundamentals' }),
+        fields: [
+          {
+            key: 'roe',
+            label: t('assets.modal.insights.roe', { defaultValue: 'ROE' }),
+            value: renderInsightsValue(formatRatioAsPercent(assetInsights?.roe ?? null, true)),
+          },
+          {
+            key: 'netMargin',
+            label: t('assets.modal.insights.netMargin', { defaultValue: 'Net Margin' }),
+            value: renderInsightsValue(formatRatioAsPercent(assetInsights?.netMargin ?? null, true)),
+          },
+          {
+            key: 'payout',
+            label: t('assets.modal.insights.payout', { defaultValue: 'Payout' }),
+            value: renderInsightsValue(formatRatioAsPercent(assetInsights?.payout ?? null)),
+          },
+          {
+            key: 'evEbitda',
+            label: t('assets.modal.insights.evEbitda', { defaultValue: 'EV/EBITDA' }),
+            value: renderInsightsValue(
+              assetInsights?.evEbitda != null
+                ? assetInsights.evEbitda.toLocaleString(numberLocale, { maximumFractionDigits: 2 })
+                : formatDetailValue(null)
+            ),
+          },
+        ],
+      },
+      {
+        key: 'profile',
+        title: t('assets.modal.insights.groups.profile', { defaultValue: 'Company Profile' }),
+        fields: [
+          {
+            key: 'sector',
+            label: t('assets.modal.insights.sector', { defaultValue: 'Sector' }),
+            value: renderInsightsValue(assetInsights?.sector || formatDetailValue(null)),
+          },
+          {
+            key: 'industry',
+            label: t('assets.modal.insights.industry', { defaultValue: 'Industry / Segment' }),
+            value: renderInsightsValue(assetInsights?.industry || formatDetailValue(null)),
+          },
+          {
+            key: 'marketCap',
+            label: t('assets.modal.insights.marketCap', { defaultValue: 'Market Cap' }),
+            value: renderInsightsValue(
+              assetInsights?.marketCap != null
+                ? formatCurrency(assetInsights.marketCap, selectedAsset.currency || 'BRL', numberLocale)
+                : formatDetailValue(null)
+            ),
+          },
+          {
+            key: 'averageVolume',
+            label: t('assets.modal.insights.averageVolume', { defaultValue: 'Avg Volume' }),
+            value: renderInsightsValue(
+              assetInsights?.averageVolume != null
+                ? formatCompactNumber(assetInsights.averageVolume)
+                : formatDetailValue(null)
+            ),
+          },
+        ],
+      },
+      {
+        key: 'source',
+        title: t('assets.modal.insights.groups.source', { defaultValue: 'Data Quality' }),
+        fields: [
+          {
+            key: 'sourceLabel',
+            label: t('assets.modal.insights.source', { defaultValue: 'Data Source' }),
+            value: renderInsightsValue(assetInsights?.source || formatDetailValue(null)),
+          },
+          {
+            key: 'fetchedAt',
+            label: t('assets.modal.insights.fetchedAt', { defaultValue: 'Last Sync' }),
+            value: renderInsightsValue(
+              assetInsights?.fetchedAt
+                ? formatDate(assetInsights.fetchedAt, numberLocale)
+                : formatDetailValue(null)
+            ),
+          },
+        ],
+      },
+    ];
+  }, [assetInsights, formatCompactNumber, formatDetailValue, formatPercent, formatSignedPercent, numberLocale, selectedAsset, t]);
+
+  const insightsLinksContent = useMemo<React.ReactNode>(() => {
+    if (!assetInsights || assetInsights.status === 'loading') return t('common.loading');
+    if (assetInsights.status === 'error') {
+      return t('assets.modal.insights.unavailable', { defaultValue: 'Unavailable' });
+    }
+    if (insightsLinks.length === 0) return formatDetailValue(null);
+
+    return (
+      <span className="assets-page__insights-links">
+        {insightsLinks.map((link, index) => (
+          <span key={link.key}>
+            <a
+              href={link.href}
+              target="_blank"
+              rel="noreferrer"
+              className="assets-page__provents-source-link"
+            >
+              {link.label}
+            </a>
+            {index < insightsLinks.length - 1 ? <span className="assets-page__insights-separator"> • </span> : null}
+          </span>
+        ))}
+      </span>
+    );
+  }, [assetInsights, formatDetailValue, insightsLinks, t]);
+
   return (
     <Layout>
       <div className="asset-details-page">
@@ -984,7 +1463,31 @@ const AssetDetailsPage = () => {
                   ))}
                 </dl>
               </section>
+
             </div>
+
+            <section className="asset-details-page__card asset-details-page__card--full asset-details-page__card--insights">
+              <h2>{t('assets.modal.sections.insights', { defaultValue: 'Fundamentals & Fair Value' })}</h2>
+              <div className="asset-details-page__insights-grid">
+                {insightsGroups.map((group) => (
+                  <article key={group.key} className="asset-details-page__insights-group">
+                    <h3>{group.title}</h3>
+                    <dl>
+                      {group.fields.map((field) => (
+                        <div key={`${group.key}-${field.key}`}>
+                          <dt>{field.label}</dt>
+                          <dd>{field.value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </article>
+                ))}
+                <article className="asset-details-page__insights-group asset-details-page__insights-group--links">
+                  <h3>{t('assets.modal.insights.links.label', { defaultValue: 'External Sources' })}</h3>
+                  <div className="asset-details-page__insights-links">{insightsLinksContent}</div>
+                </article>
+              </div>
+            </section>
 
             {selectedAssetWeightMetrics ? (
               <section className="asset-details-page__card asset-details-page__card--full">

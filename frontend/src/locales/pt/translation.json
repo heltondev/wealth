@@ -148,6 +148,12 @@
     "currency": "Moeda",
     "status": "Status",
     "actions": "Ações",
+    "provents": {
+      "column": "Proventos",
+      "nextWithDate": "Próx: {{date}}",
+      "noneUpcoming": "Sem próximos",
+      "last12m": "{{count}} eventos (12M)"
+    },
     "empty": "Nenhum ativo ainda. Adicione seu primeiro ativo para começar.",
     "emptyFiltered": "Nenhum ativo corresponde aos filtros atuais.",
     "filters": {
@@ -182,6 +188,8 @@
       "sections": {
         "overview": "Resumo",
         "market": "Mercado",
+        "insights": "Fundamentos e Preço Justo",
+        "provents": "Proventos e Calendário",
         "metadata": "Metadados",
         "raw": "Payload Bruto"
       },
@@ -261,6 +269,63 @@
         "assetValue": "Valor do Ativo",
         "portfolioTotal": "Total da Carteira",
         "classTotal": "Total da Classe"
+      },
+      "insights": {
+        "unavailable": "Indisponível",
+        "source": "Fonte dos Dados",
+        "fetchedAt": "Última Sincronização",
+        "groups": {
+          "valuation": "Valuation",
+          "fundamentals": "Fundamentos",
+          "profile": "Perfil da Empresa",
+          "source": "Qualidade dos Dados"
+        },
+        "sector": "Setor",
+        "industry": "Indústria / Segmento",
+        "marketCap": "Valor de Mercado",
+        "averageVolume": "Volume Médio",
+        "currentPrice": "Preço Atual",
+        "fairPrice": "Preço Justo",
+        "marginSafety": "Margem de Segurança",
+        "pe": "P/L",
+        "pb": "P/VP",
+        "roe": "ROE",
+        "payout": "Payout",
+        "evEbitda": "EV/EBITDA",
+        "netMargin": "Margem Líquida",
+        "links": {
+          "label": "Fontes Externas",
+          "statusInvest": "Status Invest",
+          "b3": "B3",
+          "clubeFii": "Clube FII",
+          "fiis": "FIIs.com.br"
+        }
+      },
+      "provents": {
+        "title": "Proventos e Calendário",
+        "empty": "Nenhum evento de proventos encontrado para este ativo.",
+        "nextPaymentDate": "Próximo Pagamento",
+        "nextExDate": "Próxima Data-Ex",
+        "nextPerUnit": "Próximo por Cota/Ação",
+        "nextExpected": "Próximo Caixa Esperado",
+        "lastPaymentDate": "Último Pagamento",
+        "lastPerUnit": "Último por Cota/Ação",
+        "paidEvents12m": "Eventos Pagos (12M)",
+        "paidPerUnit12m": "Pago por Cota/Ação (12M)",
+        "estimatedCash12m": "Caixa Estimado (12M)",
+        "sources": "Fontes",
+        "statuses": {
+          "paid": "Pago",
+          "provisioned": "Provisionado"
+        },
+        "timeline": {
+          "date": "Data",
+          "status": "Status",
+          "type": "Tipo",
+          "perUnit": "Por Cota/Ação",
+          "exDate": "Data-Ex",
+          "source": "Fonte"
+        }
       }
     },
     "detail": {
