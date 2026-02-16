@@ -2937,6 +2937,63 @@ const AssetDetailsPage = () => {
               </section>
             ) : null}
 
+            {selectedAssetWeightMetrics ? (
+              <section className="asset-details-page__card asset-details-page__card--full">
+                <div className="assets-page__weights">
+                  <h3>{t('assets.modal.weights.title')}</h3>
+                  <div className="assets-page__weights-grid">
+                    <article className="assets-page__weight-card">
+                      <h4>{t('assets.modal.weights.portfolio')}</h4>
+                      <div className="assets-page__weight-chart">
+                        <svg viewBox="0 0 120 120" aria-hidden="true">
+                          <circle className="assets-page__weight-ring-bg" cx="60" cy="60" r="44" />
+                          <circle
+                            className="assets-page__weight-ring assets-page__weight-ring--portfolio"
+                            cx="60"
+                            cy="60"
+                            r="44"
+                            strokeDasharray={`${2 * Math.PI * 44} ${2 * Math.PI * 44}`}
+                            strokeDashoffset={(2 * Math.PI * 44) * (1 - Math.max(0, Math.min(1, selectedAssetWeightMetrics.portfolioWeight)))}
+                          />
+                        </svg>
+                        <div className="assets-page__weight-chart-center">
+                          <strong>{formatPercent(selectedAssetWeightMetrics.portfolioWeight)}</strong>
+                        </div>
+                      </div>
+                      <div className="assets-page__weight-meta">
+                        <span>{t('assets.modal.weights.assetValue')}: <strong>{formatCurrency(selectedAssetWeightMetrics.selectedCurrentValue, selectedAsset.currency || 'BRL', numberLocale)}</strong></span>
+                        <span>{t('assets.modal.weights.portfolioTotal')}: <strong>{formatCurrency(selectedAssetWeightMetrics.portfolioTotal, selectedAsset.currency || 'BRL', numberLocale)}</strong></span>
+                      </div>
+                    </article>
+
+                    <article className="assets-page__weight-card">
+                      <h4>{t('assets.modal.weights.class', { className: t(`assets.classes.${selectedAsset.assetClass}`, { defaultValue: selectedAsset.assetClass }) })}</h4>
+                      <div className="assets-page__weight-chart">
+                        <svg viewBox="0 0 120 120" aria-hidden="true">
+                          <circle className="assets-page__weight-ring-bg" cx="60" cy="60" r="44" />
+                          <circle
+                            className="assets-page__weight-ring assets-page__weight-ring--class"
+                            cx="60"
+                            cy="60"
+                            r="44"
+                            strokeDasharray={`${2 * Math.PI * 44} ${2 * Math.PI * 44}`}
+                            strokeDashoffset={(2 * Math.PI * 44) * (1 - Math.max(0, Math.min(1, selectedAssetWeightMetrics.classWeight)))}
+                          />
+                        </svg>
+                        <div className="assets-page__weight-chart-center">
+                          <strong>{formatPercent(selectedAssetWeightMetrics.classWeight)}</strong>
+                        </div>
+                      </div>
+                      <div className="assets-page__weight-meta">
+                        <span>{t('assets.modal.weights.assetValue')}: <strong>{formatCurrency(selectedAssetWeightMetrics.selectedCurrentValue, selectedAsset.currency || 'BRL', numberLocale)}</strong></span>
+                        <span>{t('assets.modal.weights.classTotal')}: <strong>{formatCurrency(selectedAssetWeightMetrics.classTotal, selectedAsset.currency || 'BRL', numberLocale)}</strong></span>
+                      </div>
+                    </article>
+                  </div>
+                </div>
+              </section>
+            ) : null}
+
             {shouldRenderFundPortfolio ? (
               <section className="asset-details-page__card asset-details-page__card--full asset-details-page__card--portfolio">
                 <div className="asset-details-page__portfolio-header">
@@ -3397,63 +3454,6 @@ const AssetDetailsPage = () => {
               </section>
             ) : null}
             </>)}
-
-            {activeTab === 'overview' && selectedAssetWeightMetrics ? (
-              <section className="asset-details-page__card asset-details-page__card--full">
-                <div className="assets-page__weights">
-                  <h3>{t('assets.modal.weights.title')}</h3>
-                  <div className="assets-page__weights-grid">
-                    <article className="assets-page__weight-card">
-                      <h4>{t('assets.modal.weights.portfolio')}</h4>
-                      <div className="assets-page__weight-chart">
-                        <svg viewBox="0 0 120 120" aria-hidden="true">
-                          <circle className="assets-page__weight-ring-bg" cx="60" cy="60" r="44" />
-                          <circle
-                            className="assets-page__weight-ring assets-page__weight-ring--portfolio"
-                            cx="60"
-                            cy="60"
-                            r="44"
-                            strokeDasharray={`${2 * Math.PI * 44} ${2 * Math.PI * 44}`}
-                            strokeDashoffset={(2 * Math.PI * 44) * (1 - Math.max(0, Math.min(1, selectedAssetWeightMetrics.portfolioWeight)))}
-                          />
-                        </svg>
-                        <div className="assets-page__weight-chart-center">
-                          <strong>{formatPercent(selectedAssetWeightMetrics.portfolioWeight)}</strong>
-                        </div>
-                      </div>
-                      <div className="assets-page__weight-meta">
-                        <span>{t('assets.modal.weights.assetValue')}: <strong>{formatCurrency(selectedAssetWeightMetrics.selectedCurrentValue, selectedAsset.currency || 'BRL', numberLocale)}</strong></span>
-                        <span>{t('assets.modal.weights.portfolioTotal')}: <strong>{formatCurrency(selectedAssetWeightMetrics.portfolioTotal, selectedAsset.currency || 'BRL', numberLocale)}</strong></span>
-                      </div>
-                    </article>
-
-                    <article className="assets-page__weight-card">
-                      <h4>{t('assets.modal.weights.class', { className: t(`assets.classes.${selectedAsset.assetClass}`, { defaultValue: selectedAsset.assetClass }) })}</h4>
-                      <div className="assets-page__weight-chart">
-                        <svg viewBox="0 0 120 120" aria-hidden="true">
-                          <circle className="assets-page__weight-ring-bg" cx="60" cy="60" r="44" />
-                          <circle
-                            className="assets-page__weight-ring assets-page__weight-ring--class"
-                            cx="60"
-                            cy="60"
-                            r="44"
-                            strokeDasharray={`${2 * Math.PI * 44} ${2 * Math.PI * 44}`}
-                            strokeDashoffset={(2 * Math.PI * 44) * (1 - Math.max(0, Math.min(1, selectedAssetWeightMetrics.classWeight)))}
-                          />
-                        </svg>
-                        <div className="assets-page__weight-chart-center">
-                          <strong>{formatPercent(selectedAssetWeightMetrics.classWeight)}</strong>
-                        </div>
-                      </div>
-                      <div className="assets-page__weight-meta">
-                        <span>{t('assets.modal.weights.assetValue')}: <strong>{formatCurrency(selectedAssetWeightMetrics.selectedCurrentValue, selectedAsset.currency || 'BRL', numberLocale)}</strong></span>
-                        <span>{t('assets.modal.weights.classTotal')}: <strong>{formatCurrency(selectedAssetWeightMetrics.classTotal, selectedAsset.currency || 'BRL', numberLocale)}</strong></span>
-                      </div>
-                    </article>
-                  </div>
-                </div>
-              </section>
-            ) : null}
 
             {activeTab === 'history' && (<>
             <section className="asset-details-page__card asset-details-page__card--full">

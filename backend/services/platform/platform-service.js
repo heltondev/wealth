@@ -28,6 +28,9 @@ const {
 	B3FinancialStatementsProvider,
 } = require('../market-data/fallback/structured/b3-financial-statements-provider');
 const {
+	FundsExplorerProvider,
+} = require('../market-data/fallback/structured/fundsexplorer-provider');
+const {
 	buildAwsClientConfig,
 	resolveS3BucketName,
 	resolveRuntimeEnvironment,
@@ -1101,6 +1104,8 @@ class PlatformService {
 		this.statusInvestScraper = options.statusInvestScraper || new StatusInvestScraper(options);
 		this.b3FinancialStatementsProvider =
 			options.b3FinancialStatementsProvider || new B3FinancialStatementsProvider(options);
+		this.fundsExplorerProvider =
+			options.fundsExplorerProvider || new FundsExplorerProvider(options);
 		this.runtimeEnv = resolveRuntimeEnvironment();
 		this.reportsLocalDir =
 			options.reportsLocalDir ||
@@ -2933,6 +2938,19 @@ class PlatformService {
 						fund_info: readFundGeneralInfoFromPayload(payload, 'b3_direct_financials'),
 						fund_portfolio: readFundPortfolioFromPayload(payload, 'b3_direct_financials'),
 						error: payload?.raw?.error || null,
+					};
+				},
+			});
+			candidates.push({
+				source: 'fundsexplorer',
+				load: async () => {
+					const payload = await this.fundsExplorerProvider.fetch(sourceAsset);
+					return {
+						statements: createEmptyFinancialStatements(),
+						documents: [],
+						fund_info: null,
+						fund_portfolio: readFundPortfolioFromPayload(payload, 'fundsexplorer'),
+						error: null,
 					};
 				},
 			});
