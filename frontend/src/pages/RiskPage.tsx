@@ -60,6 +60,27 @@ const toTitleCase = (value: string): string =>
     .map((token) => token.charAt(0).toUpperCase() + token.slice(1))
     .join(' ');
 
+const formatAssetClassLabel = (value: string): string => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return 'Other';
+  const map: Record<string, string> = {
+    fii: 'FII',
+    fiagro: 'FIAGRO',
+    etf: 'ETF',
+    bdr: 'BDR',
+    reit: 'REIT',
+    rsu: 'RSU',
+    stock: 'Stock',
+    bond: 'Bond',
+    crypto: 'Crypto',
+    derivative: 'Derivative',
+    cash: 'Cash',
+    fund: 'Fund',
+    fixed_income: 'Fixed Income',
+  };
+  return map[normalized] || toTitleCase(normalized);
+};
+
 const parseIsoDateUtc = (value: string): Date => {
   const [yearRaw, monthRaw, dayRaw] = String(value || '').split('-');
   const year = Number(yearRaw);
@@ -77,6 +98,8 @@ const clamp = (value: number, min: number, max: number): number =>
 const isPositiveReturn = (value: number): boolean => value > RETURN_ZERO_EPSILON;
 const isNegativeReturn = (value: number): boolean => value < -RETURN_ZERO_EPSILON;
 const isNeutralReturn = (value: number): boolean => !isPositiveReturn(value) && !isNegativeReturn(value);
+
+const roundScatterValue = (value: number): number => Math.round(toNumber(value) * 10000) / 10000;
 
 const correlationCellColor = (value: number | null): string => {
   if (value === null || !Number.isFinite(value)) return 'rgba(148, 163, 184, 0.08)';
@@ -130,6 +153,20 @@ const RiskPage = () => {
         .filter(Boolean)
     )
   ), [assets]);
+
+  const activeAssetMetaByKey = useMemo(() => {
+    const map = new Map<string, { assetClass: string; currency: string }>();
+    for (const asset of assets) {
+      if (String(asset.status || 'active').toLowerCase() !== 'active') continue;
+      const assetId = String(asset.assetId || '');
+      const ticker = String(asset.ticker || '').toUpperCase();
+      const assetClass = String(asset.assetClass || 'other').toLowerCase();
+      const currency = String(asset.currency || 'BRL').toUpperCase();
+      if (assetId) map.set(`id:${assetId}`, { assetClass, currency });
+      if (ticker) map.set(`ticker:${ticker}`, { assetClass, currency });
+    }
+    return map;
+  }, [assets]);
 
   const thresholdOptions = useMemo(
     () =>
@@ -302,6 +339,118 @@ const RiskPage = () => {
     [fxBrlValue, fxForeignValue, t]
   );
 
+  const fxByClass = useMemo(() => {
+    const buckets = new Map<string, { assetClass: string; total: number; byCurrency: Record<string, number> }>();
+    const currencies = new Set<string>();
+
+    for (const row of concentrationRows) {
+      const meta = activeAssetMetaByKey.get(`id:${row.assetId}`) || activeAssetMetaByKey.get(`ticker:${row.ticker}`);
+      const currency = String(meta?.currency || 'BRL').toUpperCase();
+      const assetClass = formatAssetClassLabel(String(meta?.assetClass || 'other'));
+      currencies.add(currency);
+
+      if (!buckets.has(assetClass)) {
+        buckets.set(assetClass, { assetClass, total: 0, byCurrency: {} });
+      }
+      const current = buckets.get(assetClass)!;
+      current.total += row.marketValue;
+      current.byCurrency[currency] = toNumber(current.byCurrency[currency]) + row.marketValue;
+    }
+
+    const orderedCurrencies = Array.from(currencies)
+      .sort((left, right) => {
+        if (left === 'BRL') return -1;
+        if (right === 'BRL') return 1;
+        return left.localeCompare(right);
+      });
+
+    const rows = Array.from(buckets.values())
+      .map((bucket) => {
+        const item: Record<string, string | number> = {
+          assetClass: bucket.assetClass,
+          total: bucket.total,
+        };
+        for (const currency of orderedCurrencies) {
+          item[currency] = toNumber(bucket.byCurrency[currency]);
+        }
+        return item;
+      })
+      .sort((left, right) => toNumber(right.total) - toNumber(left.total));
+
+    const normalizedRows = rows.map((row) => {
+      const total = toNumber(row.total);
+      const normalized: Record<string, string | number> = {
+        assetClass: String(row.assetClass || ''),
+        total: 100,
+      };
+      for (const currency of orderedCurrencies) {
+        normalized[currency] = total > 0 ? (toNumber(row[currency]) / total) * 100 : 0;
+      }
+      return normalized;
+    });
+
+    return { rows, normalizedRows, currencies: orderedCurrencies };
+  }, [activeAssetMetaByKey, concentrationRows]);
+
+  const fxCurrencyColors = useMemo(() => {
+    const map = new Map<string, string>();
+    const ordered = fxByClass.currencies.length > 0
+      ? fxByClass.currencies
+      : fxRows.map((row) => row.currency);
+    for (const [index, currency] of ordered.entries()) {
+      map.set(currency, FX_COLORS[index % FX_COLORS.length]);
+    }
+    return map;
+  }, [fxByClass.currencies, fxRows]);
+
+  const fxTopContributors = useMemo(() => {
+    const rows = concentrationRows
+      .map((row) => {
+        const meta = activeAssetMetaByKey.get(`id:${row.assetId}`) || activeAssetMetaByKey.get(`ticker:${row.ticker}`);
+        const currency = String(meta?.currency || 'BRL').toUpperCase();
+        if (currency === 'BRL') return null;
+        return {
+          ticker: row.ticker,
+          assetClass: formatAssetClassLabel(String(meta?.assetClass || 'other')),
+          currency,
+          value: row.marketValue,
+          shareOfFx: fxForeignValue > 0 ? (row.marketValue / fxForeignValue) * 100 : 0,
+          shareOfPortfolio: row.weightPct,
+        };
+      })
+      .filter((row): row is {
+        ticker: string;
+        assetClass: string;
+        currency: string;
+        value: number;
+        shareOfFx: number;
+        shareOfPortfolio: number;
+      } => row !== null)
+      .sort((left, right) => right.value - left.value);
+
+    return rows;
+  }, [activeAssetMetaByKey, concentrationRows, fxForeignValue]);
+
+  const fxTopContributorsChart = useMemo(
+    () => fxTopContributors.slice(0, 10).slice().reverse(),
+    [fxTopContributors]
+  );
+
+  const fxShockRows = useMemo(() => (
+    fxRows
+      .filter((row) => row.currency !== 'BRL' && row.value > 0)
+      .map((row) => ({
+        currency: row.currency,
+        up5: row.value * 0.05,
+        down5: row.value * -0.05,
+      }))
+  ), [fxRows]);
+
+  const fxEstimatedImpactPlus5 = useMemo(
+    () => fxShockRows.reduce((sum, row) => sum + row.up5, 0),
+    [fxShockRows]
+  );
+
   const drawdownRows = useMemo(() => {
     const hasActiveSnapshot = activeTickers.size > 0;
     const volatilityByAsset = risk?.volatility_by_asset || {};
@@ -338,9 +487,49 @@ const RiskPage = () => {
     return scatterRows;
   }, [scatterFilter, scatterRows]);
 
-  const scatterPositive = scatterRowsFiltered.filter((row) => isPositiveReturn(row.returnPct));
-  const scatterNegative = scatterRowsFiltered.filter((row) => isNegativeReturn(row.returnPct));
-  const scatterNeutral = scatterRowsFiltered.filter((row) => isNeutralReturn(row.returnPct));
+  const scatterRowsPlotted = useMemo(() => {
+    const grouped = new Map<string, Array<(typeof scatterRowsFiltered)[number]>>();
+    for (const row of scatterRowsFiltered) {
+      const key = `${roundScatterValue(row.volatility)}|${roundScatterValue(row.returnPct)}`;
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key)!.push(row);
+    }
+
+    const plotted = [];
+    for (const rows of grouped.values()) {
+      if (rows.length === 1) {
+        const row = rows[0];
+        plotted.push({
+          ...row,
+          volatilityPlot: row.volatility,
+          returnPctPlot: row.returnPct,
+        });
+        continue;
+      }
+
+      // Spread exact-overlap points in small concentric rings so each ticker stays hoverable.
+      for (let index = 0; index < rows.length; index += 1) {
+        const row = rows[index];
+        const ring = Math.floor(index / 8);
+        const angle = ((index % 8) / 8) * Math.PI * 2;
+        const radiusX = 0.35 + (ring * 0.22);
+        const radiusY = 0.24 + (ring * 0.16);
+        const volatilityPlot = Math.max(0, row.volatility + (Math.cos(angle) * radiusX));
+        const returnPctPlot = row.returnPct + (Math.sin(angle) * radiusY);
+        plotted.push({
+          ...row,
+          volatilityPlot,
+          returnPctPlot,
+        });
+      }
+    }
+
+    return plotted;
+  }, [scatterRowsFiltered]);
+
+  const scatterPositive = scatterRowsPlotted.filter((row) => isPositiveReturn(row.returnPct));
+  const scatterNegative = scatterRowsPlotted.filter((row) => isNegativeReturn(row.returnPct));
+  const scatterNeutral = scatterRowsPlotted.filter((row) => isNeutralReturn(row.returnPct));
 
   const scatterFilterOptions = useMemo(
     () => RETURN_FILTERS.map((value) => ({
@@ -591,6 +780,10 @@ const RiskPage = () => {
                             : '-'}
                         </span>
                       </article>
+                      <article className="risk-fx-kpi">
+                        <span className="risk-fx-kpi__label">{t('risk.fx.estimatedImpactPlus5')}</span>
+                        <span className="risk-fx-kpi__value">{formatBrl(fxEstimatedImpactPlus5)}</span>
+                      </article>
                     </div>
 
                     <div className="risk-fx-charts">
@@ -607,7 +800,10 @@ const RiskPage = () => {
                               isAnimationActive={false}
                             >
                               {fxRows.map((entry, index) => (
-                                <Cell key={entry.currency} fill={FX_COLORS[index % FX_COLORS.length]} />
+                                <Cell
+                                  key={entry.currency}
+                                  fill={fxCurrencyColors.get(entry.currency) || FX_COLORS[index % FX_COLORS.length]}
+                                />
                               ))}
                             </Pie>
                             <Tooltip formatter={(value: number | string | undefined) => formatBrl(toNumber(value))} />
@@ -636,17 +832,170 @@ const RiskPage = () => {
                           </BarChart>
                         </ResponsiveContainer>
                       </div>
+
+                      <div className="risk-fx-chart">
+                        <h3 className="risk-fx-chart__title">{t('risk.fx.byClassChart')}</h3>
+                        {fxByClass.rows.length === 0 ? (
+                          <p className="risk-card__empty risk-card__empty--left">{t('risk.noSeries')}</p>
+                        ) : (
+                          <ResponsiveContainer width="100%" height={250}>
+                            <BarChart data={fxByClass.rows} margin={{ top: 8, right: 12, bottom: 4, left: 0 }}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.22)" />
+                              <XAxis dataKey="assetClass" stroke="var(--text-secondary)" />
+                              <YAxis
+                                stroke="var(--text-secondary)"
+                                tickFormatter={(value) => formatBrl(toNumber(value))}
+                                width={110}
+                              />
+                              <Tooltip formatter={(value: number | string | undefined) => formatBrl(toNumber(value))} />
+                              <Legend />
+                              {fxByClass.currencies.map((currency) => (
+                                <Bar
+                                  key={`fx-class-${currency}`}
+                                  dataKey={currency}
+                                  stackId="fx-class"
+                                  name={currency}
+                                  fill={fxCurrencyColors.get(currency) || '#22d3ee'}
+                                  isAnimationActive={false}
+                                />
+                              ))}
+                            </BarChart>
+                          </ResponsiveContainer>
+                        )}
+                      </div>
+
+                      <div className="risk-fx-chart">
+                        <h3 className="risk-fx-chart__title">{t('risk.fx.byClassShareChart')}</h3>
+                        {fxByClass.normalizedRows.length === 0 ? (
+                          <p className="risk-card__empty risk-card__empty--left">{t('risk.noSeries')}</p>
+                        ) : (
+                          <ResponsiveContainer width="100%" height={250}>
+                            <BarChart data={fxByClass.normalizedRows} margin={{ top: 8, right: 12, bottom: 4, left: 0 }}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.22)" />
+                              <XAxis dataKey="assetClass" stroke="var(--text-secondary)" />
+                              <YAxis
+                                stroke="var(--text-secondary)"
+                                domain={[0, 100]}
+                                tickFormatter={(value) => `${toNumber(value).toLocaleString(numberLocale, { maximumFractionDigits: 0 })}%`}
+                                width={56}
+                              />
+                              <Tooltip formatter={(value: number | string | undefined) => formatSignedPercent(toNumber(value))} />
+                              <Legend />
+                              {fxByClass.currencies.map((currency) => (
+                                <Bar
+                                  key={`fx-class-share-${currency}`}
+                                  dataKey={currency}
+                                  stackId="fx-class-share"
+                                  name={currency}
+                                  fill={fxCurrencyColors.get(currency) || '#22d3ee'}
+                                  isAnimationActive={false}
+                                />
+                              ))}
+                            </BarChart>
+                          </ResponsiveContainer>
+                        )}
+                      </div>
+
+                      <div className="risk-fx-chart">
+                        <h3 className="risk-fx-chart__title">{t('risk.fx.shockImpact')}</h3>
+                        {fxShockRows.length === 0 ? (
+                          <p className="risk-card__empty risk-card__empty--left">{t('risk.fx.noForeignExposure')}</p>
+                        ) : (
+                          <ResponsiveContainer width="100%" height={250}>
+                            <BarChart data={fxShockRows} margin={{ top: 8, right: 12, bottom: 4, left: 0 }}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.22)" />
+                              <XAxis dataKey="currency" stroke="var(--text-secondary)" />
+                              <YAxis
+                                stroke="var(--text-secondary)"
+                                tickFormatter={(value) => formatBrl(toNumber(value))}
+                                width={110}
+                              />
+                              <Tooltip formatter={(value: number | string | undefined) => formatBrl(toNumber(value))} />
+                              <Legend />
+                              <ReferenceLine y={0} stroke="rgba(148, 163, 184, 0.42)" />
+                              <Bar
+                                dataKey="up5"
+                                name={t('risk.fx.shockPlus5')}
+                                fill="#34d399"
+                                isAnimationActive={false}
+                              />
+                              <Bar
+                                dataKey="down5"
+                                name={t('risk.fx.shockMinus5')}
+                                fill="#f87171"
+                                isAnimationActive={false}
+                              />
+                            </BarChart>
+                          </ResponsiveContainer>
+                        )}
+                      </div>
+
+                      <div className="risk-fx-chart">
+                        <h3 className="risk-fx-chart__title">{t('risk.fx.topContributors')}</h3>
+                        {fxTopContributorsChart.length === 0 ? (
+                          <p className="risk-card__empty risk-card__empty--left">{t('risk.fx.noForeignExposure')}</p>
+                        ) : (
+                          <ResponsiveContainer width="100%" height={250}>
+                            <BarChart data={fxTopContributorsChart} layout="vertical" margin={{ top: 8, right: 12, bottom: 4, left: 4 }}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.22)" />
+                              <XAxis
+                                type="number"
+                                stroke="var(--text-secondary)"
+                                tickFormatter={(value) => formatBrl(toNumber(value))}
+                              />
+                              <YAxis type="category" dataKey="ticker" stroke="var(--text-secondary)" width={74} />
+                              <Tooltip formatter={(value: number | string | undefined) => formatBrl(toNumber(value))} />
+                              <Bar dataKey="value" name={t('risk.table.marketValue')} fill="#f59e0b" isAnimationActive={false} />
+                            </BarChart>
+                          </ResponsiveContainer>
+                        )}
+                      </div>
                     </div>
 
-                    <ul className="risk-fx">
-                      {fxRows.map((row) => (
-                        <li key={row.currency} className="risk-fx__item">
-                          <span className="risk-fx__currency">{row.currency}</span>
-                          <span className="risk-fx__value">{formatBrl(row.value)}</span>
-                          <span className="risk-fx__weight">{formatSignedPercent(row.weightPct)}</span>
-                        </li>
-                      ))}
-                    </ul>
+                    <div className="risk-fx-lists">
+                      <ul className="risk-fx">
+                        {fxRows.map((row) => (
+                          <li key={row.currency} className="risk-fx__item">
+                            <span className="risk-fx__currency">{row.currency}</span>
+                            <span className="risk-fx__value">{formatBrl(row.value)}</span>
+                            <span className="risk-fx__weight">{formatSignedPercent(row.weightPct)}</span>
+                          </li>
+                        ))}
+                      </ul>
+
+                      <div className="risk-table-wrapper">
+                        <table className="risk-table risk-table--compact">
+                          <thead>
+                            <tr>
+                              <th>{t('risk.table.ticker')}</th>
+                              <th>{t('risk.fx.assetClass')}</th>
+                              <th>{t('risk.fx.currency')}</th>
+                              <th>{t('risk.table.marketValue')}</th>
+                              <th>{t('risk.fx.shareOfForeign')}</th>
+                              <th>{t('risk.fx.shareOfPortfolio')}</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {fxTopContributors.length === 0 ? (
+                              <tr>
+                                <td colSpan={6}>{t('risk.fx.noForeignExposure')}</td>
+                              </tr>
+                            ) : (
+                              fxTopContributors.slice(0, 12).map((row) => (
+                                <tr key={`fx-top-${row.ticker}`}>
+                                  <td>{row.ticker}</td>
+                                  <td>{row.assetClass}</td>
+                                  <td>{row.currency}</td>
+                                  <td>{formatBrl(row.value)}</td>
+                                  <td>{formatSignedPercent(row.shareOfFx)}</td>
+                                  <td>{formatSignedPercent(row.shareOfPortfolio)}</td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
                   </>
                 )}
                 </section>
@@ -778,14 +1127,14 @@ const RiskPage = () => {
                         <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.22)" />
                         <XAxis
                           type="number"
-                          dataKey="volatility"
+                          dataKey="volatilityPlot"
                           name={t('risk.table.volatility')}
                           stroke="var(--text-secondary)"
                           tickFormatter={(value) => `${toNumber(value).toLocaleString(numberLocale, { maximumFractionDigits: 0 })}%`}
                         />
                         <YAxis
                           type="number"
-                          dataKey="returnPct"
+                          dataKey="returnPctPlot"
                           name={t('risk.table.returnPct')}
                           stroke="var(--text-secondary)"
                           tickFormatter={(value) => `${toNumber(value).toLocaleString(numberLocale, { maximumFractionDigits: 0 })}%`}

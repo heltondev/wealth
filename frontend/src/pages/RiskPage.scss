@@ -328,6 +328,20 @@
   }
 }
 
+.risk-fx-lists {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: $spacing-sm;
+
+  @media (min-width: $breakpoint-desktop) {
+    grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+  }
+
+  .risk-table-wrapper {
+    max-height: 330px;
+  }
+}
+
 .risk-fx-summary {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
