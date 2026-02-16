@@ -1,0 +1,323 @@
+@use '../styles/variables' as *;
+@use '../styles/mixins' as *;
+
+.compare-page {
+  @include page-container;
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-md;
+
+  &__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: $spacing-md;
+    flex-wrap: wrap;
+  }
+
+  &__title {
+    margin: 0;
+    font-size: 1.8rem;
+  }
+
+  &__subtitle {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+  }
+
+  &__filters {
+    display: flex;
+    align-items: center;
+    gap: $spacing-sm;
+    flex-wrap: wrap;
+    padding: 0.4rem;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    border-radius: 14px;
+    background:
+      linear-gradient(135deg, rgba(16, 185, 129, 0.12), rgba(15, 23, 42, 0.16)),
+      var(--bg-secondary);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.08),
+      0 10px 20px rgba(15, 23, 42, 0.1);
+  }
+
+  &__dropdown {
+    min-width: 138px;
+
+    &--portfolio {
+      min-width: 220px;
+      max-width: min(360px, 70vw);
+    }
+
+    &--ticker {
+      min-width: 260px;
+      max-width: min(420px, 76vw);
+    }
+  }
+
+  &__action {
+    @include button-base(0.78rem, 0.42rem, 0.76rem);
+    border-radius: 10px;
+    border: 1px solid rgba(16, 185, 129, 0.36);
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.3), rgba(5, 150, 105, 0.26));
+    color: #d1fae5;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.26px;
+
+    &:hover:not(:disabled) {
+      border-color: rgba(16, 185, 129, 0.62);
+      background: linear-gradient(135deg, rgba(16, 185, 129, 0.44), rgba(5, 150, 105, 0.4));
+      transform: translateY(-1px);
+    }
+
+    &:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    &--ghost {
+      border-color: rgba(148, 163, 184, 0.34);
+      background: rgba(15, 23, 42, 0.26);
+      color: var(--text-secondary);
+    }
+  }
+
+  &__selected {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.48rem;
+  }
+
+  &__chip {
+    @include button-base(0.78rem, 0.3rem, 0.62rem);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    border-radius: 999px;
+    border: 1px solid rgba(34, 211, 238, 0.38);
+    background: linear-gradient(135deg, rgba(34, 211, 238, 0.18), rgba(59, 130, 246, 0.16));
+    color: var(--text-primary);
+    font-weight: 700;
+    letter-spacing: 0.2px;
+
+    &:hover {
+      border-color: rgba(34, 211, 238, 0.6);
+      background: linear-gradient(135deg, rgba(34, 211, 238, 0.26), rgba(59, 130, 246, 0.22));
+    }
+  }
+
+  &__state {
+    @include glass-card;
+    padding: $spacing-xxl;
+    text-align: center;
+    color: var(--text-secondary);
+
+    &--error {
+      display: flex;
+      flex-direction: column;
+      gap: $spacing-sm;
+
+      code {
+        color: #fca5a5;
+        word-break: break-word;
+      }
+    }
+  }
+
+  &__content {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: $spacing-md;
+  }
+}
+
+.compare-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: $spacing-md;
+}
+
+.compare-kpi {
+  @include glass-card;
+  padding: $spacing-md;
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-xs;
+
+  &__label {
+    font-size: 0.76rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.38px;
+    font-weight: 600;
+  }
+
+  &__value {
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    word-break: break-word;
+  }
+}
+
+.compare-card {
+  @include glass-card;
+  padding: $spacing-md;
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
+
+  &__header {
+    display: flex;
+    align-items: center;
+    gap: $spacing-xs;
+
+    h2 {
+      margin: 0;
+      font-size: 0.98rem;
+      color: var(--text-primary);
+    }
+  }
+
+  &__spinner {
+    width: 0.82rem;
+    height: 0.82rem;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    color: var(--text-secondary);
+    opacity: 0.78;
+    animation: compare-spin 0.6s linear infinite;
+  }
+
+  &__empty {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 0.86rem;
+  }
+}
+
+@keyframes compare-spin {
+  to { transform: rotate(360deg); }
+}
+
+.compare-table-wrapper {
+  overflow: auto;
+  border-radius: 12px;
+  border: 1px solid var(--glass-border);
+}
+
+.compare-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 680px;
+
+  th,
+  td {
+    padding: 0.58rem 0.7rem;
+    text-align: left;
+    border-bottom: 1px solid var(--glass-border);
+    font-size: 0.83rem;
+    vertical-align: top;
+  }
+
+  thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: rgba(15, 23, 42, 0.92);
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.32px;
+    font-size: 0.68rem;
+  }
+
+  tbody th {
+    width: 220px;
+    min-width: 220px;
+    color: var(--text-secondary);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.32px;
+    background: rgba(15, 23, 42, 0.36);
+  }
+
+  tbody tr:hover td {
+    background: rgba(59, 130, 246, 0.08);
+  }
+
+  &__asset-head {
+    display: flex;
+    flex-direction: column;
+    gap: 0.22rem;
+
+    strong {
+      color: var(--text-primary);
+      font-size: 0.84rem;
+      text-transform: none;
+      letter-spacing: 0;
+    }
+
+    span {
+      color: var(--text-secondary);
+      font-size: 0.73rem;
+      text-transform: none;
+      letter-spacing: 0;
+      line-height: 1.3;
+      font-weight: 500;
+    }
+  }
+
+  &__asset-link {
+    color: #67e8f9;
+    font-size: 0.71rem;
+    text-decoration: none;
+    text-transform: none;
+    letter-spacing: 0;
+    width: fit-content;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+
+  &__value--positive {
+    color: #86efac;
+    font-weight: 700;
+  }
+
+  &__value--negative {
+    color: #fca5a5;
+    font-weight: 700;
+  }
+
+  &--fii td {
+    line-height: 1.42;
+  }
+}
+
+@media (max-width: $breakpoint-tablet) {
+  .compare-page {
+    &__filters {
+      width: 100%;
+    }
+
+    &__dropdown {
+      min-width: 0;
+      width: 100%;
+
+      &--portfolio,
+      &--ticker {
+        width: 100%;
+        max-width: none;
+      }
+    }
+
+    &__action {
+      width: 100%;
+      justify-content: center;
+    }
+  }
+}

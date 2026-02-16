@@ -7,6 +7,7 @@
     "rebalance": "Rebalance",
     "risk": "Risk",
     "benchmarks": "Benchmarks",
+    "compare": "Compare",
     "multiCurrency": "Multi-currency",
     "tax": "Tax",
     "platform": "Platform",
@@ -319,6 +320,63 @@
       "2Y": "2Y",
       "5Y": "5Y",
       "MAX": "MAX"
+    }
+  },
+  "compare": {
+    "title": "Asset Comparator",
+    "subtitle": "Select between {{min}} and {{max}} active assets to compare side-by-side.",
+    "selectPortfolio": "Select portfolio",
+    "selectTicker": "Select ticker",
+    "addTicker": "Add",
+    "reset": "Reset",
+    "removeTicker": "Remove {{ticker}}",
+    "openAsset": "Open asset",
+    "loadError": "Failed to load asset comparison.",
+    "noData": "No comparison data returned for selected assets.",
+    "needAtLeastTwo": "Select at least two assets to compare.",
+    "fiiNeedAtLeastTwo": "Select at least two FIIs to render the FII-specific comparison.",
+    "kpis": {
+      "assets": "Compared Assets",
+      "classes": "Asset Classes",
+      "fiis": "FIIs Selected",
+      "updatedAt": "Updated At"
+    },
+    "sections": {
+      "sideBySide": "Side-by-side Comparison",
+      "fii": "FII-specific Comparison"
+    },
+    "table": {
+      "metric": "Metric"
+    },
+    "metrics": {
+      "assetClass": "Asset Class",
+      "currency": "Currency",
+      "currentPrice": "Current Price",
+      "fairPrice": "Fair Price",
+      "marginOfSafety": "Margin of Safety",
+      "volatility": "Volatility",
+      "drawdown": "Max Drawdown",
+      "pe": "P/L",
+      "pb": "P/VP",
+      "roe": "ROE",
+      "payout": "Payout",
+      "evEbitda": "EV/EBITDA",
+      "netDebtEbitda": "Net Debt / EBITDA"
+    },
+    "fiiMetrics": {
+      "classification": "Classification",
+      "segment": "Segment",
+      "administrator": "Administrator",
+      "manager": "Manager",
+      "quotaCount": "Quota Count",
+      "dy12m": "Dividend Yield (12M)",
+      "dySector": "DY vs Sector",
+      "dyCategory": "DY vs Category",
+      "dyMarket": "DY vs Market (IFIX)",
+      "lastDividendPerUnit": "Last Dividend per Quota",
+      "dividend12mPerUnit": "Dividends per Quota (12M)",
+      "yield12mOnQuote": "Yield on Current Quote (12M)",
+      "topComposition": "Top Portfolio Composition"
     }
   },
   "multiCurrency": {

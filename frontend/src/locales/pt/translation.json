@@ -7,6 +7,7 @@
     "rebalance": "Rebalanceamento",
     "risk": "Risco",
     "benchmarks": "Benchmarks",
+    "compare": "Comparador",
     "multiCurrency": "Multi-moeda",
     "tax": "Imposto",
     "platform": "Plataforma",
@@ -319,6 +320,63 @@
       "2Y": "2A",
       "5Y": "5A",
       "MAX": "MAX"
+    }
+  },
+  "compare": {
+    "title": "Comparador de Ativos",
+    "subtitle": "Selecione entre {{min}} e {{max}} ativos para comparar lado a lado.",
+    "selectPortfolio": "Selecionar portfólio",
+    "selectTicker": "Selecionar ticker",
+    "addTicker": "Adicionar",
+    "reset": "Resetar",
+    "removeTicker": "Remover {{ticker}}",
+    "openAsset": "Abrir ativo",
+    "loadError": "Falha ao carregar comparação de ativos.",
+    "noData": "A API não retornou dados para os ativos selecionados.",
+    "needAtLeastTwo": "Selecione ao menos dois ativos para comparar.",
+    "fiiNeedAtLeastTwo": "Selecione ao menos dois FIIs para renderizar a comparação específica de FIIs.",
+    "kpis": {
+      "assets": "Ativos Comparados",
+      "classes": "Classes de Ativo",
+      "fiis": "FIIs Selecionados",
+      "updatedAt": "Atualizado Em"
+    },
+    "sections": {
+      "sideBySide": "Comparação Lado a Lado",
+      "fii": "Comparação Específica de FIIs"
+    },
+    "table": {
+      "metric": "Métrica"
+    },
+    "metrics": {
+      "assetClass": "Classe de Ativo",
+      "currency": "Moeda",
+      "currentPrice": "Cotação Atual",
+      "fairPrice": "Preço Justo",
+      "marginOfSafety": "Margem de Segurança",
+      "volatility": "Volatilidade",
+      "drawdown": "Drawdown Máximo",
+      "pe": "P/L",
+      "pb": "P/VP",
+      "roe": "ROE",
+      "payout": "Payout",
+      "evEbitda": "EV/EBITDA",
+      "netDebtEbitda": "Dívida Líquida / EBITDA"
+    },
+    "fiiMetrics": {
+      "classification": "Classificação",
+      "segment": "Segmento",
+      "administrator": "Administrador",
+      "manager": "Gestor",
+      "quotaCount": "Quantidade de Cotas",
+      "dy12m": "Dividend Yield (12M)",
+      "dySector": "DY vs Setor",
+      "dyCategory": "DY vs Categoria",
+      "dyMarket": "DY vs Mercado (IFIX)",
+      "lastDividendPerUnit": "Último Provento por Cota",
+      "dividend12mPerUnit": "Proventos por Cota (12M)",
+      "yield12mOnQuote": "Yield na Cotação Atual (12M)",
+      "topComposition": "Top Composição do Portfólio"
     }
   },
   "multiCurrency": {

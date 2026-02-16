@@ -27,6 +27,7 @@ const Layout = ({ children }: LayoutProps) => {
     { path: '/rebalance', label: t('nav.rebalance'), icon: '⚖️' },
     { path: '/risk', label: t('nav.risk'), icon: '🛡️' },
     { path: '/benchmarks', label: t('nav.benchmarks'), icon: '📈' },
+    { path: '/compare', label: t('nav.compare'), icon: '🆚' },
     { path: '/multi-currency', label: t('nav.multiCurrency'), icon: '💱' },
     { path: '/tax', label: t('nav.tax'), icon: '📑' },
     { path: '/documents', label: t('nav.documents'), icon: '📄' },

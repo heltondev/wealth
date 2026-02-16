@@ -282,6 +282,44 @@ export interface BenchmarksResponse {
   fetched_at: string;
 }
 
+export interface CompareAssetFundamentals {
+  pe: number | null;
+  pb: number | null;
+  roe: number | null;
+  roa: number | null;
+  roic: number | null;
+  netDebtEbitda: number | null;
+  payout: number | null;
+  evEbitda: number | null;
+  lpa: number | null;
+  vpa: number | null;
+  netMargin: number | null;
+  ebitMargin: number | null;
+}
+
+export interface CompareAssetRiskSnapshot {
+  volatility: number | null;
+  drawdown: number | null;
+}
+
+export interface CompareAssetRow {
+  ticker: string;
+  name: string;
+  assetClass: string;
+  currency: string;
+  current_price: number | null;
+  fair_price: number | null;
+  margin_of_safety_pct: number | null;
+  fundamentals: CompareAssetFundamentals | null;
+  risk: CompareAssetRiskSnapshot | null;
+}
+
+export interface CompareAssetsResponse {
+  tickers: string[];
+  comparison: CompareAssetRow[];
+  fetched_at: string;
+}
+
 export interface MultiCurrencyPortfolioSummary {
   start_value_brl: number;
   end_value_brl: number;
@@ -578,7 +616,7 @@ export const api = {
   screenAssets: (filters: Record<string, unknown>) =>
     request('/assets/screen', { method: 'POST', body: JSON.stringify(filters) }),
   compareAssets: (tickers: string[], portfolioId?: string) =>
-    request('/assets/compare', { method: 'POST', body: JSON.stringify({ tickers, portfolioId }) }),
+    request<CompareAssetsResponse>('/assets/compare', { method: 'POST', body: JSON.stringify({ tickers, portfolioId }) }),
 
   // Fixed income + costs
   getFixedIncomeComparison: (portfolioId?: string) => {
