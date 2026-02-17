@@ -1620,6 +1620,331 @@ const dayDiff = (fromIsoDate, toIsoDate) => {
 	return Math.round((to.getTime() - from.getTime()) / 86400000);
 };
 
+const FIXED_INCOME_DEFAULT_SHOCK_BPS = 100;
+const FIXED_INCOME_MAX_SHOCK_BPS = 500;
+const FIXED_INCOME_YEAR_DAYS = 365.25;
+const FIXED_INCOME_MATURITY_FIELDS = [
+	'maturityDate',
+	'maturity_date',
+	'maturity',
+	'vencimento',
+	'dueDate',
+	'due_date',
+	'expiryDate',
+	'expiry_date',
+	'expirationDate',
+	'expiration_date',
+];
+const FIXED_INCOME_RATE_FIELDS = [
+	'currentRatePct',
+	'current_rate_pct',
+	'currentRate',
+	'current_rate',
+	'ratePct',
+	'rate_pct',
+	'rate',
+	'yieldPct',
+	'yield_pct',
+	'yieldRate',
+	'yield_rate',
+	'taxa',
+	'taxaAtual',
+	'taxa_atual',
+];
+const FIXED_INCOME_COUPON_FIELDS = [
+	'couponRatePct',
+	'coupon_rate_pct',
+	'couponRate',
+	'coupon_rate',
+	'coupon',
+	'couponPct',
+	'coupon_pct',
+];
+const FIXED_INCOME_INDEXER_FIELDS = [
+	'indexer',
+	'indexador',
+	'benchmark',
+];
+const FIXED_INCOME_TICKER_HINTS = [
+	'TESOURO',
+	'CDB',
+	'LCI',
+	'LCA',
+	'CRI',
+	'CRA',
+	'DEB',
+	'DEBENTURE',
+];
+
+const sanitizeFixedIncomeShockBps = (value) => {
+	const parsed = Math.abs(Math.round(numeric(value, FIXED_INCOME_DEFAULT_SHOCK_BPS)));
+	if (!Number.isFinite(parsed) || parsed <= 0) return FIXED_INCOME_DEFAULT_SHOCK_BPS;
+	return Math.min(parsed, FIXED_INCOME_MAX_SHOCK_BPS);
+};
+
+const computeYearsBetweenDates = (fromDate, toDate) => {
+	const from = normalizeDate(fromDate);
+	const to = normalizeDate(toDate);
+	if (!from || !to) return null;
+	const fromEpoch = Date.parse(`${from}T00:00:00Z`);
+	const toEpoch = Date.parse(`${to}T00:00:00Z`);
+	if (!Number.isFinite(fromEpoch) || !Number.isFinite(toEpoch)) return null;
+	return (toEpoch - fromEpoch) / (86400000 * FIXED_INCOME_YEAR_DAYS);
+};
+
+const estimateAnnualizedReturnPct = (startValue, endValue, fromDate, toDate) => {
+	const start = numeric(startValue, 0);
+	const end = numeric(endValue, 0);
+	const years = computeYearsBetweenDates(fromDate, toDate);
+	if (!Number.isFinite(years) || years <= Number.EPSILON) return null;
+	if (start <= 0 || end <= 0) return null;
+	return ((end / start) ** (1 / years) - 1) * 100;
+};
+
+const inferMaturityDateFromAssetRecord = (asset = {}) => {
+	for (const field of FIXED_INCOME_MATURITY_FIELDS) {
+		const value = normalizeDate(asset?.[field]);
+		if (value) return value;
+	}
+
+	const text = `${String(asset?.ticker || '')} ${String(asset?.name || '')}`;
+	const yearMatches = [...text.matchAll(/\b(20\d{2})\b/g)]
+		.map((match) => Number(match[1]))
+		.filter((value) => Number.isFinite(value) && value >= 2000 && value <= 2100)
+		.sort((left, right) => right - left);
+	if (yearMatches.length > 0) {
+		return `${String(yearMatches[0]).padStart(4, '0')}-12-31`;
+	}
+	return null;
+};
+
+const inferFixedIncomeIndexerFromAsset = (asset = {}) => {
+	const directValue = FIXED_INCOME_INDEXER_FIELDS
+		.map((field) => asset?.[field])
+		.find((value) => value !== undefined && value !== null && String(value).trim() !== '');
+	const normalizedDirect = String(directValue || '').toUpperCase();
+	if (normalizedDirect.includes('IPCA')) return 'IPCA';
+	if (normalizedDirect.includes('SELIC') || normalizedDirect.includes('LFT')) return 'SELIC';
+	if (normalizedDirect.includes('CDI')) return 'CDI';
+	if (normalizedDirect.includes('IGP')) return 'IGPM';
+	if (normalizedDirect.includes('PRE')) return 'PRE';
+
+	const hintText = `${String(asset?.ticker || '')} ${String(asset?.name || '')}`.toUpperCase();
+	if (hintText.includes('IPCA') || hintText.includes('NTN-B')) return 'IPCA';
+	if (hintText.includes('SELIC') || hintText.includes('LFT')) return 'SELIC';
+	if (hintText.includes('CDI')) return 'CDI';
+	if (hintText.includes('IGP')) return 'IGPM';
+	if (hintText.includes('PRE') || hintText.includes('PREFIX') || hintText.includes('LTN') || hintText.includes('NTN-F')) return 'PRE';
+	return null;
+};
+
+const inferFixedIncomeRatePctFromAsset = (asset = {}, latestPriceRow = null, fallbackRatePct = null) => {
+	const candidateValues = [
+		...FIXED_INCOME_RATE_FIELDS.map((field) => asset?.[field]),
+		latestPriceRow?.taxa_venda,
+		latestPriceRow?.taxa_compra,
+		fallbackRatePct,
+	];
+	for (const value of candidateValues) {
+		const parsed = parseLocalizedNumber(value);
+		if (!Number.isFinite(parsed)) continue;
+		if (Math.abs(parsed) > 1000) continue;
+		return parsed;
+	}
+	return null;
+};
+
+const inferFixedIncomeCouponRatePctFromAsset = (asset = {}) => {
+	for (const field of FIXED_INCOME_COUPON_FIELDS) {
+		const parsed = parseLocalizedNumber(asset?.[field]);
+		if (!Number.isFinite(parsed)) continue;
+		if (Math.abs(parsed) > 1000) continue;
+		return parsed;
+	}
+	return null;
+};
+
+const estimateFixedIncomeDuration = (options = {}) => {
+	const yearsToMaturity = Number.isFinite(options.yearsToMaturity)
+		? Math.max(Number(options.yearsToMaturity), 0)
+		: null;
+	if (yearsToMaturity === null) {
+		return {
+			years_to_maturity: null,
+			duration_years: null,
+			macaulay_duration_years: null,
+			modified_duration_years: null,
+			method: 'insufficient_data',
+		};
+	}
+
+	if (yearsToMaturity <= Number.EPSILON) {
+		return {
+			years_to_maturity: 0,
+			duration_years: 0,
+			macaulay_duration_years: 0,
+			modified_duration_years: 0,
+			method: 'matured',
+		};
+	}
+
+	const yieldRatePct = parseLocalizedNumber(options.yieldRatePct);
+	const couponRatePct = parseLocalizedNumber(options.couponRatePct);
+	const couponFrequency = Math.max(1, Math.round(numeric(options.couponFrequency, 1)));
+	const hasYield = Number.isFinite(yieldRatePct) && yieldRatePct > -99;
+	const hasCoupon = Number.isFinite(couponRatePct) && couponRatePct > 0;
+
+	if (!hasYield || !hasCoupon) {
+		const macaulay = yearsToMaturity;
+		const modified = hasYield
+			? yearsToMaturity / (1 + (yieldRatePct / 100))
+			: yearsToMaturity;
+		return {
+			years_to_maturity: yearsToMaturity,
+			duration_years: modified,
+			macaulay_duration_years: macaulay,
+			modified_duration_years: modified,
+			method: hasYield ? 'zero_coupon_proxy' : 'time_to_maturity_proxy',
+		};
+	}
+
+	const periods = Math.max(1, Math.round(yearsToMaturity * couponFrequency));
+	const periodicYield = (yieldRatePct / 100) / couponFrequency;
+	if (periodicYield <= -0.99) {
+		return {
+			years_to_maturity: yearsToMaturity,
+			duration_years: yearsToMaturity,
+			macaulay_duration_years: yearsToMaturity,
+			modified_duration_years: yearsToMaturity,
+			method: 'time_to_maturity_proxy',
+		};
+	}
+	const periodicCoupon = (couponRatePct / 100) / couponFrequency;
+
+	let price = 0;
+	let weightedSum = 0;
+	for (let period = 1; period <= periods; period += 1) {
+		const cashflow = period === periods ? (1 + periodicCoupon) : periodicCoupon;
+		const discountFactor = (1 + periodicYield) ** period;
+		const pv = cashflow / discountFactor;
+		price += pv;
+		weightedSum += period * pv;
+	}
+
+	if (price <= Number.EPSILON) {
+		return {
+			years_to_maturity: yearsToMaturity,
+			duration_years: yearsToMaturity,
+			macaulay_duration_years: yearsToMaturity,
+			modified_duration_years: yearsToMaturity,
+			method: 'time_to_maturity_proxy',
+		};
+	}
+
+	const macaulayPeriods = weightedSum / price;
+	const macaulayYears = macaulayPeriods / couponFrequency;
+	const modifiedYears = macaulayYears / (1 + periodicYield);
+	return {
+		years_to_maturity: yearsToMaturity,
+		duration_years: modifiedYears,
+		macaulay_duration_years: macaulayYears,
+		modified_duration_years: modifiedYears,
+		method: 'macaulay',
+	};
+};
+
+const buildRateSensitivitySnapshot = (options = {}) => {
+	const marketValue = numeric(options.marketValue, 0);
+	const modifiedDurationYears = Number.isFinite(options.modifiedDurationYears)
+		? Math.max(Number(options.modifiedDurationYears), 0)
+		: null;
+	const shockBps = sanitizeFixedIncomeShockBps(options.shockBps);
+
+	if (marketValue <= 0 || modifiedDurationYears === null) {
+		return {
+			shock_bps: shockBps,
+			dv01: null,
+			up_shift_value: null,
+			up_shift_change: null,
+			down_shift_value: null,
+			down_shift_change: null,
+		};
+	}
+
+	const shockRate = shockBps / 10000;
+	const dv01 = marketValue * modifiedDurationYears * 0.0001;
+	const upShiftValue = Math.max(marketValue * (1 - (modifiedDurationYears * shockRate)), 0);
+	const downShiftValue = Math.max(marketValue * (1 + (modifiedDurationYears * shockRate)), 0);
+
+	return {
+		shock_bps: shockBps,
+		dv01,
+		up_shift_value: upShiftValue,
+		up_shift_change: upShiftValue - marketValue,
+		down_shift_value: downShiftValue,
+		down_shift_change: downShiftValue - marketValue,
+	};
+};
+
+const buildMarkToMarketBreakdown = (options = {}) => {
+	const bookValue = numeric(options.bookValue, 0);
+	const marketValue = numeric(options.marketValue, 0);
+	const carryReturnPct = parseLocalizedNumber(options.carryReturnPct);
+	const markToMarketValue = marketValue - bookValue;
+	const markToMarketReturnPct = bookValue > 0 ? (markToMarketValue / bookValue) * 100 : null;
+
+	if (!Number.isFinite(carryReturnPct)) {
+		return {
+			book_value: bookValue,
+			market_value: marketValue,
+			mark_to_market_value: markToMarketValue,
+			mark_to_market_return_pct: markToMarketReturnPct,
+			carry_return_pct: null,
+			carry_value: null,
+			price_effect_value: null,
+			price_effect_return_pct: null,
+		};
+	}
+
+	const carryValue = bookValue * (carryReturnPct / 100);
+	const expectedCarryValue = bookValue + carryValue;
+	const priceEffectValue = marketValue - expectedCarryValue;
+	const priceEffectReturnPct = bookValue > 0 ? (priceEffectValue / bookValue) * 100 : null;
+
+	return {
+		book_value: bookValue,
+		market_value: marketValue,
+		mark_to_market_value: markToMarketValue,
+		mark_to_market_return_pct: markToMarketReturnPct,
+		carry_return_pct: carryReturnPct,
+		carry_value: carryValue,
+		price_effect_value: priceEffectValue,
+		price_effect_return_pct: priceEffectReturnPct,
+	};
+};
+
+const resolveFixedIncomeCarryPct = (indexer, benchmarkReturns = {}) => {
+	const normalizedIndexer = String(indexer || '').toUpperCase();
+	if (normalizedIndexer === 'CDI') return benchmarkReturns.CDI ?? null;
+	if (normalizedIndexer === 'IPCA') return benchmarkReturns.IPCA ?? null;
+	if (normalizedIndexer === 'SELIC') return benchmarkReturns.SELIC ?? null;
+	if (normalizedIndexer === 'POUPANCA') return benchmarkReturns.POUPANCA ?? null;
+	if (normalizedIndexer === 'IGPM') return benchmarkReturns.CDI ?? null;
+	if (normalizedIndexer === 'PRE') return benchmarkReturns.CDI ?? null;
+	return null;
+};
+
+const isFixedIncomeAssetCandidate = (metricAsset = {}, portfolioAsset = null) => {
+	const assetClass = String(portfolioAsset?.assetClass || '').toLowerCase();
+	if (assetClass === 'bond') return true;
+
+	const market = String(metricAsset?.market || portfolioAsset?.market || '').toUpperCase();
+	if (market === 'TESOURO') return true;
+
+	const ticker = String(metricAsset?.ticker || portfolioAsset?.ticker || '').toUpperCase();
+	return FIXED_INCOME_TICKER_HINTS.some((hint) => ticker.includes(hint));
+};
+
 const normalizeEventNoticeKind = (eventType, eventTitle, eventDate, today = nowIso().slice(0, 10)) => {
 	const text = `${String(eventType || '')} ${String(eventTitle || '')}`
 		.toLowerCase()
@@ -1697,6 +2022,19 @@ const sortEventInboxItems = (left, right) => {
 		|| String(left?.ticker || '').localeCompare(String(right?.ticker || ''))
 		|| String(left?.eventType || '').localeCompare(String(right?.eventType || ''))
 		|| String(left?.eventTitle || '').localeCompare(String(right?.eventTitle || ''));
+};
+
+const filterEventInboxItemsByTrackedTickers = (items, trackedTickers) => {
+	const rows = Array.isArray(items) ? items : [];
+	const trackedSet = trackedTickers instanceof Set
+		? trackedTickers
+		: new Set(
+			(Array.isArray(trackedTickers) ? trackedTickers : [])
+				.map((ticker) => String(ticker || '').toUpperCase().trim())
+				.filter(Boolean)
+		);
+	if (trackedSet.size === 0) return [];
+	return rows.filter((item) => trackedSet.has(String(item?.ticker || '').toUpperCase().trim()));
 };
 
 const monthKey = (date) => {
@@ -3496,7 +3834,10 @@ class PlatformService {
 	}
 
 	async fetchNews(ticker, options = {}) {
-		const assets = await this.#resolveAssetsForTickerOrPortfolio(ticker, options.portfolioId);
+		const scopedAssets = await this.#resolveAssetsForTickerOrPortfolio(ticker, options.portfolioId);
+		const assets = scopedAssets.filter(
+			(asset) => String(asset.status || 'active').toLowerCase() === 'active'
+		);
 		const persisted = [];
 
 		for (const asset of assets) {
@@ -4089,6 +4430,7 @@ class PlatformService {
 					.filter(Boolean)
 			)
 		);
+		const trackedTickerSet = new Set(trackedTickers);
 
 		const normalizedRows = rows
 			.map((row) => {
@@ -4129,7 +4471,8 @@ class PlatformService {
 			})
 			.filter((row) => row.id && row.ticker && row.eventDate);
 
-		const filtered = normalizedRows
+		const activeRows = filterEventInboxItemsByTrackedTickers(normalizedRows, trackedTickerSet);
+		const filtered = activeRows
 			.filter((event) => {
 				if (status === 'unread') return !event.read;
 				if (status === 'read') return event.read;
@@ -6668,13 +7011,63 @@ class PlatformService {
 		const cdiAccum = await this.#computeIndicatorAccumulation(INDICATOR_SERIES.CDI, startDate, endDate);
 		const grossFactor = 1 + (cdiAccum * cdiPct);
 		const currentValue = principal * grossFactor;
+		const annualizedReturnPct = estimateAnnualizedReturnPct(principal, currentValue, startDate, endDate);
+		const maturityDate = inferMaturityDateFromAssetRecord(payload);
+		const yearsToMaturityRaw = maturityDate ? computeYearsBetweenDates(endDate, maturityDate) : null;
+		const yearsToMaturity = Number.isFinite(yearsToMaturityRaw) ? Math.max(yearsToMaturityRaw, 0) : null;
+		const inferredRatePct = inferFixedIncomeRatePctFromAsset(
+			payload,
+			null,
+			Number.isFinite(annualizedReturnPct) ? annualizedReturnPct : (cdiAccum * cdiPct * 100)
+		);
+		const couponRatePct = inferFixedIncomeCouponRatePctFromAsset(payload);
+		const duration = estimateFixedIncomeDuration({
+			yearsToMaturity,
+			yieldRatePct: inferredRatePct,
+			couponRatePct,
+			couponFrequency:
+				payload.couponFrequency
+				?? payload.coupon_frequency
+				?? payload.couponPaymentsPerYear
+				?? 1,
+		});
+		const markToMarketValue = parseLocalizedNumber(
+			payload.markToMarketValue
+			?? payload.currentMarketValue
+			?? payload.marketValue
+			?? currentValue
+		);
+		const shockBps = sanitizeFixedIncomeShockBps(payload.shockBps);
+		const markToMarket = buildMarkToMarketBreakdown({
+			bookValue: principal,
+			marketValue: Number.isFinite(markToMarketValue) ? markToMarketValue : currentValue,
+			carryReturnPct: cdiAccum * cdiPct * 100,
+		});
+		const rateSensitivity = buildRateSensitivitySnapshot({
+			marketValue: markToMarket.market_value,
+			modifiedDurationYears: duration.modified_duration_years ?? duration.duration_years,
+			shockBps,
+		});
 		return {
 			principal,
 			cdi_pct: cdiPct * 100,
 			start_date: startDate,
 			end_date: endDate,
 			cdi_accumulated_pct: cdiAccum * 100,
+			period_days: Math.max(dayDiff(startDate, endDate), 0),
+			period_years: computeYearsBetweenDates(startDate, endDate),
+			accrued_return_value: currentValue - principal,
+			accrued_return_pct: principal > 0 ? ((currentValue / principal) - 1) * 100 : null,
+			annualized_return_pct: annualizedReturnPct,
 			current_value: currentValue,
+			maturity_date: maturityDate,
+			years_to_maturity: yearsToMaturity,
+			inferred_rate_pct: inferredRatePct,
+			coupon_rate_pct: couponRatePct,
+			duration,
+			mark_to_market: markToMarket,
+			rate_sensitivity: rateSensitivity,
+			shock_assumption_bps: shockBps,
 			currency: payload.currency || 'BRL',
 			fetched_at: nowIso(),
 		};
@@ -6682,22 +7075,189 @@ class PlatformService {
 
 	async getFixedIncomeComparison(userId, options = {}) {
 		const portfolioId = await this.#resolvePortfolioId(userId, options.portfolioId);
-		const metrics = await this.priceHistoryService.getPortfolioMetrics(userId, { portfolioId });
-		const fixedIncome = metrics.assets.filter((asset) => String(asset.market || '').toUpperCase() === 'TESOURO' || String(asset.ticker || '').toUpperCase().startsWith('TESOURO'));
-		const fromDate = options.fromDate || addDays(nowIso().slice(0, 10), -365);
-		const toDate = options.toDate || nowIso().slice(0, 10);
+		const today = nowIso().slice(0, 10);
+		let fromDate = normalizeDate(options.fromDate) || addDays(today, -365);
+		let toDate = normalizeDate(options.toDate) || today;
+		if (fromDate > toDate) {
+			[fromDate, toDate] = [toDate, fromDate];
+		}
 
-		const cdiReturn = await this.#computeIndicatorReturn(INDICATOR_SERIES.CDI, fromDate, toDate);
-		const ipcaReturn = await this.#computeIndicatorReturn(INDICATOR_SERIES.IPCA, fromDate, toDate);
-		const poupancaReturn = await this.#computeIndicatorReturn(INDICATOR_SERIES.POUPANCA, fromDate, toDate);
+		const shockBps = sanitizeFixedIncomeShockBps(options.shockBps);
+		const [metrics, portfolioAssets, cdiReturn, ipcaReturn, selicReturn, poupancaReturn] = await Promise.all([
+			this.priceHistoryService.getPortfolioMetrics(userId, {
+				portfolioId,
+				includeBenchmarkComparison: false,
+			}),
+			this.#listPortfolioAssets(portfolioId),
+			this.#computeIndicatorReturn(INDICATOR_SERIES.CDI, fromDate, toDate),
+			this.#computeIndicatorReturn(INDICATOR_SERIES.IPCA, fromDate, toDate),
+			this.#computeIndicatorReturn(INDICATOR_SERIES.SELIC, fromDate, toDate),
+			this.#computeIndicatorReturn(INDICATOR_SERIES.POUPANCA, fromDate, toDate),
+		]);
+
+		const assetById = new Map();
+		const assetByTicker = new Map();
+		for (const asset of portfolioAssets) {
+			if (asset?.assetId) assetById.set(asset.assetId, asset);
+			const normalizedTicker = String(asset?.ticker || '').toUpperCase();
+			if (normalizedTicker && !assetByTicker.has(normalizedTicker)) {
+				assetByTicker.set(normalizedTicker, asset);
+			}
+		}
+
+		const fixedIncome = metrics.assets.filter((metricAsset) => {
+			const linkedAsset = assetById.get(metricAsset.assetId) || assetByTicker.get(String(metricAsset.ticker || '').toUpperCase()) || null;
+			return isFixedIncomeAssetCandidate(metricAsset, linkedAsset);
+		});
+		const benchmarkReturns = {
+			CDI: cdiReturn,
+			IPCA: ipcaReturn,
+			SELIC: selicReturn,
+			POUPANCA: poupancaReturn,
+		};
+
+		const fixedIncomeAnalytics = await Promise.all(
+			fixedIncome.map(async (metricAsset) => {
+				const linkedAsset = assetById.get(metricAsset.assetId)
+					|| assetByTicker.get(String(metricAsset.ticker || '').toUpperCase())
+					|| null;
+				const priceRows = metricAsset.assetId
+					? await this.#listAssetPriceRows(portfolioId, metricAsset.assetId)
+					: [];
+				const latestPriceRow = Array.isArray(priceRows) && priceRows.length > 0
+					? priceRows[priceRows.length - 1]
+					: null;
+				const maturityDate = inferMaturityDateFromAssetRecord(linkedAsset || metricAsset);
+				const yearsToMaturityRaw = maturityDate ? computeYearsBetweenDates(toDate, maturityDate) : null;
+				const yearsToMaturity = Number.isFinite(yearsToMaturityRaw) ? Math.max(yearsToMaturityRaw, 0) : null;
+				const annualizedReturnPct = estimateAnnualizedReturnPct(
+					metricAsset.cost_total,
+					metricAsset.market_value,
+					fromDate,
+					toDate
+				);
+				const inferredRatePct = inferFixedIncomeRatePctFromAsset(
+					linkedAsset || metricAsset,
+					latestPriceRow,
+					annualizedReturnPct
+				);
+				const couponRatePct = inferFixedIncomeCouponRatePctFromAsset(linkedAsset || metricAsset);
+				const indexer = inferFixedIncomeIndexerFromAsset(linkedAsset || metricAsset);
+				const duration = estimateFixedIncomeDuration({
+					yearsToMaturity,
+					yieldRatePct: inferredRatePct,
+					couponRatePct,
+					couponFrequency:
+						linkedAsset?.couponFrequency
+						?? linkedAsset?.coupon_frequency
+						?? linkedAsset?.couponPaymentsPerYear
+						?? 1,
+				});
+				const markToMarket = buildMarkToMarketBreakdown({
+					bookValue: metricAsset.cost_total,
+					marketValue: metricAsset.market_value,
+					carryReturnPct: resolveFixedIncomeCarryPct(indexer, benchmarkReturns),
+				});
+				const rateSensitivity = buildRateSensitivitySnapshot({
+					marketValue: metricAsset.market_value,
+					modifiedDurationYears: duration.modified_duration_years ?? duration.duration_years,
+					shockBps,
+				});
+
+				return {
+					asset_id: metricAsset.assetId || linkedAsset?.assetId || null,
+					ticker: metricAsset.ticker,
+					name: metricAsset.name || linkedAsset?.name || null,
+					market: metricAsset.market || null,
+					asset_class: String(linkedAsset?.assetClass || '').toLowerCase() || 'bond',
+					indexer,
+					maturity_date: maturityDate,
+					years_to_maturity: yearsToMaturity,
+					quantity: numeric(metricAsset.quantity_current, 0),
+					average_cost: numeric(metricAsset.average_cost, 0),
+					current_price: numeric(metricAsset.current_price, 0),
+					book_value: numeric(metricAsset.cost_total, 0),
+					market_value: numeric(metricAsset.market_value, 0),
+					pnl_value: numeric(metricAsset.absolute_return, 0),
+					pnl_pct: Number.isFinite(metricAsset.percent_return) ? numeric(metricAsset.percent_return, 0) : null,
+					inferred_rate_pct: inferredRatePct,
+					coupon_rate_pct: couponRatePct,
+					duration,
+					mark_to_market: markToMarket,
+					rate_sensitivity: rateSensitivity,
+				};
+			})
+		);
+
+		const orderedAnalytics = fixedIncomeAnalytics
+			.sort((left, right) => numeric(right.market_value, 0) - numeric(left.market_value, 0));
+
+		const summary = orderedAnalytics.reduce((accumulator, row) => {
+			const marketValue = numeric(row.market_value, 0);
+			const bookValue = numeric(row.book_value, 0);
+			const durationYears = row.duration?.duration_years;
+			const modifiedDurationYears = row.duration?.modified_duration_years;
+			const dv01 = numeric(row.rate_sensitivity?.dv01, 0);
+			accumulator.total_book_value += bookValue;
+			accumulator.total_market_value += marketValue;
+			accumulator.total_dv01 += dv01;
+			if (Number.isFinite(durationYears) && marketValue > 0) {
+				accumulator.weighted_duration_sum += (durationYears * marketValue);
+			}
+			if (Number.isFinite(modifiedDurationYears) && marketValue > 0) {
+				accumulator.weighted_modified_duration_sum += (modifiedDurationYears * marketValue);
+			}
+			accumulator.scenario_up_total += numeric(row.rate_sensitivity?.up_shift_value, marketValue);
+			accumulator.scenario_down_total += numeric(row.rate_sensitivity?.down_shift_value, marketValue);
+			return accumulator;
+		}, {
+			total_book_value: 0,
+			total_market_value: 0,
+			total_dv01: 0,
+			weighted_duration_sum: 0,
+			weighted_modified_duration_sum: 0,
+			scenario_up_total: 0,
+			scenario_down_total: 0,
+		});
+
+		const weightedDuration = summary.total_market_value > 0
+			? summary.weighted_duration_sum / summary.total_market_value
+			: null;
+		const weightedModifiedDuration = summary.total_market_value > 0
+			? summary.weighted_modified_duration_sum / summary.total_market_value
+			: null;
+		const markToMarketSummary = buildMarkToMarketBreakdown({
+			bookValue: summary.total_book_value,
+			marketValue: summary.total_market_value,
+		});
 
 		return {
 			portfolioId,
 			period: { from: fromDate, to: toDate },
 			tesouro_assets: fixedIncome,
+			fixed_income_assets: orderedAnalytics,
+			summary: {
+				total_book_value: summary.total_book_value,
+				total_market_value: summary.total_market_value,
+				total_pnl_value: summary.total_market_value - summary.total_book_value,
+				total_pnl_pct:
+					summary.total_book_value > 0
+						? ((summary.total_market_value / summary.total_book_value) - 1) * 100
+						: null,
+				weighted_duration_years: weightedDuration,
+				weighted_modified_duration_years: weightedModifiedDuration,
+				total_dv01: summary.total_dv01,
+				scenario_up_total: summary.scenario_up_total,
+				scenario_up_change: summary.scenario_up_total - summary.total_market_value,
+				scenario_down_total: summary.scenario_down_total,
+				scenario_down_change: summary.scenario_down_total - summary.total_market_value,
+				mark_to_market: markToMarketSummary,
+			},
+			shock_assumption_bps: shockBps,
 			benchmarks: {
 				cdi_return_pct: cdiReturn,
 				ipca_return_pct: ipcaReturn,
+				selic_return_pct: selicReturn,
 				poupanca_return_pct: poupancaReturn,
 			},
 			fetched_at: nowIso(),
@@ -9474,4 +10034,10 @@ class PlatformService {
 
 module.exports = {
 	PlatformService,
+	filterEventInboxItemsByTrackedTickers,
+	inferMaturityDateFromAssetRecord,
+	estimateFixedIncomeDuration,
+	buildRateSensitivitySnapshot,
+	buildMarkToMarketBreakdown,
+	sanitizeFixedIncomeShockBps,
 };

@@ -1241,6 +1241,7 @@ async function handleFixedIncome(method, userId, body, query = {}) {
 			portfolioId: query.portfolioId || null,
 			fromDate: query.fromDate || query.from_date || null,
 			toDate: query.toDate || query.to_date || null,
+			shockBps: query.shockBps || query.shock_bps || null,
 		});
 	}
 	throw errorResponse(405, 'Method not allowed');
