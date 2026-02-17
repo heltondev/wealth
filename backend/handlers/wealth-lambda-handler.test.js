@@ -472,6 +472,96 @@ test('handler GET /portfolios/{id}/event-notices delegates to platform service',
 	}
 });
 
+test('handler GET /portfolios/{id}/event-inbox delegates to platform service', async () => {
+	const original = platformService.getPortfolioEventInbox;
+	platformService.getPortfolioEventInbox = async (_userId, options) => ({
+		portfolioId: options.portfolioId,
+		unread_count: 3,
+		items: [],
+		today_events: [],
+		week_events: [],
+	});
+
+	try {
+		const response = await handler(
+			makeEvent('GET', '/portfolios/test-portfolio/event-inbox', null, null, { status: 'unread' })
+		);
+		assert.equal(response.statusCode, 200);
+		const body = JSON.parse(response.body);
+		assert.equal(body.portfolioId, 'test-portfolio');
+		assert.equal(body.unread_count, 3);
+	} finally {
+		platformService.getPortfolioEventInbox = original;
+	}
+});
+
+test('handler POST /portfolios/{id}/event-inbox/sync delegates to platform service', async () => {
+	const original = platformService.syncPortfolioEventInbox;
+	platformService.syncPortfolioEventInbox = async (_userId, options) => ({
+		portfolioId: options.portfolioId,
+		sync: { created: 2 },
+	});
+
+	try {
+		const response = await handler(
+			makeEvent('POST', '/portfolios/test-portfolio/event-inbox/sync', {
+				lookaheadDays: 7,
+				refreshSources: true,
+			})
+		);
+		assert.equal(response.statusCode, 200);
+		const body = JSON.parse(response.body);
+		assert.equal(body.portfolioId, 'test-portfolio');
+		assert.equal(body.sync.created, 2);
+	} finally {
+		platformService.syncPortfolioEventInbox = original;
+	}
+});
+
+test('handler PUT /portfolios/{id}/event-inbox/{eventId} delegates to platform service', async () => {
+	const original = platformService.setPortfolioEventInboxRead;
+	platformService.setPortfolioEventInboxRead = async (_userId, options) => ({
+		portfolioId: options.portfolioId,
+		id: options.eventId,
+		read: options.read,
+	});
+
+	try {
+		const response = await handler(
+			makeEvent('PUT', '/portfolios/test-portfolio/event-inbox/event-123', { read: true })
+		);
+		assert.equal(response.statusCode, 200);
+		const body = JSON.parse(response.body);
+		assert.equal(body.portfolioId, 'test-portfolio');
+		assert.equal(body.id, 'event-123');
+		assert.equal(body.read, true);
+	} finally {
+		platformService.setPortfolioEventInboxRead = original;
+	}
+});
+
+test('handler POST /portfolios/{id}/event-inbox/read delegates bulk read update to platform service', async () => {
+	const original = platformService.markAllPortfolioEventInboxRead;
+	platformService.markAllPortfolioEventInboxRead = async (_userId, options) => ({
+		portfolioId: options.portfolioId,
+		updated_count: 8,
+		scope: options.scope,
+	});
+
+	try {
+		const response = await handler(
+			makeEvent('POST', '/portfolios/test-portfolio/event-inbox/read', { read: true, scope: 'week' })
+		);
+		assert.equal(response.statusCode, 200);
+		const body = JSON.parse(response.body);
+		assert.equal(body.portfolioId, 'test-portfolio');
+		assert.equal(body.updated_count, 8);
+		assert.equal(body.scope, 'week');
+	} finally {
+		platformService.markAllPortfolioEventInboxRead = original;
+	}
+});
+
 test('handler POST /jobs/economic-data/refresh delegates to platform service', async () => {
 	const original = platformService.fetchEconomicIndicators;
 	platformService.fetchEconomicIndicators = async () => ({
@@ -488,6 +578,26 @@ test('handler POST /jobs/economic-data/refresh delegates to platform service', a
 		assert.equal(body.job, 'economic-indicators');
 	} finally {
 		platformService.fetchEconomicIndicators = original;
+	}
+});
+
+test('handler POST /jobs/event-inbox/refresh delegates to platform service', async () => {
+	const original = platformService.syncPortfolioEventInbox;
+	platformService.syncPortfolioEventInbox = async (_userId, options) => ({
+		portfolioId: options.portfolioId,
+		sync: { created: 1, updated: 1 },
+	});
+
+	try {
+		const response = await handler(
+			makeEvent('POST', '/jobs/event-inbox/refresh', { portfolioId: 'test-portfolio' })
+		);
+		assert.equal(response.statusCode, 200);
+		const body = JSON.parse(response.body);
+		assert.equal(body.portfolioId, 'test-portfolio');
+		assert.equal(body.sync.created, 1);
+	} finally {
+		platformService.syncPortfolioEventInbox = original;
 	}
 });
 

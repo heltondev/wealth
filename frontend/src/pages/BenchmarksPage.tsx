@@ -18,6 +18,16 @@ import Layout from '../components/Layout';
 import SharedDropdown from '../components/SharedDropdown';
 import { usePortfolioData } from '../context/PortfolioDataContext';
 import { api, type BenchmarksResponse } from '../services/api';
+import {
+  buildAnalyticsCacheKey,
+  getOrFetchCachedAnalytics,
+} from '../services/analyticsCache';
+import {
+  normalizeBenchmarkCode,
+  reconcileBenchmarkSelectionState,
+  type BenchmarkSelectionState,
+  resolveDefaultBenchmarkSelection,
+} from './benchmarksPage.state.js';
 import './BenchmarksPage.scss';
 
 const BENCHMARK_OPTIONS = [
@@ -55,7 +65,6 @@ const BENCHMARK_OPTIONS = [
   'TSX',
 ] as const;
 const PERIOD_OPTIONS = ['1M', '3M', '6M', '1Y', '2Y', '5Y', 'MAX'] as const;
-const DEFAULT_SELECTED_BENCHMARKS = ['IBOV', 'IFIX', 'CDI', 'IPCA', 'SELIC', 'POUPANCA'] as const;
 const SERIES_COLORS = [
   '#22d3ee',
   '#818cf8',
@@ -88,10 +97,7 @@ type BenchmarkGroup = {
   labelKey: string;
   codes: string[];
 };
-
-function normalizeCode(value: unknown): string {
-  return String(value || '').toUpperCase().trim();
-}
+const normalizeCode = normalizeBenchmarkCode;
 
 const BENCHMARK_GROUPS: BenchmarkGroup[] = [
   {
@@ -153,25 +159,14 @@ const parseIsoDateUtc = (value: string): Date => {
   return new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
 };
 
-const resolveDefaultBenchmarkSelection = (availableBenchmarkCodes: string[]): string[] => {
-  const defaults = DEFAULT_SELECTED_BENCHMARKS
-    .map((code) => normalizeCode(code))
-    .filter((code) => availableBenchmarkCodes.includes(code));
-  if (defaults.length > 0) {
-    return defaults;
-  }
-  if (availableBenchmarkCodes.length > 0) {
-    return [availableBenchmarkCodes[0]];
-  }
-  return [];
-};
-
 const BenchmarksPage = () => {
   const { t, i18n } = useTranslation();
   const { portfolios, selectedPortfolio, setSelectedPortfolio } = usePortfolioData();
   const [selectedPeriod, setSelectedPeriod] = useState<(typeof PERIOD_OPTIONS)[number]>('1Y');
-  const [selectedBenchmarks, setSelectedBenchmarks] = useState<string[]>([]);
-  const [selectionInitialized, setSelectionInitialized] = useState(false);
+  const [selectionState, setSelectionState] = useState<BenchmarkSelectionState>({
+    selectedBenchmarks: [],
+    selectionInitialized: false,
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [payload, setPayload] = useState<BenchmarksResponse | null>(null);
@@ -216,8 +211,13 @@ const BenchmarksPage = () => {
     [t]
   );
 
+  const cacheKey = useMemo(() => {
+    if (!selectedPortfolio) return '';
+    return buildAnalyticsCacheKey('benchmarks', [selectedPortfolio, selectedPeriod]);
+  }, [selectedPeriod, selectedPortfolio]);
+
   useEffect(() => {
-    if (!selectedPortfolio) {
+    if (!selectedPortfolio || !cacheKey) {
       setPayload(null);
       setLoading(false);
       setError(null);
@@ -228,7 +228,11 @@ const BenchmarksPage = () => {
     setLoading(true);
     setError(null);
 
-    api.getBenchmarks(selectedPortfolio, 'IBOV', selectedPeriod)
+    getOrFetchCachedAnalytics(
+      cacheKey,
+      () => api.getBenchmarks(selectedPortfolio, 'IBOV', selectedPeriod),
+      { ttlMs: 3 * 60 * 1000 }
+    )
       .then((response) => {
         if (cancelled) return;
         setPayload(response);
@@ -243,11 +247,13 @@ const BenchmarksPage = () => {
       });
 
     return () => { cancelled = true; };
-  }, [selectedPeriod, selectedPortfolio]);
+  }, [cacheKey, selectedPeriod, selectedPortfolio]);
 
   useEffect(() => {
-    setSelectionInitialized(false);
-    setSelectedBenchmarks([]);
+    setSelectionState({
+      selectedBenchmarks: [],
+      selectionInitialized: false,
+    });
   }, [selectedPortfolio]);
 
   const availableBenchmarkCodes = useMemo(() => {
@@ -268,28 +274,17 @@ const BenchmarksPage = () => {
   }, [payload]);
 
   useEffect(() => {
-    if (availableBenchmarkCodes.length === 0) {
-      setSelectedBenchmarks([]);
-      setSelectionInitialized(false);
-      return;
-    }
-
-    setSelectedBenchmarks((previous) => {
-      const normalizedPrevious = previous
-        .map((code) => normalizeCode(code))
-        .filter((code) => availableBenchmarkCodes.includes(code));
-
-      if (selectionInitialized) {
-        return normalizedPrevious;
-      }
-
-      return resolveDefaultBenchmarkSelection(availableBenchmarkCodes);
+    setSelectionState((previous) => {
+      const next = reconcileBenchmarkSelectionState(previous, availableBenchmarkCodes);
+      if (!next.changed) return previous;
+      return {
+        selectedBenchmarks: next.selectedBenchmarks,
+        selectionInitialized: next.selectionInitialized,
+      };
     });
+  }, [availableBenchmarkCodes]);
 
-    if (!selectionInitialized) {
-      setSelectionInitialized(true);
-    }
-  }, [availableBenchmarkCodes, selectionInitialized]);
+  const selectedBenchmarks = selectionState.selectedBenchmarks;
 
   const selectedBenchmarkSet = useMemo(
     () => new Set(selectedBenchmarks.map((code) => normalizeCode(code))),
@@ -484,29 +479,65 @@ const BenchmarksPage = () => {
     : toNumber(payload.alpha);
 
   const selectedCount = visibleSelectionRows.filter((row) => row.selected).length;
+  const hasSameCodes = (left: string[], right: string[]) => (
+    left.length === right.length && left.every((value, index) => value === right[index])
+  );
 
   const toggleBenchmark = (code: string, checked: boolean) => {
-    setSelectedBenchmarks((previous) => {
-      const next = new Set(previous.map((item) => normalizeCode(item)));
+    setSelectionState((previous) => {
+      const next = new Set(previous.selectedBenchmarks.map((item) => normalizeCode(item)));
       if (checked) {
         next.add(code);
       } else {
         next.delete(code);
       }
-      return availableBenchmarkCodes.filter((item) => next.has(item));
+      const nextSelectedBenchmarks = availableBenchmarkCodes.filter((item) => next.has(item));
+      if (previous.selectionInitialized && hasSameCodes(previous.selectedBenchmarks, nextSelectedBenchmarks)) {
+        return previous;
+      }
+      return {
+        selectedBenchmarks: nextSelectedBenchmarks,
+        selectionInitialized: true,
+      };
     });
   };
 
   const selectAllBenchmarks = () => {
-    setSelectedBenchmarks([...visibleBenchmarkCodes]);
+    setSelectionState((previous) => {
+      const nextSelectedBenchmarks = [...visibleBenchmarkCodes];
+      if (previous.selectionInitialized && hasSameCodes(previous.selectedBenchmarks, nextSelectedBenchmarks)) {
+        return previous;
+      }
+      return {
+        selectedBenchmarks: nextSelectedBenchmarks,
+        selectionInitialized: true,
+      };
+    });
   };
 
   const clearAllBenchmarks = () => {
-    setSelectedBenchmarks([]);
+    setSelectionState((previous) => {
+      if (previous.selectionInitialized && previous.selectedBenchmarks.length === 0) {
+        return previous;
+      }
+      return {
+        selectedBenchmarks: [],
+        selectionInitialized: true,
+      };
+    });
   };
 
   const resetToDefaultBenchmarks = () => {
-    setSelectedBenchmarks(resolveDefaultBenchmarkSelection(visibleBenchmarkCodes));
+    setSelectionState((previous) => {
+      const nextSelectedBenchmarks = resolveDefaultBenchmarkSelection(visibleBenchmarkCodes);
+      if (previous.selectionInitialized && hasSameCodes(previous.selectedBenchmarks, nextSelectedBenchmarks)) {
+        return previous;
+      }
+      return {
+        selectedBenchmarks: nextSelectedBenchmarks,
+        selectionInitialized: true,
+      };
+    });
   };
 
   return (

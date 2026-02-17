@@ -17,6 +17,10 @@ import {
   type DropdownConfigMap,
 } from '../services/api';
 import {
+  buildAnalyticsCacheKey,
+  getOrFetchCachedAnalytics,
+} from '../services/analyticsCache';
+import {
   DEFAULT_DROPDOWN_CONFIG,
   getDropdownOptions,
   normalizeDropdownConfig,
@@ -24,39 +28,13 @@ import {
 import SharedDropdown from '../components/SharedDropdown';
 import { usePortfolioData } from '../context/PortfolioDataContext';
 import { formatCurrency, formatDate } from '../utils/formatters';
+import {
+  normalizeMethodOptions,
+  normalizeNumericOptions,
+  resolveCalendarMonthValue,
+  resolveSelectableValue,
+} from './dividendsPage.state.js';
 import './DividendsPage.scss';
-
-const normalizeNumericOptions = (
-  options: Array<{ value: string; label: string }>,
-  fallbackValue: string
-) => {
-  const normalized = options
-    .map((option) => ({
-      value: String(option.value || '').trim(),
-      label: String(option.label || option.value || '').trim() || String(option.value || '').trim(),
-    }))
-    .filter((option) => {
-      const parsed = Number(option.value);
-      return option.value && Number.isFinite(parsed) && parsed > 0;
-    });
-  if (normalized.length > 0) return normalized;
-  return [{ value: fallbackValue, label: fallbackValue }];
-};
-
-const normalizeMethodOptions = (
-  options: Array<{ value: string; label: string }>,
-  fallbackValue: string
-) => {
-  const allowed = new Set(['fifo', 'weighted_average']);
-  const normalized = options
-    .map((option) => ({
-      value: String(option.value || '').trim().toLowerCase(),
-      label: String(option.label || option.value || '').trim() || String(option.value || '').trim(),
-    }))
-    .filter((option) => option.value && allowed.has(option.value));
-  if (normalized.length > 0) return normalized;
-  return [{ value: fallbackValue, label: fallbackValue.toUpperCase() }];
-};
 
 const toDateMinusMonths = (monthsBack: number) => {
   const date = new Date();
@@ -291,15 +269,13 @@ const DividendsPage = () => {
   }, [dropdownConfig]);
 
   useEffect(() => {
-    if (!periodOptions.some((option) => option.value === periodMonths)) {
-      setPeriodMonths(periodOptions[0]?.value || '12');
-    }
+    const nextValue = resolveSelectableValue(periodMonths, periodOptions, '12');
+    if (nextValue !== periodMonths) setPeriodMonths(nextValue);
   }, [periodMonths, periodOptions]);
 
   useEffect(() => {
-    if (!methodOptions.some((option) => option.value === method)) {
-      setMethod(methodOptions[0]?.value || 'fifo');
-    }
+    const nextValue = resolveSelectableValue(method, methodOptions, 'fifo');
+    if (nextValue !== method) setMethod(nextValue);
   }, [method, methodOptions]);
 
   const fromDate = useMemo(() => {
@@ -317,10 +293,21 @@ const DividendsPage = () => {
     [periodMonths, periodOptions, selectedPeriodMonths]
   );
 
+  const cacheKey = useMemo(() => {
+    if (!selectedPortfolio) return '';
+    return buildAnalyticsCacheKey('dividends', [
+      selectedPortfolio,
+      fromDate,
+      method,
+      selectedPeriodMonths,
+    ]);
+  }, [fromDate, method, selectedPeriodMonths, selectedPortfolio]);
+
   useEffect(() => {
-    if (!selectedPortfolio) {
+    if (!selectedPortfolio || !cacheKey) {
       setPayload(null);
       setLoading(false);
+      setError(null);
       return;
     }
 
@@ -328,7 +315,11 @@ const DividendsPage = () => {
     setLoading(true);
     setError(null);
 
-    api.getDividends(selectedPortfolio, { fromDate, method, periodMonths: selectedPeriodMonths })
+    getOrFetchCachedAnalytics(
+      cacheKey,
+      () => api.getDividends(selectedPortfolio, { fromDate, method, periodMonths: selectedPeriodMonths }),
+      { ttlMs: 3 * 60 * 1000 }
+    )
       .then((response) => {
         if (cancelled) return;
         setPayload(response);
@@ -343,7 +334,7 @@ const DividendsPage = () => {
       });
 
     return () => { cancelled = true; };
-  }, [fromDate, method, selectedPeriodMonths, selectedPortfolio]);
+  }, [cacheKey, fromDate, method, selectedPeriodMonths, selectedPortfolio]);
 
   const monthlySeries = useMemo(() => (
     (payload?.monthly_dividends || []).map((item) => ({
@@ -620,17 +611,17 @@ const DividendsPage = () => {
   }, [calendarEvents, numberLocale, todayIso]);
 
   useEffect(() => {
-    setCalendarMonth(todayIso.slice(0, 7));
+    const currentMonth = todayIso.slice(0, 7);
+    setCalendarMonth((previous) => (previous === currentMonth ? previous : currentMonth));
   }, [selectedPortfolio, todayIso]);
 
   useEffect(() => {
-    if (!calendarMonthOptions.some((option) => option.value === calendarMonth)) {
-      const currentMonth = todayIso.slice(0, 7);
-      const fallback = calendarMonthOptions.find((option) => option.value === currentMonth)?.value
-        || calendarMonthOptions[calendarMonthOptions.length - 1]?.value
-        || currentMonth;
-      setCalendarMonth(fallback);
-    }
+    const nextMonth = resolveCalendarMonthValue(
+      calendarMonth,
+      calendarMonthOptions.map((option) => option.value),
+      todayIso.slice(0, 7)
+    );
+    if (nextMonth !== calendarMonth) setCalendarMonth(nextMonth);
   }, [calendarMonth, calendarMonthOptions, todayIso]);
 
   const calendarMonthEvents = useMemo(() => (

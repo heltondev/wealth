@@ -41,19 +41,34 @@
     "eventsNotice": {
       "title": "Alertas de Eventos",
       "refresh": "Atualizar",
+      "markAllRead": "Marcar tudo como lido",
+      "markAsRead": "Marcar como lido",
+      "markAsUnread": "Marcar como não lido",
+      "read": "Lido",
+      "unread": "Não lido",
       "loading": "Verificando eventos em segundo plano...",
       "today": "Hoje",
       "week": "Esta Semana",
       "todayCount": "Hoje: {{count}}",
       "weekCount": "Semana: {{count}}",
+      "unreadCount": "{{count}} não lidos",
       "noneToday": "Sem eventos para hoje.",
       "noneWeek": "Sem eventos para esta semana.",
       "menuSummary": "{{today}} hoje / {{week}} semana",
+      "filters": {
+        "all": "Todos",
+        "unread": "Não lidos"
+      },
       "kinds": {
         "payment": "Pagamento",
         "provisioned": "Provisionado",
         "informe": "Informe",
         "event": "Evento"
+      },
+      "severity": {
+        "low": "Baixa",
+        "medium": "Média",
+        "high": "Alta"
       },
       "modal": {
         "title": "Detalhes do Evento",
@@ -67,11 +82,14 @@
         "fields": {
           "ticker": "Ticker",
           "kind": "Categoria",
+          "severity": "Severidade",
+          "read": "Status",
           "eventDate": "Data do Evento",
           "eventType": "Tipo do Evento",
           "eventTitle": "Título",
           "source": "Fonte",
           "updatedAt": "Atualizado Em",
+          "readAt": "Lido Em",
           "id": "ID",
           "details": "Detalhes"
         }
@@ -553,12 +571,40 @@
       "grossSales": "Vendas Brutas",
       "realizedGain": "Lucro/Prejuízo Realizado",
       "taxDue": "Imposto Devido (DARF)",
+      "carryIn": "Prejuízo Anterior",
       "carryLoss": "Prejuízo Acumulado",
       "exemption": "Isenção",
+      "trace": "Explicar Valor",
       "dividends": "Dividendos (Isentos)",
       "jcp": "JCP (Tributável)",
       "stockExemption": "Isenção em Ações",
       "total": "Total"
+    },
+    "trace": {
+      "notAvailable": "Sem rastreio",
+      "rule": "Regra",
+      "formula": "Fórmula",
+      "taxableGain": "Base Tributável",
+      "rate": "Alíquota",
+      "taxDue": "DARF",
+      "exemption": "Motivo da Isenção",
+      "exemptionLimit": "Limite da Regra",
+      "carryOut": "Prejuízo para Próximo Mês",
+      "decisions": {
+        "taxable_gain": "Ganho Tributável",
+        "exempt_gain": "Ganho Isento",
+        "loss_carry_forward": "Prejuízo Acumulado",
+        "break_even": "Sem Efeito Tributário"
+      },
+      "reasons": {
+        "gross_sales_within_cap": "Vendas dentro do limite mensal",
+        "gross_sales_above_cap": "Vendas acima do limite mensal",
+        "outside_exemption_window": "Fora da janela de isenção",
+        "no_sales": "Sem vendas no mês",
+        "non_positive_gain": "Sem ganho positivo ajustado",
+        "no_exemption_rule": "Classe sem regra de isenção",
+        "not_eligible": "Não elegível"
+      }
     }
   },
   "assets": {

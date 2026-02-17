@@ -15,8 +15,8 @@ const Layout = ({ children }: LayoutProps) => {
   const { theme, toggleTheme } = useTheme();
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const todayCount = Number(eventNotices?.today_count || 0);
-  const weekCount = Number(eventNotices?.week_count || 0);
+  const todayCount = Number(eventNotices?.unread_today_count ?? eventNotices?.today_count ?? 0);
+  const weekCount = Number(eventNotices?.unread_week_count ?? eventNotices?.week_count ?? 0);
 
   const handleLogout = () => {
     logout();

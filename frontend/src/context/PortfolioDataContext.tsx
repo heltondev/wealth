@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -34,10 +35,13 @@ interface PortfolioDataContextType {
   eventNoticesLoading: boolean;
   refreshMetrics: () => void;
   refreshEventNotices: () => void;
+  setEventNoticeRead: (eventId: string, read: boolean) => Promise<void>;
+  markAllEventNoticesRead: (scope?: 'all' | 'today' | 'week' | 'unread') => Promise<void>;
   refreshPortfolioData: () => Promise<void>;
 }
 
 const METRICS_TTL_MS = 5 * 60 * 1000;
+const EVENT_INBOX_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 const METRICS_STORAGE_VERSION = 'v2';
 
 const storageKeyMetrics = (portfolioId: string) =>
@@ -155,6 +159,7 @@ export const PortfolioDataProvider = ({ children }: { children: ReactNode }) => 
   );
   const [eventNotices, setEventNotices] = useState<PortfolioEventNoticesResponse | null>(null);
   const [eventNoticesLoading, setEventNoticesLoading] = useState(false);
+  const eventNoticesRequestInFlightRef = useRef(false);
 
   const fetchPortfolioData = useCallback(async (portfolioId: string) => {
     const [assetItems, transactionItems] = await Promise.all([
@@ -235,9 +240,23 @@ export const PortfolioDataProvider = ({ children }: { children: ReactNode }) => 
       });
   }, []);
 
-  const fetchEventNotices = useCallback((portfolioId: string, forceRefresh = false) => {
+  const fetchEventNotices = useCallback(async (
+    portfolioId: string,
+    options?: {
+      sync?: boolean;
+      refreshSources?: boolean;
+      silent?: boolean;
+      status?: 'all' | 'read' | 'unread';
+    }
+  ) => {
     if (!portfolioId) return;
-    setEventNoticesLoading(true);
+    if (eventNoticesRequestInFlightRef.current) return;
+    eventNoticesRequestInFlightRef.current = true;
+
+    const shouldSync = options?.sync === true;
+    const silent = options?.silent === true;
+    if (!silent) setEventNoticesLoading(true);
+
     const applyNotices = (payload: PortfolioEventNoticesResponse | null) => {
       setSelectedPortfolioRaw((current) => {
         if (current === portfolioId) {
@@ -246,33 +265,26 @@ export const PortfolioDataProvider = ({ children }: { children: ReactNode }) => 
         return current;
       });
     };
-    const loadNotices = () =>
-      api.getPortfolioEventNotices(portfolioId, 7)
-        .then((payload) => {
-          applyNotices(payload);
-        })
-        .catch(() => {
-          applyNotices(null);
-        });
-    loadNotices()
-      .finally(() => {
-        if (!forceRefresh) {
-          setEventNoticesLoading(false);
-          return;
-        }
 
-        api.refreshCorporateEvents({ portfolioId })
-          .then(() => undefined)
-          .catch(() => {
-            // Keep first notice payload on refresh failure.
-          })
-          .finally(() => {
-            loadNotices()
-              .finally(() => {
-                setEventNoticesLoading(false);
-              });
-          });
+    try {
+      if (shouldSync) {
+        await api.syncPortfolioEventInbox(portfolioId, {
+          lookaheadDays: 7,
+          refreshSources: options?.refreshSources ?? true,
+        });
+      }
+      const payload = await api.getPortfolioEventInbox(portfolioId, {
+        lookaheadDays: 7,
+        status: options?.status || 'all',
+        limit: 300,
       });
+      applyNotices(payload);
+    } catch {
+      applyNotices(null);
+    } finally {
+      eventNoticesRequestInFlightRef.current = false;
+      if (!silent) setEventNoticesLoading(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -291,7 +303,29 @@ export const PortfolioDataProvider = ({ children }: { children: ReactNode }) => 
       setEventNoticesLoading(false);
       return;
     }
-    fetchEventNotices(selectedPortfolio, true);
+    void fetchEventNotices(selectedPortfolio, {
+      sync: true,
+      refreshSources: true,
+      silent: false,
+      status: 'all',
+    });
+  }, [selectedPortfolio, fetchEventNotices]);
+
+  useEffect(() => {
+    if (!selectedPortfolio) return undefined;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'hidden') return;
+      void fetchEventNotices(selectedPortfolio, {
+        sync: true,
+        refreshSources: true,
+        silent: true,
+        status: 'all',
+      });
+    }, EVENT_INBOX_SYNC_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(timer);
+    };
   }, [selectedPortfolio, fetchEventNotices]);
 
   const refreshMetrics = useCallback(() => {
@@ -299,7 +333,39 @@ export const PortfolioDataProvider = ({ children }: { children: ReactNode }) => 
   }, [fetchMetrics, selectedPortfolio]);
 
   const refreshEventNotices = useCallback(() => {
-    if (selectedPortfolio) fetchEventNotices(selectedPortfolio, true);
+    if (!selectedPortfolio) return;
+    void fetchEventNotices(selectedPortfolio, {
+      sync: true,
+      refreshSources: true,
+      silent: false,
+      status: 'all',
+    });
+  }, [fetchEventNotices, selectedPortfolio]);
+
+  const setEventNoticeRead = useCallback(async (eventId: string, read: boolean) => {
+    if (!selectedPortfolio || !eventId) return;
+    await api.setPortfolioEventInboxRead(selectedPortfolio, eventId, read);
+    await fetchEventNotices(selectedPortfolio, {
+      sync: false,
+      silent: true,
+      status: 'all',
+    });
+  }, [fetchEventNotices, selectedPortfolio]);
+
+  const markAllEventNoticesRead = useCallback(async (
+    scope: 'all' | 'today' | 'week' | 'unread' = 'all'
+  ) => {
+    if (!selectedPortfolio) return;
+    await api.markAllPortfolioEventInboxRead(selectedPortfolio, {
+      read: true,
+      scope,
+      lookaheadDays: 7,
+    });
+    await fetchEventNotices(selectedPortfolio, {
+      sync: false,
+      silent: true,
+      status: 'all',
+    });
   }, [fetchEventNotices, selectedPortfolio]);
 
   const refreshPortfolioData = useCallback(async () => {
@@ -309,7 +375,11 @@ export const PortfolioDataProvider = ({ children }: { children: ReactNode }) => 
       const { assetItems, transactionItems } = await fetchPortfolioData(selectedPortfolio);
       setAssets(assetItems);
       setTransactions(transactionItems);
-      fetchEventNotices(selectedPortfolio, false);
+      void fetchEventNotices(selectedPortfolio, {
+        sync: false,
+        silent: true,
+        status: 'all',
+      });
     } catch {
       setAssets([]);
       setTransactions([]);
@@ -330,6 +400,8 @@ export const PortfolioDataProvider = ({ children }: { children: ReactNode }) => 
     eventNoticesLoading,
     refreshMetrics,
     refreshEventNotices,
+    setEventNoticeRead,
+    markAllEventNoticesRead,
     refreshPortfolioData,
   }), [
     portfolios,
@@ -343,6 +415,8 @@ export const PortfolioDataProvider = ({ children }: { children: ReactNode }) => 
     eventNoticesLoading,
     refreshMetrics,
     refreshEventNotices,
+    setEventNoticeRead,
+    markAllEventNoticesRead,
     refreshPortfolioData,
   ]);
 

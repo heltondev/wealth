@@ -9,7 +9,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --test $(find tests -type f -name '*.test.mjs' | sort)"
   },
   "dependencies": {
     "i18next": "^25.8.7",

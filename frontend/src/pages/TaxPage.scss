@@ -195,7 +195,7 @@
 .tax-table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 840px;
+  min-width: 1080px;
 
   th,
   td {
@@ -228,6 +228,11 @@
     border-bottom: none;
   }
 
+  td:last-child {
+    white-space: normal;
+    min-width: 340px;
+  }
+
   &__value {
     font-variant-numeric: tabular-nums;
 
@@ -238,6 +243,54 @@
     &--negative {
       color: #fca5a5;
     }
+  }
+}
+
+.tax-trace {
+  display: block;
+
+  &__summary {
+    cursor: pointer;
+    color: #93c5fd;
+    font-weight: 600;
+    white-space: nowrap;
+    outline: none;
+  }
+
+  &__details {
+    margin: 0.45rem 0 0;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.25rem;
+
+    > div {
+      display: grid;
+      grid-template-columns: 130px minmax(0, 1fr);
+      gap: 0.4rem;
+      align-items: baseline;
+    }
+
+    dt {
+      margin: 0;
+      color: var(--text-secondary);
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.2px;
+    }
+
+    dd {
+      margin: 0;
+      color: var(--text-primary);
+      white-space: normal;
+      word-break: break-word;
+      font-size: 0.78rem;
+      line-height: 1.25;
+    }
+  }
+
+  &__empty {
+    color: var(--text-secondary);
+    font-size: 0.78rem;
   }
 }
 

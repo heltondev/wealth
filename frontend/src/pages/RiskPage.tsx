@@ -22,13 +22,21 @@ import Layout from '../components/Layout';
 import SharedDropdown from '../components/SharedDropdown';
 import { usePortfolioData } from '../context/PortfolioDataContext';
 import { api, type RiskResponse } from '../services/api';
+import {
+  buildAnalyticsCacheKey,
+  getOrFetchCachedAnalytics,
+} from '../services/analyticsCache';
 import { formatCurrency } from '../utils/formatters';
+import {
+  classifyReturnValue,
+  filterScatterRowsByReturn,
+  resolveRiskThresholdValue,
+} from './riskPage.state.js';
 import './RiskPage.scss';
 
 const THRESHOLD_OPTIONS = [10, 15, 20, 25, 30];
 const PERIOD_OPTIONS = ['1M', '3M', '6M', '1Y', 'MAX'] as const;
 const RETURN_FILTERS = ['all', 'positive', 'negative', 'neutral'] as const;
-const RETURN_ZERO_EPSILON = 0.001;
 const RISK_TABS = [
   'concentration',
   'fxExposure',
@@ -95,9 +103,9 @@ const parseIsoDateUtc = (value: string): Date => {
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(Math.max(value, min), max);
 
-const isPositiveReturn = (value: number): boolean => value > RETURN_ZERO_EPSILON;
-const isNegativeReturn = (value: number): boolean => value < -RETURN_ZERO_EPSILON;
-const isNeutralReturn = (value: number): boolean => !isPositiveReturn(value) && !isNegativeReturn(value);
+const isPositiveReturn = (value: number): boolean => classifyReturnValue(value) === 'positive';
+const isNegativeReturn = (value: number): boolean => classifyReturnValue(value) === 'negative';
+const isNeutralReturn = (value: number): boolean => classifyReturnValue(value) === 'neutral';
 
 const roundScatterValue = (value: number): number => Math.round(toNumber(value) * 10000) / 10000;
 
@@ -129,7 +137,7 @@ const RiskPage = () => {
       maximumFractionDigits: fractionDigits,
     })}%`;
 
-  const thresholdValue = toNumber(thresholdPct) > 0 ? toNumber(thresholdPct) : 15;
+  const thresholdValue = resolveRiskThresholdValue(thresholdPct, 15);
 
   const portfolioOptions = useMemo(
     () => portfolios.map((portfolio) => ({ value: portfolio.portfolioId, label: portfolio.name })),
@@ -194,8 +202,13 @@ const RiskPage = () => {
     [t]
   );
 
+  const cacheKey = useMemo(() => {
+    if (!selectedPortfolio) return '';
+    return buildAnalyticsCacheKey('risk', [selectedPortfolio, thresholdValue]);
+  }, [selectedPortfolio, thresholdValue]);
+
   useEffect(() => {
-    if (!selectedPortfolio) {
+    if (!selectedPortfolio || !cacheKey) {
       setRisk(null);
       setLoading(false);
       setError(null);
@@ -206,7 +219,11 @@ const RiskPage = () => {
     setLoading(true);
     setError(null);
 
-    api.getRisk(selectedPortfolio, { concentrationThreshold: thresholdValue })
+    getOrFetchCachedAnalytics(
+      cacheKey,
+      () => api.getRisk(selectedPortfolio, { concentrationThreshold: thresholdValue }),
+      { ttlMs: 3 * 60 * 1000 }
+    )
       .then((payload) => {
         if (cancelled) return;
         setRisk(payload);
@@ -221,7 +238,7 @@ const RiskPage = () => {
       });
 
     return () => { cancelled = true; };
-  }, [selectedPortfolio, thresholdValue]);
+  }, [cacheKey, selectedPortfolio, thresholdValue]);
 
   const concentrationRows = useMemo(() => (
     (risk?.concentration || [])
@@ -480,12 +497,10 @@ const RiskPage = () => {
       .sort((left, right) => right.volatility - left.volatility)
   ), [activeTickers, risk?.risk_return_scatter]);
 
-  const scatterRowsFiltered = useMemo(() => {
-    if (scatterFilter === 'positive') return scatterRows.filter((row) => isPositiveReturn(row.returnPct));
-    if (scatterFilter === 'negative') return scatterRows.filter((row) => isNegativeReturn(row.returnPct));
-    if (scatterFilter === 'neutral') return scatterRows.filter((row) => isNeutralReturn(row.returnPct));
-    return scatterRows;
-  }, [scatterFilter, scatterRows]);
+  const scatterRowsFiltered = useMemo(
+    () => filterScatterRowsByReturn(scatterRows, scatterFilter),
+    [scatterFilter, scatterRows]
+  );
 
   const scatterRowsPlotted = useMemo(() => {
     const grouped = new Map<string, Array<(typeof scatterRowsFiltered)[number]>>();

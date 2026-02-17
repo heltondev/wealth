@@ -171,11 +171,18 @@ export interface DividendsResponse {
 
 export interface PortfolioEventNoticeItem {
   id: string;
+  dedupe_key?: string | null;
   ticker: string;
   eventType: string;
   eventTitle: string;
   eventDate: string;
   notice_kind?: string;
+  severity?: 'low' | 'medium' | 'high' | string;
+  read?: boolean;
+  readAt?: string | null;
+  firstSeenAt?: string | null;
+  lastSeenAt?: string | null;
+  occurrences?: number;
   details?: Record<string, unknown> | null;
   data_source?: string | null;
   updatedAt?: string | null;
@@ -187,13 +194,38 @@ export interface PortfolioEventNoticesResponse {
   week_end: string;
   lookahead_days: number;
   tracked_tickers: number;
+  status_filter?: string;
+  severity_filter?: string | null;
+  total_count?: number;
+  unread_count?: number;
+  read_count?: number;
   today_count: number;
   week_count: number;
+  unread_today_count?: number;
+  unread_week_count?: number;
+  by_kind?: Record<string, number>;
+  by_severity?: Record<string, number>;
   today_by_kind?: Record<string, number>;
   week_by_kind?: Record<string, number>;
   today_events: PortfolioEventNoticeItem[];
   week_events: PortfolioEventNoticeItem[];
+  items?: PortfolioEventNoticeItem[];
   fetched_at: string;
+}
+
+export interface SyncPortfolioEventInboxResponse extends PortfolioEventNoticesResponse {
+  sync?: {
+    created: number;
+    updated: number;
+    reopened: number;
+    deleted: number;
+    refresh_sources: boolean;
+    tracked_tickers: number;
+    considered_events: number;
+    from_date: string;
+    to_date: string;
+    synced_at: string;
+  };
 }
 
 export interface TaxMonthlyItem {
@@ -203,6 +235,48 @@ export interface TaxMonthlyItem {
   tax_due: Record<string, number>;
   dividends: number;
   jcp: number;
+  carry_loss_by_class?: Record<string, number>;
+  explain_by_class?: Record<string, TaxMonthlyClassTrace>;
+}
+
+export interface TaxExemptionTrace {
+  type: string | null;
+  applied: boolean;
+  eligible: boolean;
+  reason: string;
+  limit_brl: number | null;
+  requires_positive_gain: boolean;
+  window_start: string | null;
+  window_end: string | null;
+}
+
+export interface TaxMonthlyClassTrace {
+  asset_class: string;
+  rule_id: string;
+  rule_label: string;
+  tax_rate: number;
+  gross_sales: number;
+  realized_gain: number;
+  carry_in: number;
+  adjusted_gain: number;
+  taxable_gain: number;
+  tax_due: number;
+  carry_out: number;
+  decision: string;
+  exemption: TaxExemptionTrace | null;
+}
+
+export interface TaxRuleConfig {
+  asset_class: string;
+  rule_id: string;
+  label: string;
+  rate: number;
+  exemption: {
+    type?: string | null;
+    limit_brl?: number;
+    requires_positive_gain?: boolean;
+    windows?: Array<Record<string, string | null>>;
+  } | null;
 }
 
 export interface TaxReportResponse {
@@ -212,7 +286,10 @@ export interface TaxReportResponse {
   total_tax_due: number;
   total_dividends_isentos: number;
   total_jcp_tributavel: number;
+  carry_loss_start_by_class?: Record<string, number>;
   carry_loss_by_class: Record<string, number>;
+  tax_rules_by_class?: Record<string, TaxRuleConfig>;
+  trace_version?: number;
   data_source?: string;
   fetched_at?: string;
   is_scraped?: boolean;
@@ -720,6 +797,79 @@ export const api = {
     const suffix = query.toString() ? `?${query.toString()}` : '';
     return request<DividendsResponse>(`/portfolios/${portfolioId}/dividends${suffix}`);
   },
+  getPortfolioEventInbox: (
+    portfolioId: string,
+    params?: {
+      lookaheadDays?: number;
+      status?: 'all' | 'read' | 'unread' | string;
+      severity?: 'low' | 'medium' | 'high' | string;
+      limit?: number;
+      sync?: boolean;
+      refreshSources?: boolean;
+    }
+  ) => {
+    const query = new URLSearchParams();
+    if (typeof params?.lookaheadDays === 'number' && Number.isFinite(params.lookaheadDays) && params.lookaheadDays > 0) {
+      query.set('lookaheadDays', String(Math.round(params.lookaheadDays)));
+    }
+    if (params?.status) query.set('status', params.status);
+    if (params?.severity) query.set('severity', params.severity);
+    if (typeof params?.limit === 'number' && Number.isFinite(params.limit) && params.limit > 0) {
+      query.set('limit', String(Math.round(params.limit)));
+    }
+    if (typeof params?.sync === 'boolean') query.set('sync', params.sync ? 'true' : 'false');
+    if (typeof params?.refreshSources === 'boolean') {
+      query.set('refreshSources', params.refreshSources ? 'true' : 'false');
+    }
+    const suffix = query.toString() ? `?${query.toString()}` : '';
+    return request<PortfolioEventNoticesResponse>(
+      `/portfolios/${encodeURIComponent(portfolioId)}/event-inbox${suffix}`
+    );
+  },
+  syncPortfolioEventInbox: (
+    portfolioId: string,
+    params?: {
+      lookaheadDays?: number;
+      includePastDays?: number;
+      pruneDaysPast?: number;
+      refreshSources?: boolean;
+    }
+  ) =>
+    request<SyncPortfolioEventInboxResponse>(
+      `/portfolios/${encodeURIComponent(portfolioId)}/event-inbox/sync`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          lookaheadDays: params?.lookaheadDays ?? 7,
+          includePastDays: params?.includePastDays ?? null,
+          pruneDaysPast: params?.pruneDaysPast ?? null,
+          refreshSources: params?.refreshSources ?? true,
+        }),
+      }
+    ),
+  setPortfolioEventInboxRead: (portfolioId: string, eventId: string, read: boolean) =>
+    request<{ portfolioId: string; id: string; read: boolean; readAt?: string | null; updatedAt?: string }>(
+      `/portfolios/${encodeURIComponent(portfolioId)}/event-inbox/${encodeURIComponent(eventId)}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({ read }),
+      }
+    ),
+  markAllPortfolioEventInboxRead: (
+    portfolioId: string,
+    payload?: { read?: boolean; scope?: 'all' | 'today' | 'week' | 'unread' | string; lookaheadDays?: number }
+  ) =>
+    request<{ portfolioId: string; scope: string; read: boolean; updated_count: number; updatedAt?: string }>(
+      `/portfolios/${encodeURIComponent(portfolioId)}/event-inbox/read`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          read: payload?.read ?? true,
+          scope: payload?.scope ?? 'all',
+          lookaheadDays: payload?.lookaheadDays ?? 7,
+        }),
+      }
+    ),
   getPortfolioEventNotices: (portfolioId: string, lookaheadDays = 7) =>
     request<PortfolioEventNoticesResponse>(
       `/portfolios/${encodeURIComponent(portfolioId)}/event-notices?lookaheadDays=${encodeURIComponent(String(lookaheadDays))}`

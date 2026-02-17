@@ -41,19 +41,34 @@
     "eventsNotice": {
       "title": "Event Alerts",
       "refresh": "Refresh",
+      "markAllRead": "Mark all as read",
+      "markAsRead": "Mark as read",
+      "markAsUnread": "Mark as unread",
+      "read": "Read",
+      "unread": "Unread",
       "loading": "Checking events in background...",
       "today": "Today",
       "week": "This Week",
       "todayCount": "Today: {{count}}",
       "weekCount": "Week: {{count}}",
+      "unreadCount": "{{count}} unread",
       "noneToday": "No events for today.",
       "noneWeek": "No events for this week.",
       "menuSummary": "{{today}} today / {{week}} week",
+      "filters": {
+        "all": "All",
+        "unread": "Unread"
+      },
       "kinds": {
         "payment": "Payment",
         "provisioned": "Provisioned",
         "informe": "Filing",
         "event": "Event"
+      },
+      "severity": {
+        "low": "Low",
+        "medium": "Medium",
+        "high": "High"
       },
       "modal": {
         "title": "Event Details",
@@ -67,11 +82,14 @@
         "fields": {
           "ticker": "Ticker",
           "kind": "Category",
+          "severity": "Severity",
+          "read": "Status",
           "eventDate": "Event Date",
           "eventType": "Event Type",
           "eventTitle": "Title",
           "source": "Source",
           "updatedAt": "Updated At",
+          "readAt": "Read At",
           "id": "ID",
           "details": "Details"
         }
@@ -553,12 +571,40 @@
       "grossSales": "Gross Sales",
       "realizedGain": "Realized Gain/Loss",
       "taxDue": "Tax Due (DARF)",
+      "carryIn": "Carry-In Loss",
       "carryLoss": "Carry Loss",
       "exemption": "Exemption",
+      "trace": "Explain Value",
       "dividends": "Dividends (Exempt)",
       "jcp": "JCP (Taxable)",
       "stockExemption": "Stock Exemption",
       "total": "Total"
+    },
+    "trace": {
+      "notAvailable": "No trace available",
+      "rule": "Rule",
+      "formula": "Formula",
+      "taxableGain": "Taxable Base",
+      "rate": "Rate",
+      "taxDue": "DARF",
+      "exemption": "Exemption Reason",
+      "exemptionLimit": "Rule Limit",
+      "carryOut": "Carry-Forward",
+      "decisions": {
+        "taxable_gain": "Taxable Gain",
+        "exempt_gain": "Exempt Gain",
+        "loss_carry_forward": "Loss Carry Forward",
+        "break_even": "No Tax Effect"
+      },
+      "reasons": {
+        "gross_sales_within_cap": "Sales within monthly cap",
+        "gross_sales_above_cap": "Sales above monthly cap",
+        "outside_exemption_window": "Outside exemption window",
+        "no_sales": "No sales in month",
+        "non_positive_gain": "No positive adjusted gain",
+        "no_exemption_rule": "Class has no exemption rule",
+        "not_eligible": "Not eligible"
+      }
     }
   },
   "assets": {

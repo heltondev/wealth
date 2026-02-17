@@ -903,6 +903,76 @@ async function handleEventNotices(method, portfolioId, userId, query = {}) {
 	});
 }
 
+async function handleEventInbox(method, portfolioId, userId, body, query = {}, subId = null) {
+	if (method === 'GET') {
+		return platformService.getPortfolioEventInbox(userId, {
+			portfolioId,
+			lookaheadDays: query.lookaheadDays || query.lookahead_days || 7,
+			status: query.status || 'all',
+			severity: query.severity || null,
+			limit: query.limit || 200,
+			sync: String(query.sync || '').toLowerCase() === 'true',
+			refreshSources: String(query.refreshSources || query.refresh_sources || '').toLowerCase() === 'true',
+		});
+	}
+
+	if (method === 'POST') {
+		const payload = parseBody(body);
+		if (subId === 'sync') {
+			return platformService.syncPortfolioEventInbox(userId, {
+				portfolioId,
+				lookaheadDays:
+					payload.lookaheadDays
+					|| payload.lookahead_days
+					|| query.lookaheadDays
+					|| query.lookahead_days
+					|| 7,
+				includePastDays:
+					payload.includePastDays
+					|| payload.include_past_days
+					|| query.includePastDays
+					|| query.include_past_days
+					|| null,
+				refreshSources:
+					payload.refreshSources === false || payload.refresh_sources === false
+						? false
+						: true,
+				pruneDaysPast:
+					payload.pruneDaysPast
+					|| payload.prune_days_past
+					|| query.pruneDaysPast
+					|| query.prune_days_past
+					|| null,
+			});
+		}
+
+		if (subId === 'read') {
+			return platformService.markAllPortfolioEventInboxRead(userId, {
+				portfolioId,
+				read: payload.read !== false,
+				scope: payload.scope || query.scope || 'all',
+				lookaheadDays: payload.lookaheadDays || query.lookaheadDays || 7,
+			});
+		}
+
+		throw errorResponse(404, 'Event inbox route not found');
+	}
+
+	if (method === 'PUT') {
+		if (!subId) throw errorResponse(400, 'event inbox id is required');
+		const payload = parseBody(body);
+		const result = await platformService.setPortfolioEventInboxRead(userId, {
+			portfolioId,
+			eventId: subId,
+			read: payload.read !== false,
+		});
+		if (!result) throw errorResponse(404, 'Event inbox item not found');
+		return result;
+	}
+
+	throw errorResponse(405, 'Method not allowed');
+}
+
 async function handleTax(method, portfolioId, userId, query = {}) {
 	if (method !== 'GET') throw errorResponse(405, 'Method not allowed');
 	const year = Number(query.year || new Date().getUTCFullYear());
@@ -1145,6 +1215,19 @@ async function handleJobs(method, id, subResource, userId, body, query = {}) {
 		const payload = parseBody(body);
 		return platformService.evaluateAlerts(userId, payload.portfolioId || query.portfolioId || null, {});
 	}
+	if (id === 'event-inbox') {
+		const payload = parseBody(body);
+		return platformService.syncPortfolioEventInbox(userId, {
+			portfolioId: payload.portfolioId || query.portfolioId || null,
+			lookaheadDays: payload.lookaheadDays || query.lookaheadDays || 7,
+			includePastDays: payload.includePastDays || query.includePastDays || null,
+			refreshSources:
+				payload.refreshSources === false || payload.refresh_sources === false
+					? false
+					: true,
+			pruneDaysPast: payload.pruneDaysPast || query.pruneDaysPast || null,
+		});
+	}
 
 	throw errorResponse(404, 'Unknown job id');
 }
@@ -1264,6 +1347,15 @@ exports.handler = async (event) => {
 				body = await handleDividends(httpMethod, id, userId, queryStringParameters || {});
 			} else if (subResource === 'event-notices') {
 				body = await handleEventNotices(httpMethod, id, userId, queryStringParameters || {});
+			} else if (subResource === 'event-inbox') {
+				body = await handleEventInbox(
+					httpMethod,
+					id,
+					userId,
+					requestBody,
+					queryStringParameters || {},
+					subId || null
+				);
 			} else if (subResource === 'tax') {
 				body = await handleTax(httpMethod, id, userId, queryStringParameters || {});
 			} else if (subResource === 'rebalance') {

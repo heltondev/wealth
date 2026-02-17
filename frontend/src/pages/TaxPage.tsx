@@ -15,7 +15,12 @@ import {
 import Layout from '../components/Layout';
 import SharedDropdown from '../components/SharedDropdown';
 import { usePortfolioData } from '../context/PortfolioDataContext';
-import { api, type TaxMonthlyItem, type TaxReportResponse } from '../services/api';
+import {
+  api,
+  type TaxMonthlyClassTrace,
+  type TaxMonthlyItem,
+  type TaxReportResponse,
+} from '../services/api';
 import { formatCurrency } from '../utils/formatters';
 import './TaxPage.scss';
 
@@ -43,9 +48,11 @@ interface TaxClassRow {
   classKey: string;
   grossSales: number;
   realizedGain: number;
+  carryIn: number;
   taxDue: number;
   carryLoss: number;
   stockExempt: boolean;
+  trace: TaxMonthlyClassTrace | null;
 }
 
 const toNumber = (value: unknown): number => {
@@ -60,6 +67,9 @@ const toTitleCase = (value: string): string =>
     .filter(Boolean)
     .map((token) => token.charAt(0).toUpperCase() + token.slice(1))
     .join(' ');
+
+const humanizeTraceToken = (value: string): string =>
+  toTitleCase(String(value || '').replace(/_/g, ' ').trim());
 
 const sumValues = (values: Record<string, number> | undefined): number =>
   Object.values(values || {}).reduce((sum, value) => sum + toNumber(value), 0);
@@ -95,6 +105,9 @@ const TaxPage = () => {
     if (value < 0) return `-${abs}`;
     return abs;
   };
+  const stockExemptionLimit = toNumber(
+    report?.tax_rules_by_class?.stock?.exemption?.limit_brl ?? TAX_STOCK_EXEMPTION_LIMIT
+  ) || TAX_STOCK_EXEMPTION_LIMIT;
 
   const portfolioOptions = useMemo(
     () => portfolios.map((portfolio) => ({ value: portfolio.portfolioId, label: portfolio.name })),
@@ -186,10 +199,18 @@ const TaxPage = () => {
       for (const key of Object.keys(row.gross_sales || {})) keys.add(key);
       for (const key of Object.keys(row.realized_gain || {})) keys.add(key);
       for (const key of Object.keys(row.tax_due || {})) keys.add(key);
+      for (const key of Object.keys(row.explain_by_class || {})) keys.add(key);
     }
+    for (const key of Object.keys(report?.carry_loss_start_by_class || {})) keys.add(key);
     for (const key of Object.keys(report?.carry_loss_by_class || {})) keys.add(key);
+    for (const key of Object.keys(report?.tax_rules_by_class || {})) keys.add(key);
     return Array.from(keys).filter(Boolean).sort((left, right) => left.localeCompare(right));
-  }, [report?.carry_loss_by_class, report?.monthly]);
+  }, [
+    report?.carry_loss_by_class,
+    report?.carry_loss_start_by_class,
+    report?.monthly,
+    report?.tax_rules_by_class,
+  ]);
 
   useEffect(() => {
     if (classFilter === 'all') return;
@@ -216,8 +237,11 @@ const TaxPage = () => {
       const taxDue = sumValues(record?.tax_due);
       const dividends = toNumber(record?.dividends);
       const jcp = toNumber(record?.jcp);
-      const stockGrossSales = toNumber(record?.gross_sales?.stock);
-      const stockExempt = stockGrossSales > 0 && stockGrossSales < TAX_STOCK_EXEMPTION_LIMIT;
+      const stockTrace = record?.explain_by_class?.stock;
+      const stockGrossSales = toNumber(stockTrace?.gross_sales ?? record?.gross_sales?.stock);
+      const stockExempt = stockTrace
+        ? Boolean(stockTrace.exemption?.applied)
+        : (stockGrossSales > 0 && stockGrossSales <= stockExemptionLimit);
       const hasData = grossSales !== 0 || realizedGain !== 0 || taxDue !== 0 || dividends !== 0 || jcp !== 0;
 
       return {
@@ -233,39 +257,47 @@ const TaxPage = () => {
         hasData,
       };
     })
-  ), [monthlyByKey, numberLocale, yearMonthKeys]);
+  ), [monthlyByKey, numberLocale, stockExemptionLimit, yearMonthKeys]);
 
   const classRows = useMemo<TaxClassRow[]>(() => {
     const runningCarry: Record<string, number> = {};
     const rows: TaxClassRow[] = [];
 
-    for (const classKey of classKeys) runningCarry[classKey] = 0;
+    for (const classKey of classKeys) {
+      runningCarry[classKey] = toNumber(report?.carry_loss_start_by_class?.[classKey]);
+    }
 
     for (const month of yearMonthKeys) {
       const record = monthlyByKey.get(month);
       const grossSalesByClass = record?.gross_sales || {};
       const realizedGainByClass = record?.realized_gain || {};
       const taxDueByClass = record?.tax_due || {};
+      const explainByClass = record?.explain_by_class || {};
 
       for (const classKey of classKeys) {
-        const grossSales = toNumber(grossSalesByClass[classKey]);
-        const realizedGain = toNumber(realizedGainByClass[classKey]);
-        const taxDue = toNumber(taxDueByClass[classKey]);
+        const trace = explainByClass[classKey] || null;
         const previousCarry = toNumber(runningCarry[classKey]);
-        const adjustedGain = previousCarry + realizedGain;
-        const stockExempt =
-          classKey === 'stock' &&
-          grossSales > 0 &&
-          grossSales < TAX_STOCK_EXEMPTION_LIMIT;
-        const taxableGain = stockExempt ? 0 : Math.max(0, adjustedGain);
-        const carryLoss = adjustedGain - taxableGain;
+        const grossSales = trace ? toNumber(trace.gross_sales) : toNumber(grossSalesByClass[classKey]);
+        const realizedGain = trace ? toNumber(trace.realized_gain) : toNumber(realizedGainByClass[classKey]);
+        const taxDue = trace ? toNumber(trace.tax_due) : toNumber(taxDueByClass[classKey]);
+        const carryIn = trace ? toNumber(trace.carry_in) : previousCarry;
+        const stockExempt = trace
+          ? Boolean(trace.exemption?.applied)
+          : (
+            classKey === 'stock' &&
+            grossSales > 0 &&
+            grossSales <= stockExemptionLimit
+          );
+        const carryLoss = trace
+          ? toNumber(trace.carry_out)
+          : (stockExempt ? previousCarry : Math.min(0, previousCarry + realizedGain));
         runningCarry[classKey] = carryLoss;
 
         const hasMovement =
           grossSales !== 0 ||
           realizedGain !== 0 ||
           taxDue !== 0 ||
-          previousCarry !== 0 ||
+          carryIn !== 0 ||
           carryLoss !== 0;
 
         if (!hasMovement) continue;
@@ -276,9 +308,11 @@ const TaxPage = () => {
           classKey,
           grossSales,
           realizedGain,
+          carryIn,
           taxDue,
           carryLoss,
           stockExempt,
+          trace,
         });
       }
     }
@@ -288,7 +322,14 @@ const TaxPage = () => {
         right.month.localeCompare(left.month) ||
         left.classKey.localeCompare(right.classKey)
     );
-  }, [classKeys, monthlyByKey, numberLocale, yearMonthKeys]);
+  }, [
+    classKeys,
+    monthlyByKey,
+    numberLocale,
+    report?.carry_loss_start_by_class,
+    stockExemptionLimit,
+    yearMonthKeys,
+  ]);
 
   const filteredClassRows = useMemo(
     () => (classFilter === 'all'
@@ -356,22 +397,23 @@ const TaxPage = () => {
   const monthsWithStockExemption = monthlyTotals.filter((row) => row.stockExempt).length;
 
   const renderExemptionLabel = (row: TaxClassRow) => {
-    if (row.classKey !== 'stock') {
+    const exemption = row.trace?.exemption;
+    if (!exemption || exemption.type === null) {
       return {
         text: t('tax.exemption.notApplicable'),
         className: 'tax-badge tax-badge--muted',
       };
     }
-    if (row.grossSales <= 0) {
-      return {
-        text: t('tax.exemption.noSales'),
-        className: 'tax-badge tax-badge--muted',
-      };
-    }
-    if (row.stockExempt) {
+    if (exemption.applied) {
       return {
         text: t('tax.exemption.exempt'),
         className: 'tax-badge tax-badge--positive',
+      };
+    }
+    if (exemption.reason === 'no_sales' || row.grossSales <= 0) {
+      return {
+        text: t('tax.exemption.noSales'),
+        className: 'tax-badge tax-badge--muted',
       };
     }
     return {
@@ -379,6 +421,16 @@ const TaxPage = () => {
       className: 'tax-badge tax-badge--warning',
     };
   };
+
+  const renderTraceDecision = (decision: string | undefined) =>
+    decision
+      ? t(`tax.trace.decisions.${decision}`, { defaultValue: humanizeTraceToken(decision) })
+      : t('tax.trace.notAvailable');
+
+  const renderTraceReason = (reason: string | undefined) =>
+    reason
+      ? t(`tax.trace.reasons.${reason}`, { defaultValue: humanizeTraceToken(reason) })
+      : t('tax.trace.notAvailable');
 
   return (
     <Layout>
@@ -462,7 +514,7 @@ const TaxPage = () => {
                 <header className="tax-card__header">
                   <div>
                     <h2>{t('tax.sections.gainByClass')}</h2>
-                    <p>{t('tax.stockExemptionRule', { limit: formatBrl(TAX_STOCK_EXEMPTION_LIMIT) })}</p>
+                    <p>{t('tax.stockExemptionRule', { limit: formatBrl(stockExemptionLimit) })}</p>
                   </div>
                 </header>
                 {chartClassKeys.length === 0 ? (
@@ -559,8 +611,10 @@ const TaxPage = () => {
                           <th>{t('tax.table.grossSales')}</th>
                           <th>{t('tax.table.realizedGain')}</th>
                           <th>{t('tax.table.taxDue')}</th>
+                          <th>{t('tax.table.carryIn')}</th>
                           <th>{t('tax.table.carryLoss')}</th>
                           <th>{t('tax.table.exemption')}</th>
+                          <th>{t('tax.table.trace')}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -576,11 +630,63 @@ const TaxPage = () => {
                                 {formatSignedBrl(row.realizedGain)}
                               </td>
                               <td>{formatBrl(row.taxDue)}</td>
+                              <td className={row.carryIn < 0 ? 'tax-table__value tax-table__value--negative' : row.carryIn > 0 ? 'tax-table__value tax-table__value--positive' : 'tax-table__value'}>
+                                {formatSignedBrl(row.carryIn)}
+                              </td>
                               <td className={row.carryLoss < 0 ? 'tax-table__value tax-table__value--negative' : row.carryLoss > 0 ? 'tax-table__value tax-table__value--positive' : 'tax-table__value'}>
                                 {formatSignedBrl(row.carryLoss)}
                               </td>
                               <td>
                                 <span className={exemption.className}>{exemption.text}</span>
+                              </td>
+                              <td>
+                                {!row.trace ? (
+                                  <span className="tax-trace__empty">{t('tax.trace.notAvailable')}</span>
+                                ) : (
+                                  <details className="tax-trace">
+                                    <summary className="tax-trace__summary">
+                                      {renderTraceDecision(row.trace.decision)}
+                                    </summary>
+                                    <dl className="tax-trace__details">
+                                      <div>
+                                        <dt>{t('tax.trace.rule')}</dt>
+                                        <dd>{row.trace.rule_label || row.trace.rule_id}</dd>
+                                      </div>
+                                      <div>
+                                        <dt>{t('tax.trace.formula')}</dt>
+                                        <dd>
+                                          {`${formatSignedBrl(toNumber(row.trace.carry_in))} + ${formatSignedBrl(toNumber(row.trace.realized_gain))} = ${formatSignedBrl(toNumber(row.trace.adjusted_gain))}`}
+                                        </dd>
+                                      </div>
+                                      <div>
+                                        <dt>{t('tax.trace.taxableGain')}</dt>
+                                        <dd>{formatSignedBrl(toNumber(row.trace.taxable_gain))}</dd>
+                                      </div>
+                                      <div>
+                                        <dt>{t('tax.trace.rate')}</dt>
+                                        <dd>{`${(toNumber(row.trace.tax_rate) * 100).toFixed(2)}%`}</dd>
+                                      </div>
+                                      <div>
+                                        <dt>{t('tax.trace.taxDue')}</dt>
+                                        <dd>{formatBrl(toNumber(row.trace.tax_due))}</dd>
+                                      </div>
+                                      <div>
+                                        <dt>{t('tax.trace.exemption')}</dt>
+                                        <dd>{renderTraceReason(row.trace.exemption?.reason)}</dd>
+                                      </div>
+                                      {row.trace.exemption?.limit_brl !== null && row.trace.exemption?.limit_brl !== undefined && (
+                                        <div>
+                                          <dt>{t('tax.trace.exemptionLimit')}</dt>
+                                          <dd>{formatBrl(toNumber(row.trace.exemption.limit_brl))}</dd>
+                                        </div>
+                                      )}
+                                      <div>
+                                        <dt>{t('tax.trace.carryOut')}</dt>
+                                        <dd>{formatSignedBrl(toNumber(row.trace.carry_out))}</dd>
+                                      </div>
+                                    </dl>
+                                  </details>
+                                )}
                               </td>
                             </tr>
                           );

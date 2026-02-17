@@ -394,9 +394,10 @@ const CompareAssetsPage = () => {
       setFiiSnapshotsByTicker({});
       setError(reason instanceof Error ? reason.message : t('compare.loadError'));
     } finally {
-      if (requestId !== requestIdRef.current) return;
-      setLoading(false);
-      setFiiLoading(false);
+      if (requestId === requestIdRef.current) {
+        setLoading(false);
+        setFiiLoading(false);
+      }
     }
   }, [selectedPortfolio, selectedTickers, t]);
 

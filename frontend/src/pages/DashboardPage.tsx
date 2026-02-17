@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   Area,
   AreaChart,
@@ -38,6 +38,7 @@ const SUPPORTED_EVOLUTION_PERIODS = new Set(['1M', '3M', '6M', '1Y', '2Y', '5Y',
 
 type Trend = 'positive' | 'negative' | 'neutral';
 type NoticeKind = 'payment' | 'provisioned' | 'informe' | 'event';
+type NoticeSeverity = 'low' | 'medium' | 'high';
 
 interface AllocationChartDatum {
   key: string;
@@ -97,6 +98,13 @@ const normalizeNoticeKind = (value: unknown): NoticeKind => {
   return 'event';
 };
 
+const normalizeNoticeSeverity = (value: unknown): NoticeSeverity => {
+  const text = String(value || '').toLowerCase().trim();
+  if (text === 'high') return 'high';
+  if (text === 'medium') return 'medium';
+  return 'low';
+};
+
 const DashboardPage = () => {
   const { t, i18n } = useTranslation();
   const {
@@ -106,6 +114,8 @@ const DashboardPage = () => {
     eventNotices,
     eventNoticesLoading,
     refreshEventNotices,
+    setEventNoticeRead,
+    markAllEventNoticesRead,
   } = usePortfolioData();
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -115,6 +125,7 @@ const DashboardPage = () => {
   );
   const [evolutionPeriod, setEvolutionPeriod] = useState<string>('MAX');
   const [selectedEventNotice, setSelectedEventNotice] = useState<PortfolioEventNoticeItem | null>(null);
+  const [eventNoticeFilter, setEventNoticeFilter] = useState<'all' | 'unread'>('all');
 
   useEffect(() => {
     api.getDropdownSettings()
@@ -206,22 +217,74 @@ const DashboardPage = () => {
       }))
       .filter((point) => point.date && Number.isFinite(point.value));
   }, [dashboard?.evolution]);
-  const todayEvents = useMemo(() => eventNotices?.today_events || [], [eventNotices?.today_events]);
-  const weekEvents = useMemo(() => eventNotices?.week_events || [], [eventNotices?.week_events]);
-  const todayCount = Number(eventNotices?.today_count || 0);
-  const weekCount = Number(eventNotices?.week_count || 0);
+  const todayTotalCount = Number(eventNotices?.today_count || 0);
+  const weekTotalCount = Number(eventNotices?.week_count || 0);
+  const unreadTodayCount = Number(eventNotices?.unread_today_count ?? 0);
+  const unreadWeekCount = Number(eventNotices?.unread_week_count ?? 0);
+  const todayEventsRaw = useMemo(() => eventNotices?.today_events || [], [eventNotices?.today_events]);
+  const weekEventsRaw = useMemo(() => eventNotices?.week_events || [], [eventNotices?.week_events]);
+  const todayEvents = useMemo(() => {
+    const source = todayEventsRaw;
+    if (eventNoticeFilter === 'unread') return source.filter((event) => !event.read);
+    return source;
+  }, [todayEventsRaw, eventNoticeFilter]);
+  const weekEvents = useMemo(() => {
+    const source = weekEventsRaw;
+    if (eventNoticeFilter === 'unread') return source.filter((event) => !event.read);
+    return source;
+  }, [weekEventsRaw, eventNoticeFilter]);
 
   useEffect(() => {
     setSelectedEventNotice(null);
+    setEventNoticeFilter('all');
   }, [selectedPortfolio]);
 
   useEffect(() => {
     if (!selectedEventNotice) return;
-    const stillExists = [...todayEvents, ...weekEvents].some((event) => event.id === selectedEventNotice.id);
+    const stillExists = [...todayEventsRaw, ...weekEventsRaw]
+      .some((event) => event.id === selectedEventNotice.id);
     if (!stillExists) {
       setSelectedEventNotice(null);
     }
-  }, [selectedEventNotice, todayEvents, weekEvents]);
+  }, [selectedEventNotice, todayEventsRaw, weekEventsRaw]);
+
+  const handleOpenEventNotice = useCallback((event: PortfolioEventNoticeItem) => {
+    setSelectedEventNotice(event);
+    if (!event.id || event.read) return;
+    void setEventNoticeRead(event.id, true)
+      .then(() => {
+        setSelectedEventNotice((current) => {
+          if (!current || current.id !== event.id) return current;
+          return {
+            ...current,
+            read: true,
+            readAt: current.readAt || new Date().toISOString(),
+          };
+        });
+      })
+      .catch(() => undefined);
+  }, [setEventNoticeRead]);
+
+  const handleToggleSelectedEventRead = useCallback(() => {
+    if (!selectedEventNotice?.id) return;
+    const nextRead = !selectedEventNotice.read;
+    void setEventNoticeRead(selectedEventNotice.id, nextRead)
+      .then(() => {
+        setSelectedEventNotice((current) => {
+          if (!current || current.id !== selectedEventNotice.id) return current;
+          return {
+            ...current,
+            read: nextRead,
+            readAt: nextRead ? new Date().toISOString() : null,
+          };
+        });
+      })
+      .catch(() => undefined);
+  }, [selectedEventNotice, setEventNoticeRead]);
+
+  const handleMarkAllEventNoticesRead = useCallback(() => {
+    void markAllEventNoticesRead('all');
+  }, [markAllEventNoticesRead]);
 
   const formatNoticeDateTime = (value: unknown): string => {
     const text = String(value || '').trim();
@@ -299,7 +362,7 @@ const DashboardPage = () => {
     return String(value);
   };
 
-  const eventNoticeSections = useMemo<RecordDetailsSection[]>(() => {
+  const eventNoticeSections: RecordDetailsSection[] = (() => {
     if (!selectedEventNotice) return [];
 
     const details =
@@ -319,6 +382,20 @@ const DashboardPage = () => {
         value: t(`dashboard.eventsNotice.kinds.${normalizeNoticeKind(selectedEventNotice.notice_kind)}`, {
           defaultValue: normalizeNoticeKind(selectedEventNotice.notice_kind),
         }),
+      },
+      {
+        key: 'severity',
+        label: t('dashboard.eventsNotice.modal.fields.severity', { defaultValue: 'Severity' }),
+        value: t(`dashboard.eventsNotice.severity.${normalizeNoticeSeverity(selectedEventNotice.severity)}`, {
+          defaultValue: normalizeNoticeSeverity(selectedEventNotice.severity),
+        }),
+      },
+      {
+        key: 'read',
+        label: t('dashboard.eventsNotice.modal.fields.read', { defaultValue: 'Status' }),
+        value: selectedEventNotice.read
+          ? t('dashboard.eventsNotice.read', { defaultValue: 'Read' })
+          : t('dashboard.eventsNotice.unread', { defaultValue: 'Unread' }),
       },
       {
         key: 'eventDate',
@@ -344,6 +421,11 @@ const DashboardPage = () => {
         key: 'updatedAt',
         label: t('dashboard.eventsNotice.modal.fields.updatedAt', { defaultValue: 'Updated At' }),
         value: selectedEventNotice.updatedAt ? formatNoticeDateTime(selectedEventNotice.updatedAt) : '-',
+      },
+      {
+        key: 'readAt',
+        label: t('dashboard.eventsNotice.modal.fields.readAt', { defaultValue: 'Read At' }),
+        value: selectedEventNotice.readAt ? formatNoticeDateTime(selectedEventNotice.readAt) : '-',
       },
       {
         key: 'id',
@@ -381,7 +463,19 @@ const DashboardPage = () => {
         fullWidth: true,
       },
     ];
-  }, [selectedEventNotice, numberLocale, t]);
+  })();
+
+  const eventModalHeaderActions = selectedEventNotice ? (
+    <button
+      type="button"
+      className="dashboard-events__modal-action"
+      onClick={handleToggleSelectedEventRead}
+    >
+      {selectedEventNotice.read
+        ? t('dashboard.eventsNotice.markAsUnread', { defaultValue: 'Mark as unread' })
+        : t('dashboard.eventsNotice.markAsRead', { defaultValue: 'Mark as read' })}
+    </button>
+  ) : null;
 
   return (
     <Layout>
@@ -408,21 +502,49 @@ const DashboardPage = () => {
           <section className="dashboard-events">
             <header className="dashboard-events__header">
               <h2>{t('dashboard.eventsNotice.title')}</h2>
-              <button
-                type="button"
-                className="dashboard-events__refresh"
-                onClick={refreshEventNotices}
-                disabled={eventNoticesLoading}
-              >
-                {t('dashboard.eventsNotice.refresh')}
-              </button>
+              <div className="dashboard-events__actions">
+                <div className="dashboard-events__filters">
+                  <button
+                    type="button"
+                    className={`dashboard-events__filter ${eventNoticeFilter === 'all' ? 'dashboard-events__filter--active' : ''}`}
+                    onClick={() => setEventNoticeFilter('all')}
+                  >
+                    {t('dashboard.eventsNotice.filters.all', { defaultValue: 'All' })}
+                  </button>
+                  <button
+                    type="button"
+                    className={`dashboard-events__filter ${eventNoticeFilter === 'unread' ? 'dashboard-events__filter--active' : ''}`}
+                    onClick={() => setEventNoticeFilter('unread')}
+                  >
+                    {t('dashboard.eventsNotice.filters.unread', { defaultValue: 'Unread' })}
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  className="dashboard-events__mark-read"
+                  onClick={handleMarkAllEventNoticesRead}
+                  disabled={eventNoticesLoading || (Number(eventNotices?.unread_count || 0) <= 0)}
+                >
+                  {t('dashboard.eventsNotice.markAllRead', { defaultValue: 'Mark all as read' })}
+                </button>
+                <button
+                  type="button"
+                  className="dashboard-events__refresh"
+                  onClick={refreshEventNotices}
+                  disabled={eventNoticesLoading}
+                >
+                  {t('dashboard.eventsNotice.refresh')}
+                </button>
+              </div>
             </header>
             <div className="dashboard-events__kpis">
               <span className="dashboard-events__kpi dashboard-events__kpi--today">
-                {t('dashboard.eventsNotice.todayCount', { count: todayCount })}
+                {t('dashboard.eventsNotice.todayCount', { count: todayTotalCount })}
+                <small>{t('dashboard.eventsNotice.unreadCount', { count: unreadTodayCount })}</small>
               </span>
               <span className="dashboard-events__kpi dashboard-events__kpi--week">
-                {t('dashboard.eventsNotice.weekCount', { count: weekCount })}
+                {t('dashboard.eventsNotice.weekCount', { count: weekTotalCount })}
+                <small>{t('dashboard.eventsNotice.unreadCount', { count: unreadWeekCount })}</small>
               </span>
             </div>
             {eventNoticesLoading ? (
@@ -436,21 +558,30 @@ const DashboardPage = () => {
                   ) : (
                     <ul className="dashboard-events__list">
                       {todayEvents.map((event) => (
-                        <li key={`today-${event.id}`}>
+                        <li
+                          key={`today-${event.id}`}
+                          className={event.read ? 'dashboard-events__item dashboard-events__item--read' : 'dashboard-events__item dashboard-events__item--unread'}
+                        >
                           <button
                             type="button"
                             className="dashboard-events__event-btn"
-                            onClick={() => setSelectedEventNotice(event)}
+                            onClick={() => handleOpenEventNotice(event)}
                             aria-label={t('dashboard.eventsNotice.modal.openDetails', {
                               defaultValue: 'Open details for {{ticker}}',
                               ticker: event.ticker,
                             })}
                           >
                             <strong>
+                              <span className={`dashboard-events__state ${event.read ? 'dashboard-events__state--read' : 'dashboard-events__state--unread'}`} />
                               {event.ticker}
                               <em className={`dashboard-events__tag dashboard-events__tag--${normalizeNoticeKind(event.notice_kind)}`}>
                                 {t(`dashboard.eventsNotice.kinds.${normalizeNoticeKind(event.notice_kind)}`, {
                                   defaultValue: normalizeNoticeKind(event.notice_kind),
+                                })}
+                              </em>
+                              <em className={`dashboard-events__severity dashboard-events__severity--${normalizeNoticeSeverity(event.severity)}`}>
+                                {t(`dashboard.eventsNotice.severity.${normalizeNoticeSeverity(event.severity)}`, {
+                                  defaultValue: normalizeNoticeSeverity(event.severity),
                                 })}
                               </em>
                             </strong>
@@ -468,21 +599,30 @@ const DashboardPage = () => {
                   ) : (
                     <ul className="dashboard-events__list">
                       {weekEvents.map((event) => (
-                        <li key={`week-${event.id}`}>
+                        <li
+                          key={`week-${event.id}`}
+                          className={event.read ? 'dashboard-events__item dashboard-events__item--read' : 'dashboard-events__item dashboard-events__item--unread'}
+                        >
                           <button
                             type="button"
                             className="dashboard-events__event-btn"
-                            onClick={() => setSelectedEventNotice(event)}
+                            onClick={() => handleOpenEventNotice(event)}
                             aria-label={t('dashboard.eventsNotice.modal.openDetails', {
                               defaultValue: 'Open details for {{ticker}}',
                               ticker: event.ticker,
                             })}
                           >
                             <strong>
+                              <span className={`dashboard-events__state ${event.read ? 'dashboard-events__state--read' : 'dashboard-events__state--unread'}`} />
                               {event.ticker}
                               <em className={`dashboard-events__tag dashboard-events__tag--${normalizeNoticeKind(event.notice_kind)}`}>
                                 {t(`dashboard.eventsNotice.kinds.${normalizeNoticeKind(event.notice_kind)}`, {
                                   defaultValue: normalizeNoticeKind(event.notice_kind),
+                                })}
+                              </em>
+                              <em className={`dashboard-events__severity dashboard-events__severity--${normalizeNoticeSeverity(event.severity)}`}>
+                                {t(`dashboard.eventsNotice.severity.${normalizeNoticeSeverity(event.severity)}`, {
+                                  defaultValue: normalizeNoticeSeverity(event.severity),
                                 })}
                               </em>
                             </strong>
@@ -702,6 +842,7 @@ const DashboardPage = () => {
           }
           closeLabel={t('common.close', { defaultValue: 'Close' })}
           sections={eventNoticeSections}
+          headerActions={eventModalHeaderActions}
           onClose={() => setSelectedEventNotice(null)}
         />
       </div>

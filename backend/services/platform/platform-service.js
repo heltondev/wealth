@@ -401,10 +401,240 @@ const TAX_RATE_BY_CLASS = {
 	crypto: 0.15,
 	rsu: 0.15,
 };
+const STOCK_MONTHLY_EXEMPTION_LIMIT_BRL = 20000;
+const TAX_RULE_BY_CLASS = {
+	stock: {
+		rule_id: 'br_stock_swing_monthly_exemption',
+		label: 'Acoes (swing trade)',
+		rate: TAX_RATE_BY_CLASS.stock,
+		exemption: {
+			type: 'monthly_gross_sales_cap',
+			limit_brl: STOCK_MONTHLY_EXEMPTION_LIMIT_BRL,
+			requires_positive_gain: true,
+		},
+	},
+	fii: {
+		rule_id: 'br_fii_no_exemption',
+		label: 'FII',
+		rate: TAX_RATE_BY_CLASS.fii,
+		exemption: null,
+	},
+	etf: {
+		rule_id: 'br_etf_no_exemption',
+		label: 'ETF',
+		rate: TAX_RATE_BY_CLASS.etf,
+		exemption: null,
+	},
+	bond: {
+		rule_id: 'br_bond_standard',
+		label: 'Renda fixa',
+		rate: TAX_RATE_BY_CLASS.bond,
+		exemption: null,
+	},
+	crypto: {
+		rule_id: 'br_crypto_standard',
+		label: 'Crypto',
+		rate: TAX_RATE_BY_CLASS.crypto,
+		exemption: null,
+	},
+	rsu: {
+		rule_id: 'br_rsu_standard',
+		label: 'RSU',
+		rate: TAX_RATE_BY_CLASS.rsu,
+		exemption: null,
+	},
+};
 
 const numeric = (value, fallback = 0) => {
 	const parsed = toNumberOrNull(value);
 	return parsed === null ? fallback : parsed;
+};
+
+const resolveTaxRule = (assetClass) => {
+	const normalizedClass = String(assetClass || 'stock').toLowerCase();
+	const configured = TAX_RULE_BY_CLASS[normalizedClass] || null;
+	if (configured) {
+		return {
+			asset_class: normalizedClass,
+			rule_id: configured.rule_id,
+			label: configured.label,
+			rate: numeric(configured.rate, 0.15),
+			exemption: configured.exemption || null,
+		};
+	}
+	return {
+		asset_class: normalizedClass,
+		rule_id: 'br_default_standard',
+		label: normalizedClass || 'unknown',
+		rate: numeric(TAX_RATE_BY_CLASS[normalizedClass], 0.15),
+		exemption: null,
+	};
+};
+
+const normalizeCarryLossValue = (value) => {
+	const normalized = numeric(value, 0);
+	if (Math.abs(normalized) <= Number.EPSILON) return 0;
+	return Math.min(0, normalized);
+};
+
+const normalizeMonthKey = (value) => {
+	const text = String(value || '').trim();
+	if (!text) return null;
+	if (/^\d{4}-\d{2}$/.test(text)) return text;
+	const normalizedDate = normalizeDate(text);
+	if (normalizedDate) return normalizedDate.slice(0, 7);
+	const parsed = new Date(text);
+	if (Number.isNaN(parsed.getTime())) return null;
+	return parsed.toISOString().slice(0, 7);
+};
+
+const isMonthWithinWindow = (month, window) => {
+	const monthKey = normalizeMonthKey(month);
+	if (!monthKey) return false;
+	const start =
+		normalizeMonthKey(window?.start) ||
+		normalizeMonthKey(window?.from) ||
+		normalizeMonthKey(window?.start_month) ||
+		null;
+	const end =
+		normalizeMonthKey(window?.end) ||
+		normalizeMonthKey(window?.to) ||
+		normalizeMonthKey(window?.end_month) ||
+		null;
+	if (start && monthKey < start) return false;
+	if (end && monthKey > end) return false;
+	return true;
+};
+
+const evaluateMonthlyExemption = ({ rule, month, grossSales, adjustedGain }) => {
+	const exemption = rule?.exemption || null;
+	if (!exemption) {
+		return {
+			type: null,
+			applied: false,
+			eligible: false,
+			reason: 'no_exemption_rule',
+			limit_brl: null,
+			requires_positive_gain: false,
+			window_start: null,
+			window_end: null,
+		};
+	}
+
+	const windows = Array.isArray(exemption.windows) ? exemption.windows.filter(Boolean) : [];
+	const activeWindow = windows.length > 0
+		? windows.find((window) => isMonthWithinWindow(month, window)) || null
+		: null;
+
+	if (windows.length > 0 && !activeWindow) {
+		return {
+			type: exemption.type || null,
+			applied: false,
+			eligible: false,
+			reason: 'outside_exemption_window',
+			limit_brl: numeric(exemption.limit_brl, 0),
+			requires_positive_gain: exemption.requires_positive_gain !== false,
+			window_start: null,
+			window_end: null,
+		};
+	}
+
+	const requiresPositiveGain = exemption.requires_positive_gain !== false;
+	const positiveGainSatisfied = requiresPositiveGain ? adjustedGain > 0 : true;
+	const hasSales = grossSales > 0;
+	const limitBrl = numeric(exemption.limit_brl, 0);
+	const underGrossSalesCap =
+		exemption.type === 'monthly_gross_sales_cap'
+			? hasSales && grossSales <= limitBrl
+			: true;
+	const eligible = positiveGainSatisfied && underGrossSalesCap;
+
+	let reason = 'not_eligible';
+	if (eligible) reason = 'gross_sales_within_cap';
+	else if (!hasSales) reason = 'no_sales';
+	else if (!positiveGainSatisfied) reason = 'non_positive_gain';
+	else if (!underGrossSalesCap) reason = 'gross_sales_above_cap';
+
+	return {
+		type: exemption.type || null,
+		applied: eligible,
+		eligible,
+		reason,
+		limit_brl: limitBrl,
+		requires_positive_gain: requiresPositiveGain,
+		window_start: activeWindow ? normalizeMonthKey(activeWindow.start || activeWindow.from || activeWindow.start_month) : null,
+		window_end: activeWindow ? normalizeMonthKey(activeWindow.end || activeWindow.to || activeWindow.end_month) : null,
+	};
+};
+
+const evaluateTaxDecisionForMonthClass = ({
+	assetClass,
+	month,
+	grossSales,
+	realizedGain,
+	carryIn,
+}) => {
+	const rule = resolveTaxRule(assetClass);
+	const normalizedGrossSales = numeric(grossSales, 0);
+	const normalizedRealizedGain = numeric(realizedGain, 0);
+	const normalizedCarryIn = normalizeCarryLossValue(carryIn);
+	const adjustedGain = normalizedCarryIn + normalizedRealizedGain;
+	const exemption = evaluateMonthlyExemption({
+		rule,
+		month,
+		grossSales: normalizedGrossSales,
+		adjustedGain,
+	});
+
+	let taxableGain = 0;
+	let taxDue = 0;
+	let carryOut = normalizedCarryIn;
+	let decision = 'break_even';
+
+	if (adjustedGain <= 0) {
+		taxableGain = 0;
+		carryOut = normalizeCarryLossValue(adjustedGain);
+		decision = adjustedGain < 0 ? 'loss_carry_forward' : 'break_even';
+	} else if (exemption.applied) {
+		taxableGain = 0;
+		carryOut = normalizedCarryIn;
+		decision = 'exempt_gain';
+	} else {
+		taxableGain = adjustedGain;
+		taxDue = taxableGain * numeric(rule.rate, 0.15);
+		carryOut = 0;
+		decision = 'taxable_gain';
+	}
+
+	return {
+		rule,
+		trace: {
+			asset_class: rule.asset_class || String(assetClass || 'stock').toLowerCase(),
+			rule_id: rule.rule_id,
+			rule_label: rule.label,
+			tax_rate: numeric(rule.rate, 0.15),
+			gross_sales: normalizedGrossSales,
+			realized_gain: normalizedRealizedGain,
+			carry_in: normalizedCarryIn,
+			adjusted_gain: adjustedGain,
+			taxable_gain: taxableGain,
+			tax_due: taxDue,
+			carry_out: normalizeCarryLossValue(carryOut),
+			decision,
+			exemption,
+		},
+	};
+};
+
+const EVENT_INBOX_DEFAULT_LOOKAHEAD_DAYS = 7;
+const EVENT_INBOX_MAX_LOOKAHEAD_DAYS = 30;
+const EVENT_INBOX_DEFAULT_PAST_DAYS = 14;
+const EVENT_INBOX_DEFAULT_PRUNE_DAYS = 45;
+const EVENT_INBOX_MAX_LIMIT = 500;
+const EVENT_INBOX_SEVERITY_ORDER = {
+	high: 0,
+	medium: 1,
+	low: 2,
 };
 
 const FINANCIAL_STATEMENT_KEYS = [
@@ -1381,6 +1611,92 @@ const addDays = (isoDate, days) => {
 	if (Number.isNaN(base.getTime())) return isoDate;
 	base.setUTCDate(base.getUTCDate() + days);
 	return base.toISOString().slice(0, 10);
+};
+
+const dayDiff = (fromIsoDate, toIsoDate) => {
+	const from = new Date(`${normalizeDate(fromIsoDate) || ''}T00:00:00Z`);
+	const to = new Date(`${normalizeDate(toIsoDate) || ''}T00:00:00Z`);
+	if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return 0;
+	return Math.round((to.getTime() - from.getTime()) / 86400000);
+};
+
+const normalizeEventNoticeKind = (eventType, eventTitle, eventDate, today = nowIso().slice(0, 10)) => {
+	const text = `${String(eventType || '')} ${String(eventTitle || '')}`
+		.toLowerCase()
+		.normalize('NFD')
+		.replace(/[\u0300-\u036f]/g, ' ');
+	if (
+		text.includes('informe')
+		|| text.includes('relatorio')
+		|| text.includes('comunicado')
+		|| text.includes('fato relevante')
+		|| text.includes('assembleia')
+		|| text.includes('ata')
+		|| text.includes('resultado')
+		|| text.includes('document')
+	) {
+		return 'informe';
+	}
+	if (
+		text.includes('dividend')
+		|| text.includes('rendimento')
+		|| text.includes('provento')
+		|| text.includes('jcp')
+		|| text.includes('juros')
+		|| text.includes('amort')
+		|| text.includes('payment')
+		|| text.includes('subscr')
+		|| text.includes('subscription')
+	) {
+		return String(eventDate || '') > today ? 'provisioned' : 'payment';
+	}
+	return 'event';
+};
+
+const normalizeEventSeverity = (value) => {
+	const normalized = String(value || '').trim().toLowerCase();
+	if (normalized === 'high') return 'high';
+	if (normalized === 'medium') return 'medium';
+	return 'low';
+};
+
+const classifyEventSeverity = (noticeKind, eventDate, today = nowIso().slice(0, 10)) => {
+	const normalizedKind = String(noticeKind || '').trim().toLowerCase();
+	const kind = ['payment', 'provisioned', 'informe', 'event'].includes(normalizedKind)
+		? normalizedKind
+		: normalizeEventNoticeKind(noticeKind, noticeKind, eventDate, today);
+	const diff = dayDiff(today, eventDate);
+	if (kind === 'payment') {
+		if (diff <= 0) return 'high';
+		if (diff <= 2) return 'medium';
+		return 'low';
+	}
+	if (kind === 'provisioned') {
+		if (diff <= 2) return 'high';
+		if (diff <= 5) return 'medium';
+		return 'low';
+	}
+	if (kind === 'informe') {
+		if (diff <= 1) return 'high';
+		return 'medium';
+	}
+	if (diff <= 1) return 'medium';
+	return 'low';
+};
+
+const sortEventInboxItems = (left, right) => {
+	const leftRead = left?.read === true ? 1 : 0;
+	const rightRead = right?.read === true ? 1 : 0;
+	if (leftRead !== rightRead) return leftRead - rightRead;
+
+	const leftSeverity = EVENT_INBOX_SEVERITY_ORDER[normalizeEventSeverity(left?.severity)] ?? 99;
+	const rightSeverity = EVENT_INBOX_SEVERITY_ORDER[normalizeEventSeverity(right?.severity)] ?? 99;
+	if (leftSeverity !== rightSeverity) return leftSeverity - rightSeverity;
+
+	return String(left?.eventDate || '').localeCompare(String(right?.eventDate || ''))
+		|| String(left?.ticker || '').localeCompare(String(right?.ticker || ''))
+		|| String(left?.eventType || '').localeCompare(String(right?.eventType || ''))
+		|| String(left?.eventTitle || '').localeCompare(String(right?.eventTitle || ''));
 };
 
 const monthKey = (date) => {
@@ -3585,136 +3901,265 @@ class PlatformService {
 		};
 	}
 
-	async getPortfolioEventNotices(userId, options = {}) {
+	async syncPortfolioEventInbox(userId, options = {}) {
 		const portfolioId = await this.#resolvePortfolioId(userId, options.portfolioId);
 		const lookaheadDays = Math.min(
-			Math.max(Math.round(numeric(options.lookaheadDays, 7)), 1),
-			30
+			Math.max(Math.round(numeric(options.lookaheadDays, EVENT_INBOX_DEFAULT_LOOKAHEAD_DAYS)), 1),
+			EVENT_INBOX_MAX_LOOKAHEAD_DAYS
+		);
+		const includePastDays = Math.min(
+			Math.max(Math.round(numeric(options.includePastDays, EVENT_INBOX_DEFAULT_PAST_DAYS)), 0),
+			365
+		);
+		const refreshSources = options.refreshSources !== false;
+
+		if (refreshSources) {
+			try {
+				await this.fetchCorporateEvents(null, { portfolioId });
+			} catch (error) {
+				this.logger.warn(
+					JSON.stringify({
+						event: 'event_inbox_sync_source_refresh_failed',
+						portfolioId,
+						error: error.message,
+						fetched_at: nowIso(),
+					})
+				);
+			}
+		}
+
+		const collected = await this.#collectPortfolioEventCandidates(portfolioId, {
+			lookaheadDays,
+			includePastDays,
+		});
+		const now = nowIso();
+		const existingRows = await this.#listPortfolioEventInboxItems(portfolioId);
+		const existingByDedupe = new Map();
+		for (const row of existingRows) {
+			const dedupeKey = String(row.dedupeKey || '').trim();
+			if (!dedupeKey) continue;
+			if (!existingByDedupe.has(dedupeKey)) existingByDedupe.set(dedupeKey, row);
+		}
+
+		let created = 0;
+		let updated = 0;
+		let reopened = 0;
+
+		for (const candidate of collected.events) {
+			const existing = existingByDedupe.get(candidate.dedupeKey) || null;
+			const sourceUpdatedAt = String(candidate.sourceUpdatedAt || '');
+			const existingSourceUpdatedAt = String(existing?.sourceUpdatedAt || existing?.updatedAt || '');
+			const hasSourceUpdate =
+				Boolean(sourceUpdatedAt)
+				&& sourceUpdatedAt > existingSourceUpdatedAt;
+			const shouldReopen = Boolean(existing?.read) && hasSourceUpdate;
+			const eventId = String(existing?.eventId || candidate.id || '');
+			const eventDate = normalizeDate(existing?.eventDate || candidate.eventDate || candidate.date || null);
+			if (!eventId || !eventDate) continue;
+
+			const item = {
+				PK: `PORTFOLIO#${portfolioId}`,
+				SK: `EVENT_INBOX#${eventDate}#${eventId}`,
+				entityType: 'EVENT_INBOX_ITEM',
+				portfolioId,
+				eventId,
+				dedupeKey: candidate.dedupeKey,
+				ticker: candidate.ticker,
+				eventType: candidate.eventType,
+				eventTitle: candidate.eventTitle,
+				eventDate,
+				notice_kind: candidate.notice_kind,
+				severity: normalizeEventSeverity(candidate.severity),
+				details: candidate.details || null,
+				data_source: candidate.data_source || null,
+				sourceUpdatedAt: candidate.sourceUpdatedAt || null,
+				firstSeenAt: existing?.firstSeenAt || now,
+				lastSeenAt: now,
+				occurrences: numeric(existing?.occurrences, 0) + 1,
+				read: existing ? (shouldReopen ? false : Boolean(existing.read)) : false,
+				readAt: existing
+					? (shouldReopen ? null : (existing.readAt || null))
+					: null,
+				fetched_at: now,
+				is_scraped: candidate.data_source ? true : Boolean(existing?.is_scraped),
+				updatedAt: now,
+			};
+
+			await this.dynamo.send(
+				new PutCommand({
+					TableName: this.tableName,
+					Item: item,
+				})
+			);
+
+			if (!existing) {
+				created += 1;
+			} else {
+				updated += 1;
+				if (shouldReopen) reopened += 1;
+			}
+		}
+
+		const seenDedupes = new Set(collected.events.map((event) => event.dedupeKey));
+		const pruneDaysPast = Math.min(
+			Math.max(Math.round(numeric(options.pruneDaysPast, EVENT_INBOX_DEFAULT_PRUNE_DAYS)), 7),
+			365
+		);
+		const pruneBeforeDate = addDays(collected.today, -pruneDaysPast);
+		let deleted = 0;
+
+		for (const row of existingRows) {
+			const dedupeKey = String(row.dedupeKey || '').trim();
+			if (dedupeKey && seenDedupes.has(dedupeKey)) continue;
+
+			const eventDate = normalizeDate(row.eventDate || row.date || null);
+			if (!eventDate || eventDate >= pruneBeforeDate) continue;
+			if (row.read === false) continue;
+
+			await this.dynamo.send(
+				new DeleteCommand({
+					TableName: this.tableName,
+					Key: {
+						PK: row.PK,
+						SK: row.SK,
+					},
+				})
+			);
+			deleted += 1;
+		}
+
+		const inbox = await this.getPortfolioEventInbox(userId, {
+			portfolioId,
+			lookaheadDays,
+			status: 'all',
+			limit: EVENT_INBOX_MAX_LIMIT,
+			sync: false,
+		});
+
+		return {
+			...inbox,
+			sync: {
+				created,
+				updated,
+				reopened,
+				deleted,
+				refresh_sources: refreshSources,
+				tracked_tickers: collected.trackedTickers.length,
+				considered_events: collected.events.length,
+				from_date: collected.fromDate,
+				to_date: collected.toDate,
+				synced_at: now,
+			},
+		};
+	}
+
+	async getPortfolioEventInbox(userId, options = {}) {
+		const portfolioId = await this.#resolvePortfolioId(userId, options.portfolioId);
+		const lookaheadDays = Math.min(
+			Math.max(Math.round(numeric(options.lookaheadDays, EVENT_INBOX_DEFAULT_LOOKAHEAD_DAYS)), 1),
+			EVENT_INBOX_MAX_LOOKAHEAD_DAYS
 		);
 		const today = nowIso().slice(0, 10);
 		const weekEnd = addDays(today, lookaheadDays - 1);
-		const classifyNoticeKind = (eventType, eventTitle, eventDate) => {
-			const text = `${String(eventType || '')} ${String(eventTitle || '')}`
-				.toLowerCase()
-				.normalize('NFD')
-				.replace(/[\u0300-\u036f]/g, ' ');
-			if (
-				text.includes('informe')
-				|| text.includes('relatorio')
-				|| text.includes('comunicado')
-				|| text.includes('fato relevante')
-				|| text.includes('assembleia')
-				|| text.includes('ata')
-				|| text.includes('resultado')
-				|| text.includes('document')
-			) {
-				return 'informe';
-			}
-			if (
-				text.includes('dividend')
-				|| text.includes('rendimento')
-				|| text.includes('provento')
-				|| text.includes('jcp')
-				|| text.includes('juros')
-				|| text.includes('amort')
-				|| text.includes('payment')
-				|| text.includes('subscr')
-				|| text.includes('subscription')
-			) {
-				return String(eventDate || '') > today ? 'provisioned' : 'payment';
-			}
-			return 'event';
-		};
-		const buildKindCounts = (events) =>
-			events.reduce(
-				(acc, event) => {
-					const kind = String(event.notice_kind || 'event');
-					acc[kind] = numeric(acc[kind], 0) + 1;
-					return acc;
-				},
-				{}
-			);
+		const shouldSync = options.sync === true;
 
-		const assets = await this.#listPortfolioAssets(portfolioId);
-		const activeAssets = assets.filter((asset) =>
-			String(asset.status || 'active').toLowerCase() === 'active'
+		if (shouldSync) {
+			await this.syncPortfolioEventInbox(userId, {
+				portfolioId,
+				lookaheadDays,
+				includePastDays: options.includePastDays,
+				pruneDaysPast: options.pruneDaysPast,
+				refreshSources: options.refreshSources !== false,
+			});
+		}
+
+		const status = String(options.status || 'all').toLowerCase();
+		const severity = String(options.severity || '').trim().toLowerCase();
+		const limit = Math.min(
+			Math.max(Math.round(numeric(options.limit, 200)), 1),
+			EVENT_INBOX_MAX_LIMIT
 		);
+		const rows = await this.#listPortfolioEventInboxItems(portfolioId);
+		const assets = await this.#listPortfolioAssets(portfolioId);
 		const trackedTickers = Array.from(
 			new Set(
-				activeAssets
+				assets
+					.filter((asset) => String(asset.status || 'active').toLowerCase() === 'active')
 					.map((asset) => String(asset.ticker || '').toUpperCase())
 					.filter(Boolean)
 			)
 		);
 
-		const rowsByTicker = await Promise.all(
-			trackedTickers.map(async (ticker) => {
-				const rows = await this.#queryAll({
-					TableName: this.tableName,
-					KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
-					ExpressionAttributeValues: {
-						':pk': `ASSET_EVENT#${ticker}`,
-						':sk': 'DATE#',
-					},
-				});
-				return rows.map((row) => ({ ...row, ticker }));
+		const normalizedRows = rows
+			.map((row) => {
+				const storedKind = String(row.notice_kind || '').trim().toLowerCase();
+				const noticeKind = ['payment', 'provisioned', 'informe', 'event'].includes(storedKind)
+					? storedKind
+					: normalizeEventNoticeKind(
+						row.eventType,
+						row.eventTitle,
+						row.eventDate || row.date || null,
+						today
+					);
+				return {
+					id: String(row.eventId || '').trim(),
+					dedupe_key: String(row.dedupeKey || '').trim() || null,
+					ticker: String(row.ticker || '').toUpperCase(),
+					eventType: String(row.eventType || 'event').trim().toLowerCase() || 'event',
+					eventTitle: String(row.eventTitle || row.eventType || 'event').trim() || 'event',
+					eventDate: normalizeDate(row.eventDate || row.date || null),
+					notice_kind: noticeKind,
+					severity: normalizeEventSeverity(
+						row.severity
+						|| classifyEventSeverity(
+							noticeKind,
+							row.eventDate || row.date || null,
+							today
+						)
+					),
+					read: Boolean(row.read),
+					readAt: row.readAt || null,
+					details: row.details && typeof row.details === 'object' ? row.details : null,
+					data_source: String(row.data_source || '').trim() || null,
+					updatedAt: row.sourceUpdatedAt || row.updatedAt || row.fetched_at || null,
+					firstSeenAt: row.firstSeenAt || null,
+					lastSeenAt: row.lastSeenAt || null,
+					occurrences: Math.max(1, Math.round(numeric(row.occurrences, 1))),
+				};
 			})
-		);
+			.filter((row) => row.id && row.ticker && row.eventDate);
 
-		const deduped = new Map();
-		for (const row of rowsByTicker.flat()) {
-			const details = row?.details && typeof row.details === 'object' ? { ...row.details } : null;
-			const eventDate = normalizeDate(
-				row.eventDate
-				|| row.date
-				|| details?.eventDate
-				|| details?.deliveryDate
-				|| details?.referenceDate
-				|| details?.paymentDate
-				|| details?.exDate
-				|| null
-			);
-			if (!eventDate) continue;
-			if (eventDate < today || eventDate > weekEnd) continue;
+		const filtered = normalizedRows
+			.filter((event) => {
+				if (status === 'unread') return !event.read;
+				if (status === 'read') return event.read;
+				return true;
+			})
+			.filter((event) => {
+				if (!severity) return true;
+				return normalizeEventSeverity(event.severity) === normalizeEventSeverity(severity);
+			})
+			.sort(sortEventInboxItems);
 
-			const ticker = String(row.ticker || '').toUpperCase();
-			if (!ticker) continue;
-			const eventType = String(row.eventType || 'event').trim().toLowerCase() || 'event';
-			const eventTitle =
-				String(row.eventTitle || details?.title || details?.subject || eventType).trim()
-				|| eventType;
-			const dedupeKey = `${ticker}|${eventDate}|${eventType}|${eventTitle.toLowerCase()}`;
-			const existing = deduped.get(dedupeKey);
-			const candidate = {
-				id: String(row.SK || `${ticker}:${eventDate}:${eventType}`),
-				ticker,
-				eventType,
-				eventTitle,
-				eventDate,
-				notice_kind: classifyNoticeKind(eventType, eventTitle, eventDate),
-				details: details || null,
-				data_source: String(row.data_source || '').trim() || null,
-				updatedAt: row.updatedAt || row.fetched_at || null,
-			};
-			if (!existing) {
-				deduped.set(dedupeKey, candidate);
-				continue;
-			}
-			if (String(candidate.updatedAt || '') > String(existing.updatedAt || '')) {
-				deduped.set(dedupeKey, candidate);
-			}
-		}
+		const limitedItems = filtered.slice(0, limit);
+		const todayEvents = filtered
+			.filter((event) => event.eventDate === today)
+			.sort(sortEventInboxItems);
+		const weekEvents = filtered
+			.filter((event) => event.eventDate >= today && event.eventDate <= weekEnd)
+			.sort(sortEventInboxItems);
 
-		const weekEvents = Array.from(deduped.values())
-			.sort((left, right) =>
-				String(left.eventDate || '').localeCompare(String(right.eventDate || ''))
-				|| String(left.ticker || '').localeCompare(String(right.ticker || ''))
-				|| String(left.notice_kind || '').localeCompare(String(right.notice_kind || ''))
-				|| String(left.eventType || '').localeCompare(String(right.eventType || ''))
-			);
-		const todayEvents = weekEvents.filter((event) => event.eventDate === today);
-		const weekByKind = buildKindCounts(weekEvents);
-		const todayByKind = buildKindCounts(todayEvents);
+		const countBy = (events, keySelector, fallback = 'unknown') =>
+			events.reduce((acc, event) => {
+				const key = String(keySelector(event) || fallback).toLowerCase();
+				acc[key] = numeric(acc[key], 0) + 1;
+				return acc;
+			}, {});
+
+		const unreadCount = filtered.filter((event) => !event.read).length;
+		const readCount = Math.max(0, filtered.length - unreadCount);
+		const unreadTodayCount = todayEvents.filter((event) => !event.read).length;
+		const unreadWeekCount = weekEvents.filter((event) => !event.read).length;
 
 		return {
 			portfolioId,
@@ -3722,13 +4167,138 @@ class PlatformService {
 			week_end: weekEnd,
 			lookahead_days: lookaheadDays,
 			tracked_tickers: trackedTickers.length,
+			status_filter: status,
+			severity_filter: severity || null,
+			total_count: filtered.length,
+			unread_count: unreadCount,
+			read_count: readCount,
 			today_count: todayEvents.length,
 			week_count: weekEvents.length,
-			today_by_kind: todayByKind,
-			week_by_kind: weekByKind,
+			unread_today_count: unreadTodayCount,
+			unread_week_count: unreadWeekCount,
+			by_kind: countBy(filtered, (event) => event.notice_kind, 'event'),
+			by_severity: countBy(filtered, (event) => event.severity, 'low'),
+			today_by_kind: countBy(todayEvents, (event) => event.notice_kind, 'event'),
+			week_by_kind: countBy(weekEvents, (event) => event.notice_kind, 'event'),
 			today_events: todayEvents,
 			week_events: weekEvents,
+			items: limitedItems,
 			fetched_at: nowIso(),
+		};
+	}
+
+	async setPortfolioEventInboxRead(userId, options = {}) {
+		const portfolioId = await this.#resolvePortfolioId(userId, options.portfolioId);
+		const eventId = String(options.eventId || '').trim();
+		if (!eventId) return null;
+		const read = options.read !== false;
+		const now = nowIso();
+
+		const rows = await this.#listPortfolioEventInboxItems(portfolioId);
+		const existing = rows.find((row) => String(row.eventId || '').trim() === eventId) || null;
+		if (!existing) return null;
+
+		const next = {
+			...existing,
+			read,
+			readAt: read ? now : null,
+			updatedAt: now,
+			fetched_at: now,
+		};
+		await this.dynamo.send(
+			new PutCommand({
+				TableName: this.tableName,
+				Item: next,
+			})
+		);
+
+		return {
+			portfolioId,
+			id: eventId,
+			read,
+			readAt: next.readAt,
+			updatedAt: now,
+		};
+	}
+
+	async markAllPortfolioEventInboxRead(userId, options = {}) {
+		const portfolioId = await this.#resolvePortfolioId(userId, options.portfolioId);
+		const read = options.read !== false;
+		const scope = String(options.scope || 'all').toLowerCase();
+		const lookaheadDays = Math.min(
+			Math.max(Math.round(numeric(options.lookaheadDays, EVENT_INBOX_DEFAULT_LOOKAHEAD_DAYS)), 1),
+			EVENT_INBOX_MAX_LOOKAHEAD_DAYS
+		);
+		const now = nowIso();
+		const today = now.slice(0, 10);
+		const weekEnd = addDays(today, lookaheadDays - 1);
+		const rows = await this.#listPortfolioEventInboxItems(portfolioId);
+
+		let updated = 0;
+		for (const row of rows) {
+			const eventDate = normalizeDate(row.eventDate || row.date || null);
+			if (!eventDate) continue;
+
+			if (scope === 'today' && eventDate !== today) continue;
+			if (scope === 'week' && (eventDate < today || eventDate > weekEnd)) continue;
+			if (scope === 'unread' && Boolean(row.read)) continue;
+
+			if (Boolean(row.read) === read) continue;
+
+			const next = {
+				...row,
+				read,
+				readAt: read ? now : null,
+				updatedAt: now,
+				fetched_at: now,
+			};
+
+			await this.dynamo.send(
+				new PutCommand({
+					TableName: this.tableName,
+					Item: next,
+				})
+			);
+			updated += 1;
+		}
+
+		return {
+			portfolioId,
+			scope,
+			read,
+			updated_count: updated,
+			updatedAt: now,
+		};
+	}
+
+	async getPortfolioEventNotices(userId, options = {}) {
+		const inbox = await this.getPortfolioEventInbox(userId, {
+			portfolioId: options.portfolioId,
+			lookaheadDays: options.lookaheadDays,
+			status: options.status || 'all',
+			limit: options.limit || EVENT_INBOX_MAX_LIMIT,
+			severity: options.severity || null,
+			sync: options.sync === true,
+			refreshSources: options.refreshSources === true,
+		});
+
+		return {
+			portfolioId: inbox.portfolioId,
+			today: inbox.today,
+			week_end: inbox.week_end,
+			lookahead_days: inbox.lookahead_days,
+			tracked_tickers: inbox.tracked_tickers,
+			today_count: inbox.today_count,
+			week_count: inbox.week_count,
+			unread_count: inbox.unread_count,
+			unread_today_count: inbox.unread_today_count,
+			unread_week_count: inbox.unread_week_count,
+			today_by_kind: inbox.today_by_kind,
+			week_by_kind: inbox.week_by_kind,
+			today_events: inbox.today_events,
+			week_events: inbox.week_events,
+			items: inbox.items,
+			fetched_at: inbox.fetched_at,
 		};
 	}
 
@@ -4014,6 +4584,9 @@ class PlatformService {
 		const assets = await this.#listPortfolioAssets(portfolioId);
 		const assetById = new Map(assets.map((asset) => [asset.assetId, asset]));
 		const transactions = await this.#listPortfolioTransactions(portfolioId);
+		const selectedYearStartMonth = `${selectedYear}-01`;
+		const selectedYearEndDate = `${selectedYear}-12-31`;
+		const selectedYearPrefix = `${selectedYear}-`;
 
 		const sorted = [...transactions]
 			.map((tx) => ({
@@ -4022,7 +4595,7 @@ class PlatformService {
 				createdAt: String(tx.createdAt || ''),
 				transId: String(tx.transId || ''),
 			}))
-			.filter((tx) => tx.date)
+			.filter((tx) => tx.date && tx.date <= selectedYearEndDate)
 			.sort((left, right) =>
 				left.date.localeCompare(right.date)
 				|| left.createdAt.localeCompare(right.createdAt)
@@ -4031,7 +4604,6 @@ class PlatformService {
 
 		const lotsByAsset = new Map();
 		const monthly = new Map();
-		const carryLossByClass = {};
 
 		const getMonth = (date) => date.slice(0, 7);
 		const ensureMonth = (key) => {
@@ -4043,9 +4615,28 @@ class PlatformService {
 					tax_due: {},
 					dividends: 0,
 					jcp: 0,
+					explain_by_class: {},
 				});
 			}
 			return monthly.get(key);
+		};
+		const pruneNumericMap = (value) => {
+			const normalized = {};
+			for (const [key, raw] of Object.entries(value || {})) {
+				const parsed = numeric(raw, 0);
+				if (Math.abs(parsed) <= Number.EPSILON) continue;
+				normalized[key] = parsed;
+			}
+			return normalized;
+		};
+		const buildCarrySnapshot = (value) => {
+			const normalized = {};
+			for (const [key, raw] of Object.entries(value || {})) {
+				const parsed = normalizeCarryLossValue(raw);
+				if (Math.abs(parsed) <= Number.EPSILON) continue;
+				normalized[key] = parsed;
+			}
+			return normalized;
 		};
 		const addRealizedGain = (monthData, assetClass, gain) => {
 			const normalizedGain = numeric(gain, 0);
@@ -4054,12 +4645,14 @@ class PlatformService {
 		};
 
 		for (const tx of sorted) {
-			const txYear = Number(tx.date.slice(0, 4));
 			const type = String(tx.type || '').toLowerCase();
 			const quantity = Math.abs(numeric(tx.quantity, 0));
 			const price = numeric(tx.price, 0);
-			const amount = tx.amount !== undefined ? numeric(tx.amount, quantity * price) : quantity * price;
-			const fees = numeric(tx.fees, 0);
+			const rawAmount = tx.amount !== undefined ? numeric(tx.amount, quantity * price) : quantity * price;
+			const amount = (type === 'buy' || type === 'sell' || type === 'subscription')
+				? Math.abs(rawAmount)
+				: rawAmount;
+			const fees = Math.abs(numeric(tx.fees, 0));
 			const asset = assetById.get(tx.assetId) || {};
 			const assetClass = String(asset.assetClass || 'stock').toLowerCase();
 			const month = getMonth(tx.date);
@@ -4092,7 +4685,7 @@ class PlatformService {
 					lots.push({ quantity: remaining, costPerUnit, date: tx.date });
 				}
 
-				if (txYear === selectedYear && Math.abs(realizedGain) > Number.EPSILON) {
+				if (Math.abs(realizedGain) > Number.EPSILON) {
 					const monthData = ensureMonth(month);
 					addRealizedGain(monthData, assetClass, realizedGain);
 				}
@@ -4131,22 +4724,27 @@ class PlatformService {
 
 				const realizedFromClosedLong = (closedLongQty * (proceedsPerUnit - feesPerUnit)) - costBasis;
 
-				if (txYear === selectedYear) {
-					const monthData = ensureMonth(month);
-					monthData.gross_sales[assetClass] = (monthData.gross_sales[assetClass] || 0) + amount;
-					addRealizedGain(monthData, assetClass, realizedFromClosedLong);
-				}
+				const monthData = ensureMonth(month);
+				monthData.gross_sales[assetClass] = (monthData.gross_sales[assetClass] || 0) + amount;
+				addRealizedGain(monthData, assetClass, realizedFromClosedLong);
 				continue;
 			}
 
-			if (txYear === selectedYear && (type === 'dividend' || type === 'jcp')) {
+			if (type === 'dividend' || type === 'jcp') {
 				const monthData = ensureMonth(month);
 				if (type === 'dividend') monthData.dividends += amount;
 				if (type === 'jcp') monthData.jcp += amount;
 			}
 		}
 
+		for (let monthIndex = 1; monthIndex <= 12; monthIndex += 1) {
+			ensureMonth(`${selectedYear}-${String(monthIndex).padStart(2, '0')}`);
+		}
+
 		const monthKeys = Array.from(monthly.keys()).sort();
+		const carryLossByClass = {};
+		let carryLossStartByClass = {};
+		let capturedCarryLossStart = false;
 		const monthlyOutput = [];
 		let totalTaxDue = 0;
 		let totalDividends = 0;
@@ -4154,27 +4752,91 @@ class PlatformService {
 
 		for (const month of monthKeys) {
 			const record = monthly.get(month);
-			for (const [assetClass, rawGain] of Object.entries(record.realized_gain)) {
-				const grossSales = numeric(record.gross_sales[assetClass], 0);
-				const carried = numeric(carryLossByClass[assetClass], 0);
-				const adjustedGain = rawGain + carried;
-
-				let taxableGain = Math.max(0, adjustedGain);
-				if (assetClass === 'stock' && grossSales < 20000) {
-					taxableGain = 0;
-				}
-
-				const taxRate = TAX_RATE_BY_CLASS[assetClass] || 0.15;
-				const taxDue = taxableGain * taxRate;
-				record.tax_due[assetClass] = taxDue;
-				totalTaxDue += taxDue;
-
-				carryLossByClass[assetClass] = adjustedGain - taxableGain;
+			if (!capturedCarryLossStart && month >= selectedYearStartMonth) {
+				carryLossStartByClass = buildCarrySnapshot(carryLossByClass);
+				capturedCarryLossStart = true;
 			}
 
-			totalDividends += record.dividends;
-			totalJcp += record.jcp;
-			monthlyOutput.push(record);
+			const classesInRecord = new Set([
+				...Object.keys(record?.gross_sales || {}),
+				...Object.keys(record?.realized_gain || {}),
+				...Object.keys(carryLossByClass).filter(
+					(assetClass) => Math.abs(normalizeCarryLossValue(carryLossByClass[assetClass])) > Number.EPSILON
+				),
+			]);
+
+			for (const assetClass of classesInRecord) {
+				const evaluation = evaluateTaxDecisionForMonthClass({
+					assetClass,
+					month,
+					grossSales: record?.gross_sales?.[assetClass],
+					realizedGain: record?.realized_gain?.[assetClass],
+					carryIn: carryLossByClass[assetClass],
+				});
+				const trace = evaluation.trace;
+
+				if (Math.abs(numeric(trace.tax_due, 0)) > Number.EPSILON) {
+					record.tax_due[assetClass] = numeric(trace.tax_due, 0);
+				} else {
+					delete record.tax_due[assetClass];
+				}
+
+				record.explain_by_class[assetClass] = trace;
+				carryLossByClass[assetClass] = normalizeCarryLossValue(trace.carry_out);
+				if (Math.abs(carryLossByClass[assetClass]) <= Number.EPSILON) {
+					delete carryLossByClass[assetClass];
+				}
+			}
+
+			if (!month.startsWith(selectedYearPrefix)) continue;
+
+			const normalizedGrossSales = pruneNumericMap(record.gross_sales);
+			const normalizedRealizedGain = pruneNumericMap(record.realized_gain);
+			const normalizedTaxDue = pruneNumericMap(record.tax_due);
+			const normalizedDividends = numeric(record.dividends, 0);
+			const normalizedJcp = numeric(record.jcp, 0);
+			const monthCarryLoss = {};
+			const monthTrace = {};
+
+			for (const [assetClass, trace] of Object.entries(record.explain_by_class || {})) {
+				if (!trace || typeof trace !== 'object') continue;
+				const traceCarryOut = normalizeCarryLossValue(trace.carry_out);
+				monthTrace[assetClass] = {
+					...trace,
+					carry_in: normalizeCarryLossValue(trace.carry_in),
+					carry_out: traceCarryOut,
+				};
+				if (Math.abs(traceCarryOut) > Number.EPSILON) {
+					monthCarryLoss[assetClass] = traceCarryOut;
+				}
+			}
+
+			const monthPayload = {
+				month: record.month,
+				gross_sales: normalizedGrossSales,
+				realized_gain: normalizedRealizedGain,
+				tax_due: normalizedTaxDue,
+				dividends: normalizedDividends,
+				jcp: normalizedJcp,
+				carry_loss_by_class: monthCarryLoss,
+				explain_by_class: monthTrace,
+			};
+
+			const hasMonthlySignal =
+				Object.keys(normalizedGrossSales).length > 0
+				|| Object.keys(normalizedRealizedGain).length > 0
+				|| Object.keys(normalizedTaxDue).length > 0
+				|| Object.keys(monthCarryLoss).length > 0
+				|| Object.keys(monthTrace).length > 0
+				|| Math.abs(normalizedDividends) > Number.EPSILON
+				|| Math.abs(normalizedJcp) > Number.EPSILON;
+
+			if (!hasMonthlySignal) continue;
+
+			totalTaxDue += Object.values(normalizedTaxDue).reduce((sum, value) => sum + numeric(value, 0), 0);
+			totalDividends += normalizedDividends;
+			totalJcp += normalizedJcp;
+			monthlyOutput.push(monthPayload);
 
 			await this.dynamo.send(
 				new PutCommand({
@@ -4185,12 +4847,14 @@ class PlatformService {
 						entityType: 'TAX_MONTHLY',
 						portfolioId,
 						year: selectedYear,
-						month: record.month,
-						gross_sales: record.gross_sales,
-						realized_gain: record.realized_gain,
-						tax_due: record.tax_due,
-						dividends: record.dividends,
-						jcp: record.jcp,
+						month: monthPayload.month,
+						gross_sales: monthPayload.gross_sales,
+						realized_gain: monthPayload.realized_gain,
+						tax_due: monthPayload.tax_due,
+						dividends: monthPayload.dividends,
+						jcp: monthPayload.jcp,
+						carry_loss_by_class: monthPayload.carry_loss_by_class,
+						explain_by_class: monthPayload.explain_by_class,
 						data_source: 'internal_calc',
 						fetched_at: nowIso(),
 						is_scraped: false,
@@ -4200,6 +4864,34 @@ class PlatformService {
 			);
 		}
 
+		if (!capturedCarryLossStart) {
+			carryLossStartByClass = {};
+		}
+
+		const carryLossFinalByClass = buildCarrySnapshot(carryLossByClass);
+		const classKeysForRules = new Set([
+			...Object.keys(carryLossStartByClass),
+			...Object.keys(carryLossFinalByClass),
+		]);
+		for (const row of monthlyOutput) {
+			for (const key of Object.keys(row.gross_sales || {})) classKeysForRules.add(key);
+			for (const key of Object.keys(row.realized_gain || {})) classKeysForRules.add(key);
+			for (const key of Object.keys(row.tax_due || {})) classKeysForRules.add(key);
+			for (const key of Object.keys(row.explain_by_class || {})) classKeysForRules.add(key);
+		}
+		const taxRulesByClass = {};
+		for (const assetClass of classKeysForRules) {
+			if (!assetClass) continue;
+			const rule = resolveTaxRule(assetClass);
+			taxRulesByClass[assetClass] = {
+				asset_class: rule.asset_class,
+				rule_id: rule.rule_id,
+				label: rule.label,
+				rate: numeric(rule.rate, 0.15),
+				exemption: rule.exemption || null,
+			};
+		}
+
 		const summary = {
 			portfolioId,
 			year: selectedYear,
@@ -4207,7 +4899,10 @@ class PlatformService {
 			total_tax_due: totalTaxDue,
 			total_dividends_isentos: totalDividends,
 			total_jcp_tributavel: totalJcp,
-			carry_loss_by_class: carryLossByClass,
+			carry_loss_start_by_class: carryLossStartByClass,
+			carry_loss_by_class: carryLossFinalByClass,
+			tax_rules_by_class: taxRulesByClass,
+			trace_version: 1,
 			data_source: 'internal_calc',
 			fetched_at: nowIso(),
 			is_scraped: false,
@@ -7691,6 +8386,125 @@ class PlatformService {
 				':sk': 'TRANS#',
 			},
 		});
+	}
+
+	async #listPortfolioEventInboxItems(portfolioId) {
+		return this.#queryAll({
+			TableName: this.tableName,
+			KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
+			ExpressionAttributeValues: {
+				':pk': `PORTFOLIO#${portfolioId}`,
+				':sk': 'EVENT_INBOX#',
+			},
+		});
+	}
+
+	async #collectPortfolioEventCandidates(portfolioId, options = {}) {
+		const lookaheadDays = Math.min(
+			Math.max(Math.round(numeric(options.lookaheadDays, EVENT_INBOX_DEFAULT_LOOKAHEAD_DAYS)), 1),
+			EVENT_INBOX_MAX_LOOKAHEAD_DAYS
+		);
+		const includePastDays = Math.min(
+			Math.max(Math.round(numeric(options.includePastDays, EVENT_INBOX_DEFAULT_PAST_DAYS)), 0),
+			365
+		);
+		const today = nowIso().slice(0, 10);
+		const fromDate = addDays(today, -includePastDays);
+		const toDate = addDays(today, lookaheadDays - 1);
+		const assets = await this.#listPortfolioAssets(portfolioId);
+		const activeAssets = assets.filter((asset) =>
+			String(asset.status || 'active').toLowerCase() === 'active'
+		);
+		const trackedTickers = Array.from(
+			new Set(
+				activeAssets
+					.map((asset) => String(asset.ticker || '').toUpperCase())
+					.filter(Boolean)
+			)
+		);
+
+		const rowsByTicker = await Promise.all(
+			trackedTickers.map(async (ticker) => {
+				const rows = await this.#queryAll({
+					TableName: this.tableName,
+					KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
+					ExpressionAttributeValues: {
+						':pk': `ASSET_EVENT#${ticker}`,
+						':sk': 'DATE#',
+					},
+				});
+				return rows.map((row) => ({ ...row, ticker }));
+			})
+		);
+
+		const deduped = new Map();
+		for (const row of rowsByTicker.flat()) {
+			const details = row?.details && typeof row.details === 'object'
+				? { ...row.details }
+				: null;
+			const eventDate = normalizeDate(
+				row.eventDate
+				|| row.date
+				|| details?.eventDate
+				|| details?.deliveryDate
+				|| details?.referenceDate
+				|| details?.paymentDate
+				|| details?.exDate
+				|| null
+			);
+			if (!eventDate) continue;
+			if (eventDate < fromDate || eventDate > toDate) continue;
+
+			const ticker = String(row.ticker || '').toUpperCase();
+			if (!ticker) continue;
+
+			const eventType = String(row.eventType || 'event').trim().toLowerCase() || 'event';
+			const eventTitle =
+				String(row.eventTitle || details?.title || details?.subject || eventType).trim()
+				|| eventType;
+			const dedupeKey = `${ticker}|${eventDate}|${eventType}|${eventTitle.toLowerCase()}`;
+			const noticeKind = normalizeEventNoticeKind(eventType, eventTitle, eventDate, today);
+			const sourceUpdatedAt = row.updatedAt || row.fetched_at || null;
+			const candidate = {
+				id: `event-inbox-${hashId(`${portfolioId}:${dedupeKey}`)}`,
+				dedupeKey,
+				ticker,
+				eventType,
+				eventTitle,
+				eventDate,
+				notice_kind: noticeKind,
+				severity: classifyEventSeverity(noticeKind, eventDate, today),
+				details: details || null,
+				data_source: String(row.data_source || '').trim() || null,
+				sourceUpdatedAt,
+			};
+
+			const existing = deduped.get(dedupeKey);
+			if (!existing) {
+				deduped.set(dedupeKey, candidate);
+				continue;
+			}
+			if (String(candidate.sourceUpdatedAt || '') > String(existing.sourceUpdatedAt || '')) {
+				deduped.set(dedupeKey, candidate);
+			}
+		}
+
+		const events = Array.from(deduped.values()).sort((left, right) =>
+			String(left.eventDate || '').localeCompare(String(right.eventDate || ''))
+			|| String(left.ticker || '').localeCompare(String(right.ticker || ''))
+			|| String(left.eventType || '').localeCompare(String(right.eventType || ''))
+			|| String(left.eventTitle || '').localeCompare(String(right.eventTitle || ''))
+		);
+
+		return {
+			portfolioId,
+			today,
+			fromDate,
+			toDate,
+			lookaheadDays,
+			trackedTickers,
+			events,
+		};
 	}
 
 	async #getLatestAssetDetail(portfolioId, assetId) {
