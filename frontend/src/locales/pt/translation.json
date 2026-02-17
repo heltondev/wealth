@@ -916,12 +916,79 @@
     }
   },
   "documents": {
-    "title": "Documentos",
+    "title": "Relatórios e Exportações",
+    "subtitle": "Gere PDFs, faça preview/download dos arquivos e exporte o extrato de movimentações.",
     "upload": "Enviar Documento",
     "empty": "Nenhum documento enviado ainda.",
-    "status": {
-      "uploaded": "Enviado",
-      "processing": "Processando",
+    "generateTitle": "Gerar Relatório",
+    "listTitle": "Relatórios Gerados",
+    "selectPortfolio": "Selecionar portfólio",
+    "selectType": "Selecionar tipo de relatório",
+    "selectPeriod": "Selecionar período",
+    "generate": "Gerar",
+    "generating": "Gerando...",
+    "refresh": "Atualizar lista",
+  "generatedOk": "Relatório gerado com sucesso.",
+  "deletedOk": "Relatório excluído com sucesso.",
+  "loadError": "Falha ao carregar relatórios.",
+  "generateError": "Falha ao gerar relatório.",
+  "deleteError": "Falha ao excluir relatório.",
+  "downloadError": "Falha ao obter conteúdo do relatório.",
+  "previewError": "Falha ao abrir preview do relatório.",
+  "deleteConfirm": "Excluir este relatório permanentemente?",
+    "noReports": "Nenhum relatório encontrado para os filtros selecionados.",
+    "loadingContent": "Carregando...",
+    "movementTitle": "Extrato de Movimentações",
+    "movementHint": "Exportação dedicada em CSV com todas as transações do portfólio.",
+    "movementCsvError": "Não há transações para exportar.",
+    "exportCsv": "Exportar Extrato CSV",
+    "type": {
+      "all": "Todos os tipos",
+      "portfolio": "Posição Consolidada",
+      "tax": "Relatório de Imposto",
+      "dividends": "Proventos para IR",
+      "performance": "Relatório de Performance",
+      "transactions": "Extrato de Movimentações"
+    },
+    "period": {
+      "current": "Atual",
+      "1M": "1M",
+      "3M": "3M",
+      "6M": "6M",
+      "1A": "1A",
+      "2A": "2A",
+      "5A": "5A",
+      "MAX": "MAX"
+    },
+    "storageType": {
+      "local": "Local",
+      "s3": "S3",
+      "unknown": "Desconhecido"
+    },
+    "table": {
+      "createdAt": "Criado Em",
+      "type": "Tipo",
+      "period": "Período",
+      "storage": "Armazenamento",
+      "actions": "Ações"
+    },
+  "actions": {
+    "preview": "Preview",
+    "download": "Download",
+    "delete": "Excluir",
+    "deleting": "Excluindo..."
+  },
+  "preview": {
+    "title": "Preview do Relatório",
+    "close": "Fechar"
+  },
+  "deleteModal": {
+    "title": "Excluir Relatório",
+    "body": "Este relatório será removido permanentemente: {{reportId}}."
+  },
+  "status": {
+    "uploaded": "Enviado",
+    "processing": "Processando",
       "parsed": "Processado",
       "error": "Erro"
     }

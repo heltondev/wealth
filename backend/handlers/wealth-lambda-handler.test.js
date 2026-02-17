@@ -530,3 +530,95 @@ test('handler POST /simulate delegates to platform service', async () => {
 		platformService.simulate = original;
 	}
 });
+
+test('handler POST /reports/generate delegates report generation to platform service', async () => {
+	const original = platformService.generatePDF;
+	platformService.generatePDF = async (_userId, reportType, period, options) => ({
+		reportId: 'report-001',
+		reportType,
+		period,
+		portfolioId: options.portfolioId,
+		locale: options.locale || null,
+	});
+
+	try {
+		const response = await handler(
+			makeEvent('POST', '/reports/generate', {
+				reportType: 'dividends',
+				period: '1A',
+				portfolioId: 'portfolio-abc',
+				locale: 'en-US',
+			})
+		);
+		assert.equal(response.statusCode, 200);
+		const body = JSON.parse(response.body);
+		assert.equal(body.reportId, 'report-001');
+			assert.equal(body.reportType, 'dividends');
+			assert.equal(body.period, '1A');
+			assert.equal(body.portfolioId, 'portfolio-abc');
+			assert.equal(body.locale, 'en-US');
+		} finally {
+			platformService.generatePDF = original;
+		}
+	});
+
+test('handler GET /reports/{id} delegates report metadata lookup to platform service', async () => {
+	const original = platformService.getReportById;
+	platformService.getReportById = async (_userId, reportId) => ({
+		reportId,
+		reportType: 'portfolio',
+		period: 'current',
+	});
+
+	try {
+		const response = await handler(makeEvent('GET', '/reports/report-xyz'));
+		assert.equal(response.statusCode, 200);
+		const body = JSON.parse(response.body);
+		assert.equal(body.reportId, 'report-xyz');
+		assert.equal(body.reportType, 'portfolio');
+	} finally {
+		platformService.getReportById = original;
+	}
+});
+
+test('handler GET /reports/{id}?action=content delegates report content lookup to platform service', async () => {
+	const original = platformService.getReportContent;
+	platformService.getReportContent = async (_userId, reportId) => ({
+		reportId,
+		contentType: 'application/pdf',
+		filename: `${reportId}.pdf`,
+		sizeBytes: 128,
+		dataBase64: 'Zm9v',
+	});
+
+	try {
+		const response = await handler(
+			makeEvent('GET', '/reports/report-xyz', null, null, { action: 'content' })
+		);
+		assert.equal(response.statusCode, 200);
+		const body = JSON.parse(response.body);
+		assert.equal(body.reportId, 'report-xyz');
+		assert.equal(body.filename, 'report-xyz.pdf');
+		assert.equal(body.contentType, 'application/pdf');
+	} finally {
+		platformService.getReportContent = original;
+	}
+});
+
+test('handler DELETE /reports/{id} delegates report deletion to platform service', async () => {
+	const original = platformService.deleteReport;
+	platformService.deleteReport = async (_userId, reportId) => ({
+		deleted: true,
+		reportId,
+	});
+
+	try {
+		const response = await handler(makeEvent('DELETE', '/reports/report-xyz'));
+		assert.equal(response.statusCode, 200);
+		const body = JSON.parse(response.body);
+		assert.equal(body.deleted, true);
+		assert.equal(body.reportId, 'report-xyz');
+	} finally {
+		platformService.deleteReport = original;
+	}
+});

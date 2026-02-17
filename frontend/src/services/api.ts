@@ -441,8 +441,31 @@ export interface ReportRecord {
   reportId: string;
   reportType: string;
   period?: string | null;
-  storage: Record<string, unknown>;
-  createdAt: string;
+  locale?: string | null;
+  storage: {
+    type?: string;
+    bucket?: string;
+    key?: string;
+    uri?: string;
+    path?: string;
+    [key: string]: unknown;
+  };
+  data_source?: string | null;
+  fetched_at?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface ReportContentResponse {
+  reportId: string;
+  reportType: string | null;
+  period: string | null;
+  createdAt: string | null;
+  contentType: string;
+  filename: string;
+  sizeBytes: number;
+  dataBase64: string;
+  fetched_at: string;
 }
 
 export interface ContributionPayload {
@@ -663,12 +686,23 @@ export const api = {
     request('/jobs/alerts/refresh', { method: 'POST', body: JSON.stringify({ portfolioId }) }),
 
   // Reports
-  generateReport: (reportType: string, period?: string, portfolioId?: string) =>
+  generateReport: (reportType: string, period?: string, portfolioId?: string, locale?: string) =>
     request<ReportRecord>('/reports/generate', {
       method: 'POST',
-      body: JSON.stringify({ reportType, period: period || null, portfolioId: portfolioId || null }),
+      body: JSON.stringify({
+        reportType,
+        period: period || null,
+        portfolioId: portfolioId || null,
+        locale: locale || null,
+      }),
     }),
   listReports: () => request<ReportRecord[]>('/reports'),
+  getReport: (reportId: string) =>
+    request<ReportRecord>(`/reports/${encodeURIComponent(reportId)}`),
+  getReportContent: (reportId: string) =>
+    request<ReportContentResponse>(`/reports/${encodeURIComponent(reportId)}?action=content`),
+  deleteReport: (reportId: string) =>
+    request<{ deleted: boolean; reportId: string; fetched_at: string }>(`/reports/${encodeURIComponent(reportId)}`, { method: 'DELETE' }),
 
   // Simulation
   simulate: (payload: SimulationPayload) =>

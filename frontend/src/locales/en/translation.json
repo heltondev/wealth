@@ -916,12 +916,79 @@
     }
   },
   "documents": {
-    "title": "Documents",
+    "title": "Reports & Exports",
+    "subtitle": "Generate PDF reports, preview and download files, and export transaction statements.",
     "upload": "Upload Document",
     "empty": "No documents uploaded yet.",
-    "status": {
-      "uploaded": "Uploaded",
-      "processing": "Processing",
+    "generateTitle": "Generate Report",
+    "listTitle": "Generated Reports",
+    "selectPortfolio": "Select portfolio",
+    "selectType": "Select report type",
+    "selectPeriod": "Select period",
+    "generate": "Generate",
+    "generating": "Generating...",
+    "refresh": "Refresh list",
+  "generatedOk": "Report generated successfully.",
+  "deletedOk": "Report deleted successfully.",
+  "loadError": "Failed to load reports.",
+  "generateError": "Failed to generate report.",
+  "deleteError": "Failed to delete report.",
+  "downloadError": "Failed to fetch report content.",
+  "previewError": "Failed to preview report.",
+  "deleteConfirm": "Delete this report permanently?",
+    "noReports": "No reports found for selected filters.",
+    "loadingContent": "Loading...",
+    "movementTitle": "Movement Statement",
+    "movementHint": "Dedicated export of all portfolio transactions in CSV format.",
+    "movementCsvError": "No transactions available to export.",
+    "exportCsv": "Export CSV Statement",
+    "type": {
+      "all": "All types",
+      "portfolio": "Portfolio Position",
+      "tax": "Tax Report",
+      "dividends": "Dividends for Tax Filing",
+      "performance": "Performance Report",
+      "transactions": "Transaction Statement"
+    },
+    "period": {
+      "current": "Current",
+      "1M": "1M",
+      "3M": "3M",
+      "6M": "6M",
+      "1A": "1Y",
+      "2A": "2Y",
+      "5A": "5Y",
+      "MAX": "MAX"
+    },
+    "storageType": {
+      "local": "Local",
+      "s3": "S3",
+      "unknown": "Unknown"
+    },
+    "table": {
+      "createdAt": "Created At",
+      "type": "Type",
+      "period": "Period",
+      "storage": "Storage",
+      "actions": "Actions"
+    },
+  "actions": {
+    "preview": "Preview",
+    "download": "Download",
+    "delete": "Delete",
+    "deleting": "Deleting..."
+  },
+  "preview": {
+    "title": "Report Preview",
+    "close": "Close"
+  },
+  "deleteModal": {
+    "title": "Delete Report",
+    "body": "This report will be permanently removed: {{reportId}}."
+  },
+  "status": {
+    "uploaded": "Uploaded",
+    "processing": "Processing",
       "parsed": "Parsed",
       "error": "Error"
     }

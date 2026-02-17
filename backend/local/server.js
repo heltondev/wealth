@@ -37,7 +37,8 @@ app.use(express.json());
 
 // Convert Express request -> Lambda event format -> call handler -> return response
 app.all('/api/*path', async (req, res) => {
-	const path = req.path.replace('/api', '');
+	const originalPath = String(req.originalUrl || req.url || req.path || '');
+	const path = originalPath.replace(/^\/api/, '').split('?')[0] || '/';
 
 	const event = {
 		httpMethod: req.method,

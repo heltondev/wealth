@@ -1112,8 +1112,20 @@ async function handleReports(method, id, userId, body, query = {}) {
 			userId,
 			payload.reportType || payload.report_type || 'portfolio',
 			payload.period || null,
-			{ portfolioId: payload.portfolioId || null }
+			{
+				portfolioId: payload.portfolioId || null,
+				locale: payload.locale || payload.language || null,
+			}
 		);
+	}
+	if (method === 'GET' && id && String(query.action || '').toLowerCase() === 'content') {
+		return platformService.getReportContent(userId, id);
+	}
+	if (method === 'DELETE' && id) {
+		return platformService.deleteReport(userId, id);
+	}
+	if (method === 'GET' && id) {
+		return platformService.getReportById(userId, id);
 	}
 	if (method === 'GET') {
 		return platformService.listReports(userId);

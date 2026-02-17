@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const {
 	QueryCommand,
 	PutCommand,
@@ -48,6 +48,198 @@ const PERIOD_TO_DAYS = {
 	'5Y': 1825,
 	MAX: null,
 };
+
+const normalizeReportType = (reportType) => {
+	const normalized = String(reportType || '').trim().toLowerCase();
+	if (['transactions', 'movement', 'movements', 'statement'].includes(normalized)) {
+		return 'transactions';
+	}
+	return normalized;
+};
+
+const normalizeReportLocale = (locale) => {
+	const raw = String(locale || '').trim().replace('_', '-').toLowerCase();
+	if (!raw) return null;
+	if (raw.startsWith('pt')) return 'pt-BR';
+	if (raw.startsWith('en')) return 'en-US';
+	return null;
+};
+
+const isPortugueseLocale = (locale) => {
+	const normalized = normalizeReportLocale(locale) || 'pt-BR';
+	return normalized.toLowerCase().startsWith('pt');
+};
+
+const REPORT_COPY = {
+	pt: {
+		generated: 'Gerado em',
+		user: 'Usuario',
+		portfolio_report_subtitle: 'Relatorio de Inteligencia do Portifolio',
+		portfolio_label: 'Portifolio',
+		period_label: 'Periodo',
+		base_currency_label: 'Moeda Base',
+		kpi_total_value: 'Valor Total do Portifolio',
+		kpi_absolute_return: 'Retorno Absoluto',
+		kpi_return_percent: 'Retorno Percentual',
+		evolution_title: 'Snapshot de Evolucao do Portifolio',
+		evolution_start: 'Inicio',
+		evolution_end: 'Fim',
+		evolution_min: 'Min',
+		evolution_max: 'Max',
+		evolution_estimated:
+			'Valor inicial estimado usado por falta de historico suficiente.',
+		evolution_insufficient: 'Dados insuficientes para plotar a evolucao do portifolio.',
+		alloc_by_class: 'Alocacao por Classe',
+		alloc_by_currency: 'Alocacao por Moeda',
+		alloc_by_sector: 'Alocacao por Setor',
+		alloc_no_data: 'Sem dados de alocacao.',
+		transactions_title: 'Relatorio de Movimentacoes',
+		transactions_subtitle: 'Extrato operacional e consolidacao de movimentos',
+		range_label: 'Intervalo',
+		filter_label: 'Filtro',
+		kpi_total_transactions: 'Total de Movimentacoes',
+		kpi_gross_amount: 'Valor Bruto',
+		kpi_unique_types: 'Tipos Unicos',
+		section_breakdown_type: 'Consolidado por Tipo',
+		section_latest_movements: 'Movimentacoes Recentes',
+		no_movements_range: 'Sem movimentacoes no periodo selecionado.',
+		no_movements_available: 'Sem movimentacoes disponiveis.',
+		header_type: 'Tipo',
+		header_transactions: 'Mov.',
+		header_gross_amount: 'Valor Bruto',
+		header_date: 'Data',
+		header_ticker: 'Ticker',
+		header_amount: 'Valor',
+		dividends_title: 'Dividendos e Proventos',
+		dividends_subtitle: 'Fluxo de renda, projecoes e eventos futuros',
+		from_label: 'De',
+		to_label: 'Ate',
+		kpi_last_12m: 'Ultimos 12M',
+		kpi_projected_monthly: 'Projecao Mensal',
+		kpi_yield_on_cost: 'Yield on Cost',
+		section_monthly_income: 'Renda Mensal',
+		section_upcoming_events: 'Eventos Futuros',
+		no_dividends_range: 'Sem proventos no periodo selecionado.',
+		no_upcoming_events: 'Sem eventos futuros encontrados.',
+		header_period: 'Periodo',
+		tax_title: 'Relatorio de Imposto',
+		tax_subtitle: 'Obrigacoes mensais e controle de prejuizo acumulado',
+		year_label: 'Ano',
+		data_source_label: 'Fonte de Dados',
+		kpi_estimated_darf: 'DARF Estimado',
+		kpi_dividends_exempt: 'Dividendos (Isentos)',
+		kpi_jcp_taxable: 'JCP Tributavel',
+		section_monthly_snapshot: 'Resumo Mensal',
+		section_carry_loss: 'Prejuizo Acumulado por Classe',
+		no_monthly_records: 'Sem registros mensais.',
+		no_carry_loss: 'Sem prejuizo acumulado.',
+			performance_title: 'Performance vs Benchmarks',
+			performance_subtitle: 'Comparativo de retorno e analise de alpha',
+			kpi_portfolio_return: 'Retorno do Portifolio',
+			kpi_selected_benchmark: 'Benchmark Selecionado',
+			kpi_alpha: 'Alpha',
+			section_benchmark_ranking: 'Ranking de Benchmarks',
+			no_benchmark_data: 'Sem dados de benchmark disponiveis.',
+			header_period_range: 'Periodo',
+			header_event_type: 'Tipo',
+			header_more_rows: 'linhas adicionais',
+			no_data_available: 'Sem dados disponiveis.',
+			tax_gain_label: 'Ganho',
+			tax_due_label: 'Imposto',
+			footer: 'Relatorio Analitico WealthHub',
+		},
+	en: {
+		generated: 'Generated',
+		user: 'User',
+		portfolio_report_subtitle: 'Portfolio Intelligence Report',
+		portfolio_label: 'Portfolio',
+		period_label: 'Period',
+		base_currency_label: 'Base Currency',
+		kpi_total_value: 'Total Portfolio Value',
+		kpi_absolute_return: 'Absolute Return',
+		kpi_return_percent: 'Return Percentage',
+		evolution_title: 'Portfolio Evolution Snapshot',
+		evolution_start: 'Start',
+		evolution_end: 'End',
+		evolution_min: 'Min',
+		evolution_max: 'Max',
+		evolution_estimated:
+			'Estimated start value used due to limited historical points.',
+		evolution_insufficient: 'Insufficient data to plot portfolio evolution.',
+		alloc_by_class: 'Allocation by Class',
+		alloc_by_currency: 'Allocation by Currency',
+		alloc_by_sector: 'Allocation by Sector',
+		alloc_no_data: 'No allocation data.',
+		transactions_title: 'Transactions Report',
+		transactions_subtitle: 'Movement statement and operational breakdown',
+		range_label: 'Range',
+		filter_label: 'Filter',
+		kpi_total_transactions: 'Total Transactions',
+		kpi_gross_amount: 'Gross Amount',
+		kpi_unique_types: 'Unique Types',
+		section_breakdown_type: 'Breakdown by Type',
+		section_latest_movements: 'Latest Movements',
+		no_movements_range: 'No movements in selected range.',
+		no_movements_available: 'No movements available.',
+		header_type: 'Type',
+		header_transactions: 'Transactions',
+		header_gross_amount: 'Gross Amount',
+		header_date: 'Date',
+		header_ticker: 'Ticker',
+		header_amount: 'Amount',
+		dividends_title: 'Dividends & Provents',
+		dividends_subtitle: 'Income flow, projections and upcoming events',
+		from_label: 'From',
+		to_label: 'To',
+		kpi_last_12m: 'Last 12M',
+		kpi_projected_monthly: 'Projected Monthly',
+		kpi_yield_on_cost: 'Yield on Cost',
+		section_monthly_income: 'Monthly Income',
+		section_upcoming_events: 'Upcoming Events',
+		no_dividends_range: 'No dividends in selected range.',
+		no_upcoming_events: 'No upcoming events found.',
+		header_period: 'Period',
+		tax_title: 'Tax Report',
+		tax_subtitle: 'Monthly tax obligations and carry-loss control',
+		year_label: 'Year',
+		data_source_label: 'Data Source',
+		kpi_estimated_darf: 'Estimated DARF',
+		kpi_dividends_exempt: 'Dividends (Exempt)',
+		kpi_jcp_taxable: 'JCP Taxable',
+		section_monthly_snapshot: 'Monthly Snapshot',
+		section_carry_loss: 'Carry Loss by Class',
+		no_monthly_records: 'No monthly records found.',
+		no_carry_loss: 'No carry loss tracked.',
+			performance_title: 'Performance vs Benchmarks',
+			performance_subtitle: 'Comparative return and alpha analysis',
+			kpi_portfolio_return: 'Portfolio Return',
+			kpi_selected_benchmark: 'Selected Benchmark',
+			kpi_alpha: 'Alpha',
+			section_benchmark_ranking: 'Benchmark Ranking',
+			no_benchmark_data: 'No benchmark data available.',
+			header_period_range: 'Period',
+			header_event_type: 'Type',
+			header_more_rows: 'more rows',
+			no_data_available: 'No data available.',
+			tax_gain_label: 'Gain',
+			tax_due_label: 'Tax',
+			footer: 'WealthHub Analytics Report',
+		},
+	};
+
+const getReportCopy = (locale) =>
+	(isPortugueseLocale(locale) ? REPORT_COPY.pt : REPORT_COPY.en);
+
+const REPORT_TEMPLATE_VERSION = {
+	portfolio: 'v7',
+	transactions: 'v5',
+	tax: 'v5',
+	dividends: 'v5',
+	performance: 'v5',
+};
+
+const getReportTemplateVersion = (reportType) =>
+	REPORT_TEMPLATE_VERSION[normalizeReportType(reportType)] || 'v3';
 
 const BENCHMARK_SYMBOLS = {
 	IBOV: '^BVSP',
@@ -982,6 +1174,68 @@ const toBrDate = (isoDate) => {
 	return `${dd}/${mm}/${yyyy}`;
 };
 
+const formatHumanDate = (value, locale = 'pt-BR') => {
+	const normalized = normalizeDate(value);
+	if (!normalized) return '-';
+	const parsed = new Date(`${normalized}T00:00:00Z`);
+	if (Number.isNaN(parsed.getTime())) return normalized;
+	const localeTag = normalizeReportLocale(locale) || 'pt-BR';
+	return new Intl.DateTimeFormat(localeTag, {
+		day: '2-digit',
+		month: '2-digit',
+		year: 'numeric',
+		timeZone: 'UTC',
+	}).format(parsed);
+};
+
+const formatHumanDateTime = (value, locale = 'pt-BR') => {
+	const parsed = new Date(String(value || ''));
+	if (Number.isNaN(parsed.getTime())) return String(value || '-');
+	const localeTag = normalizeReportLocale(locale) || 'pt-BR';
+	const text = new Intl.DateTimeFormat(localeTag, {
+		day: '2-digit',
+		month: '2-digit',
+		year: 'numeric',
+		hour: '2-digit',
+		minute: '2-digit',
+		hour12: false,
+		timeZone: 'UTC',
+	}).format(parsed);
+	return text.replace(',', '');
+};
+
+const formatMonthPeriod = (value, locale = 'pt-BR') => {
+	const text = String(value || '').trim();
+	if (!text) return '-';
+	const localeTag = normalizeReportLocale(locale) || 'pt-BR';
+	if (/^\d{4}-\d{2}$/.test(text)) {
+		const parsed = new Date(`${text}-01T00:00:00Z`);
+		if (!Number.isNaN(parsed.getTime())) {
+			return new Intl.DateTimeFormat(localeTag, {
+				month: '2-digit',
+				year: 'numeric',
+				timeZone: 'UTC',
+			}).format(parsed);
+		}
+	}
+	const normalized = normalizeDate(text);
+	if (!normalized) return text;
+	const parsed = new Date(`${normalized}T00:00:00Z`);
+	if (Number.isNaN(parsed.getTime())) return normalized;
+	return new Intl.DateTimeFormat(localeTag, {
+		month: '2-digit',
+		year: 'numeric',
+		timeZone: 'UTC',
+	}).format(parsed);
+};
+
+const formatMonthYearShort = (value) => {
+	const normalized = normalizeDate(value);
+	if (!normalized) return '--/--';
+	const [yyyy, mm] = normalized.split('-');
+	return `${mm}/${String(yyyy || '').slice(-2)}`;
+};
+
 const formatMonthDayYear = (date) => {
 	const yyyy = date.getUTCFullYear();
 	const mm = String(date.getUTCMonth() + 1).padStart(2, '0');
@@ -1007,22 +1261,746 @@ const escapePdf = (value) =>
 		.replace(/\(/g, '\\(')
 		.replace(/\)/g, '\\)');
 
-const createSimplePdfBuffer = (lines) => {
-	const safeLines = Array.isArray(lines) ? lines : [];
-	let y = 800;
-	const textCommands = [];
-	for (const line of safeLines.slice(0, 45)) {
-		textCommands.push(`BT /F1 11 Tf 40 ${y} Td (${escapePdf(line)}) Tj ET`);
-		y -= 16;
+const formatMoneyBr = (value, locale = 'pt-BR', currency = 'BRL') =>
+	new Intl.NumberFormat(normalizeReportLocale(locale) || 'pt-BR', {
+		style: 'currency',
+		currency: String(currency || 'BRL').toUpperCase(),
+		minimumFractionDigits: 2,
+		maximumFractionDigits: 2,
+	}).format(numeric(value, 0));
+
+const formatCompactMoneyBr = (value, locale = 'pt-BR', currency = 'BRL') => {
+	const amount = numeric(value, 0);
+	const abs = Math.abs(amount);
+	let divisor = 1;
+	let suffix = '';
+	let digits = 2;
+	if (abs >= 1e9) {
+		divisor = 1e9;
+		suffix = 'B';
+		digits = 2;
+	} else if (abs >= 1e6) {
+		divisor = 1e6;
+		suffix = 'M';
+		digits = 1;
+	} else if (abs >= 1e3) {
+		divisor = 1e3;
+		suffix = 'K';
+		digits = 1;
+	}
+	const localeTag = normalizeReportLocale(locale) || 'pt-BR';
+	const formatted = new Intl.NumberFormat(localeTag, {
+		minimumFractionDigits: digits,
+		maximumFractionDigits: digits,
+	}).format(abs / divisor);
+	const currencySymbol = new Intl.NumberFormat(localeTag, {
+		style: 'currency',
+		currency: String(currency || 'BRL').toUpperCase(),
+		minimumFractionDigits: 0,
+		maximumFractionDigits: 0,
+	})
+		.formatToParts(0)
+		.find((entry) => entry.type === 'currency')?.value || String(currency || 'BRL').toUpperCase();
+	const sign = amount < 0 ? '-' : '';
+	return `${sign}${currencySymbol}${formatted}${suffix}`;
+};
+
+const formatDecimal = (value, digits = 2, locale = 'pt-BR') =>
+	new Intl.NumberFormat(normalizeReportLocale(locale) || 'pt-BR', {
+		minimumFractionDigits: digits,
+		maximumFractionDigits: digits,
+	}).format(numeric(value, 0));
+
+const formatPercent = (value, digits = 2, locale = 'pt-BR') =>
+	`${formatDecimal(value, digits, locale)}%`;
+
+const formatSignedMoneyBr = (value, locale = 'pt-BR', currency = 'BRL') => {
+	const amount = numeric(value, 0);
+	if (Math.abs(amount) < Number.EPSILON) return formatMoneyBr(0, locale, currency);
+	const sign = amount > 0 ? '+' : '-';
+	return `${sign}${formatMoneyBr(Math.abs(amount), locale, currency)}`;
+};
+
+const formatSignedPercent = (value, digits = 2, locale = 'pt-BR') => {
+	const amount = numeric(value, 0);
+	if (Math.abs(amount) < Number.EPSILON) return `${formatDecimal(0, digits, locale)}%`;
+	const sign = amount > 0 ? '+' : '-';
+	return `${sign}${formatDecimal(Math.abs(amount), digits, locale)}%`;
+};
+
+const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+
+const safePdfText = (value) => {
+	const raw = String(value || '');
+	const normalized = raw
+		.normalize('NFD')
+		.replace(/[\u0300-\u036f]/g, '')
+		.replace(/[^\x20-\x7E]/g, ' ');
+	return normalized;
+};
+
+const truncateText = (value, maxLength = 28) => {
+	const text = safePdfText(value).trim();
+	if (text.length <= maxLength) return text;
+	return `${text.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+};
+
+const humanizeLabel = (value) => {
+	const text = String(value || '')
+		.replace(/[_-]+/g, ' ')
+		.trim();
+	if (!text) return 'Unknown';
+	return text
+		.split(/\s+/)
+		.map((token) => {
+			if (token.length <= 3) return token.toUpperCase();
+			return token.charAt(0).toUpperCase() + token.slice(1);
+		})
+		.join(' ');
+};
+
+const buildPercentBar = (percent, width = 24) => {
+	const safePercent = Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : 0;
+	const filled = Math.round((safePercent / 100) * width);
+	return `[${'#'.repeat(filled)}${'.'.repeat(Math.max(0, width - filled))}]`;
+};
+
+const buildAllocationLines = (title, entries) => {
+	const lines = ['', title];
+	if (!Array.isArray(entries) || entries.length === 0) {
+		lines.push('- Sem dados disponiveis.');
+		return lines;
+	}
+	const sorted = [...entries].sort((left, right) => numeric(right?.value, 0) - numeric(left?.value, 0));
+	for (const [index, entry] of sorted.entries()) {
+		const label = humanizeLabel(entry?.key || 'unknown');
+		const weightPct = numeric(entry?.weight_pct, 0);
+		const amount = numeric(entry?.value, 0);
+		lines.push(
+			`${String(index + 1).padStart(2, '0')}. ${label} | ${formatPercent(weightPct)} ${buildPercentBar(weightPct)} | ${formatMoneyBr(amount)}`
+		);
+	}
+	return lines;
+};
+
+const buildPortfolioPdfLines = (payload, context = {}) => {
+	const totalValue = numeric(payload?.total_value_brl, 0);
+	const returnAbsolute = numeric(payload?.return_absolute, 0);
+	const returnPercent = numeric(payload?.return_percent, 0);
+	const generatedAt = payload?.fetched_at || nowIso();
+	const requestedPeriod = context?.period || payload?.evolution_period || 'MAX';
+	const portfolioId = payload?.portfolioId || context?.portfolioId || '-';
+	const lines = [
+		'WealthHub - Relatorio de Portfolio',
+		'',
+		`Usuario: ${context.userId || '-'}`,
+		`Portfolio: ${portfolioId}`,
+		`Periodo solicitado: ${requestedPeriod}`,
+		`Moeda base: ${String(payload?.currency || 'BRL').toUpperCase()}`,
+		`Gerado em: ${generatedAt}`,
+		'',
+		'Resumo Executivo',
+		`Patrimonio total: ${formatMoneyBr(totalValue)}`,
+		`Resultado acumulado: ${formatSignedMoneyBr(returnAbsolute)}`,
+		`Retorno acumulado: ${formatSignedPercent(returnPercent)}`,
+	];
+
+	const evolution = Array.isArray(payload?.evolution)
+		? payload.evolution
+			.map((point) => ({
+				date: normalizeDate(point?.date),
+				value: numeric(point?.value, NaN),
+			}))
+			.filter((point) => point.date && Number.isFinite(point.value))
+		: [];
+
+	lines.push('', 'Evolucao Patrimonial');
+	if (evolution.length < 2) {
+		lines.push('- Dados insuficientes para analise de evolucao.');
+	} else {
+		const first = evolution[0];
+		const last = evolution[evolution.length - 1];
+		let minPoint = first;
+		let maxPoint = first;
+		for (const point of evolution) {
+			if (point.value < minPoint.value) minPoint = point;
+			if (point.value > maxPoint.value) maxPoint = point;
+		}
+		const delta = last.value - first.value;
+		const deltaPct = Math.abs(first.value) > Number.EPSILON ? (delta / first.value) * 100 : 0;
+		lines.push(`Serie historica: ${evolution.length} pontos (${first.date} ate ${last.date})`);
+		lines.push(`Valor inicial: ${formatMoneyBr(first.value)}`);
+		lines.push(`Valor final: ${formatMoneyBr(last.value)}`);
+		lines.push(`Variacao no periodo: ${formatSignedMoneyBr(delta)} (${formatSignedPercent(deltaPct)})`);
+		lines.push(`Minimo: ${formatMoneyBr(minPoint.value)} em ${minPoint.date}`);
+		lines.push(`Maximo: ${formatMoneyBr(maxPoint.value)} em ${maxPoint.date}`);
 	}
 
-	const content = `${textCommands.join('\n')}\n`;
+	lines.push(...buildAllocationLines('Alocacao por Classe', payload?.allocation_by_class));
+	lines.push(...buildAllocationLines('Alocacao por Moeda', payload?.allocation_by_currency));
+	lines.push(...buildAllocationLines('Alocacao por Setor', payload?.allocation_by_sector));
+
+	const fxRates = payload?.fx_rates && typeof payload.fx_rates === 'object'
+		? Object.entries(payload.fx_rates)
+		: [];
+	lines.push('', 'Taxas de Cambio de Referencia');
+	if (fxRates.length === 0) {
+		lines.push('- Sem dados de cambio para o periodo.');
+	} else {
+		const sortedRates = fxRates.sort((left, right) => String(left[0]).localeCompare(String(right[0])));
+		for (const [pair, rate] of sortedRates) {
+			lines.push(`- ${String(pair).toUpperCase()}: ${formatDecimal(rate, 6)}`);
+		}
+	}
+
+	lines.push('', `Fonte de dados: ${payload?.data_source || 'internal_calc'}`);
+	return lines;
+};
+
+const wrapPdfLine = (line, maxChars = 92) => {
+	const text = String(line || '');
+	if (!text.trim()) return [''];
+	const words = text.replace(/\s+/g, ' ').trim().split(' ');
+	const wrapped = [];
+	let current = '';
+
+	const pushChunkedWord = (word) => {
+		let rest = word;
+		while (rest.length > maxChars) {
+			wrapped.push(rest.slice(0, maxChars));
+			rest = rest.slice(maxChars);
+		}
+		return rest;
+	};
+
+	for (const originalWord of words) {
+		let word = originalWord;
+		if (word.length > maxChars) {
+			if (current) {
+				wrapped.push(current);
+				current = '';
+			}
+			word = pushChunkedWord(word);
+		}
+		if (!word) continue;
+		if (!current) {
+			current = word;
+			continue;
+		}
+		if (current.length + 1 + word.length <= maxChars) {
+			current += ` ${word}`;
+		} else {
+			wrapped.push(current);
+			current = word;
+		}
+	}
+	if (current) wrapped.push(current);
+	return wrapped.length > 0 ? wrapped : [''];
+};
+
+const buildTransactionsPdfLines = (payload, context = {}) => {
+	const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+	const byType = payload?.by_type && typeof payload.by_type === 'object' ? payload.by_type : {};
+	const byTypeEntries = Object.entries(byType).sort(
+		(left, right) => numeric(right?.[1]?.gross_amount, 0) - numeric(left?.[1]?.gross_amount, 0)
+	);
+	const shownRows = rows.slice(0, 44);
+	const portfolioId = payload?.portfolioId || context.portfolioId || '-';
+	const from = payload?.from || '-';
+	const to = payload?.to || '-';
+	const generatedAt = nowIso();
+	const lines = [
+		'WealthHub - Relatorio de Movimentacoes',
+		'',
+		`Usuario: ${context.userId || '-'}`,
+		`Portfolio: ${portfolioId}`,
+		`Periodo de apuracao: ${from} ate ${to}`,
+		`Filtro: ${context.period || payload?.period || 'current'}`,
+		`Total de transacoes: ${numeric(payload?.total_transactions, rows.length)}`,
+		`Volume bruto movimentado: ${formatMoneyBr(payload?.total_amount)}`,
+		`Gerado em: ${generatedAt}`,
+		'',
+		'Resumo por tipo:',
+	];
+
+	if (byTypeEntries.length === 0) {
+		lines.push('- Nenhuma movimentacao no periodo selecionado.');
+	} else {
+		for (const [type, stats] of byTypeEntries) {
+			lines.push(
+				`- ${String(type || 'unknown').toUpperCase()}: ${numeric(stats?.count, 0)} transacoes | ${formatMoneyBr(stats?.gross_amount)}`
+			);
+		}
+	}
+
+	lines.push('', 'Ultimas movimentacoes (mais recentes primeiro):');
+	lines.push('Data | Tipo | Ticker | Qtde | Preco | Total');
+
+	if (shownRows.length === 0) {
+		lines.push('- Sem registros para exibir.');
+	} else {
+		for (const row of shownRows) {
+			lines.push(
+				[
+					toBrDate(row?.date) || row?.date || '-',
+					String(row?.type || '-').toUpperCase(),
+					String(row?.ticker || '-').toUpperCase(),
+					formatDecimal(row?.quantity, 2),
+					formatMoneyBr(row?.price),
+					formatMoneyBr(row?.amount),
+				].join(' | ')
+			);
+		}
+	}
+
+	if (rows.length > shownRows.length) {
+		lines.push(
+			`... ${rows.length - shownRows.length} movimentacoes adicionais nao foram exibidas no PDF simplificado.`
+		);
+	}
+	return lines;
+};
+
+const buildGenericPdfLines = (type, payload, context = {}) => {
+	const lines = [
+		`WealthHub - Relatorio ${String(type || 'portfolio').toUpperCase()}`,
+		'',
+		`Usuario: ${context.userId || '-'}`,
+		`Periodo: ${context.period || 'current'}`,
+		`Gerado em: ${nowIso()}`,
+		'',
+		'Resumo:',
+	];
+
+	const entries = payload && typeof payload === 'object' ? Object.entries(payload) : [];
+	if (entries.length === 0) {
+		lines.push('- Sem dados para o periodo selecionado.');
+		return lines;
+	}
+
+	for (const [key, value] of entries.slice(0, 40)) {
+		if (value === null || typeof value === 'undefined') {
+			lines.push(`- ${key}: -`);
+			continue;
+		}
+		if (Array.isArray(value)) {
+			lines.push(`- ${key}: lista com ${value.length} item(ns)`);
+			continue;
+		}
+		if (typeof value === 'object') {
+			lines.push(`- ${key}: objeto com ${Object.keys(value).length} chave(s)`);
+			continue;
+		}
+		lines.push(`- ${key}: ${String(value)}`);
+	}
+
+	return lines;
+};
+
+const buildPdfLines = (reportType, payload, context = {}) => {
+	const normalizedType = String(reportType || '').toLowerCase();
+	if (normalizedType === 'transactions') {
+		return buildTransactionsPdfLines(payload, context);
+	}
+	if (normalizedType === 'portfolio') {
+		return buildPortfolioPdfLines(payload, context);
+	}
+	return buildGenericPdfLines(reportType, payload, context);
+};
+
+const createFancyPortfolioPdfBuffer = (payload, context = {}) => {
+	const drawCommands = [];
+	const push = (line) => drawCommands.push(line);
+	const drawRect = (x, y, w, h, color = [1, 1, 1]) => {
+		push(`${color[0]} ${color[1]} ${color[2]} rg ${x} ${y} ${w} ${h} re f`);
+	};
+	const drawStrokeRect = (x, y, w, h, color = [0.8, 0.84, 0.9], lineWidth = 1) => {
+		push(`${color[0]} ${color[1]} ${color[2]} RG ${lineWidth} w ${x} ${y} ${w} ${h} re S`);
+	};
+	const drawLine = (x1, y1, x2, y2, color = [0.8, 0.84, 0.9], lineWidth = 1) => {
+		push(`${color[0]} ${color[1]} ${color[2]} RG ${lineWidth} w ${x1} ${y1} m ${x2} ${y2} l S`);
+	};
+	const drawText = (text, x, y, options = {}) => {
+		const font = options.font || 'F1';
+		const size = options.size || 11;
+		const color = options.color || [0.15, 0.18, 0.22];
+		const align = options.align || 'left';
+		const content = safePdfText(text || '');
+		const approxWidth = content.length * size * 0.5;
+		let textX = x;
+		if (align === 'right') textX = x - approxWidth;
+		if (align === 'center') textX = x - approxWidth / 2;
+		push(
+			`${color[0]} ${color[1]} ${color[2]} rg BT /${font} ${size} Tf 1 0 0 1 ${textX} ${y} Tm (${escapePdf(content)}) Tj ET`
+		);
+	};
+	const drawVerticalText = (text, x, y, options = {}) => {
+		const font = options.font || 'F1';
+		const size = options.size || 6;
+		const color = options.color || [0.15, 0.18, 0.22];
+		const direction = options.direction === 'down' ? 'down' : 'up';
+		const content = safePdfText(text || '');
+		const matrix =
+			direction === 'down'
+				? `0 -1 1 0 ${x} ${y}`
+				: `0 1 -1 0 ${x} ${y}`;
+		push(
+			`${color[0]} ${color[1]} ${color[2]} rg BT /${font} ${size} Tf ${matrix} Tm (${escapePdf(content)}) Tj ET`
+		);
+		return content.length * size * 0.5;
+	};
+	const drawPercentBar = (x, y, w, h, pct, color = [0.21, 0.55, 0.92]) => {
+		drawRect(x, y, w, h, [0.92, 0.94, 0.97]);
+		const filled = clamp((numeric(pct, 0) / 100) * w, 0, w);
+		if (filled > 0) drawRect(x, y, filled, h, color);
+	};
+
+	const portfolioId = payload?.portfolioId || context?.portfolioId || '-';
+	const period = context?.period || payload?.evolution_period || 'MAX';
+	const generatedAt = payload?.fetched_at || nowIso();
+	const locale = normalizeReportLocale(context?.locale) || 'pt-BR';
+	const copy = getReportCopy(locale);
+	const currency = String(payload?.currency || 'BRL').toUpperCase();
+	const formatMoney = (value) => formatMoneyBr(value, locale, currency);
+	const formatSignedMoney = (value) => formatSignedMoneyBr(value, locale, currency);
+	const formatPct = (value, digits = 2) => formatPercent(value, digits, locale);
+	const formatSignedPct = (value, digits = 2) => formatSignedPercent(value, digits, locale);
+	const totalValue = numeric(payload?.total_value_brl, 0);
+	const returnAbsolute = numeric(payload?.return_absolute, 0);
+	const returnPercent = numeric(payload?.return_percent, 0);
+	const isPositive = returnAbsolute >= 0;
+	const perfColor = isPositive ? [0.07, 0.56, 0.32] : [0.76, 0.17, 0.15];
+
+	drawRect(0, 0, 612, 842, [0.96, 0.97, 0.99]);
+	drawRect(24, 758, 564, 60, [0.08, 0.14, 0.24]);
+	drawRect(24, 758, 564, 4, [0.12, 0.72, 0.68]);
+	drawText('WEALTHHUB', 40, 790, { font: 'F2', size: 23, color: [0.96, 0.98, 1] });
+	drawText(copy.portfolio_report_subtitle, 40, 772, { font: 'F1', size: 12, color: [0.78, 0.86, 0.98] });
+	drawText(`${copy.generated}: ${formatHumanDateTime(generatedAt, locale)}`, 572, 790, {
+		font: 'F1',
+		size: 9,
+		color: [0.79, 0.85, 0.96],
+		align: 'right',
+	});
+	drawText(`${copy.user}: ${context?.userId || '-'}`, 572, 776, {
+		font: 'F1',
+		size: 9,
+		color: [0.79, 0.85, 0.96],
+		align: 'right',
+	});
+
+	const metaEntries = [
+		{ label: copy.portfolio_label, value: portfolioId },
+		{ label: copy.period_label, value: String(period || 'current').toUpperCase() },
+		{ label: copy.base_currency_label, value: currency },
+	];
+	const metaWidth = Math.floor((564 - ((metaEntries.length - 1) * 12)) / metaEntries.length);
+	metaEntries.forEach((entry, index) => {
+		const x = 24 + index * (metaWidth + 12);
+		drawRect(x, 720, metaWidth, 28, [0.86, 0.9, 0.95]);
+		drawText(entry.label, x + 8, 738, { font: 'F1', size: 8, color: [0.38, 0.45, 0.56] });
+		drawText(truncateText(entry.value, 26), x + 8, 726, { font: 'F2', size: 10, color: [0.1, 0.16, 0.28] });
+	});
+
+	const kpiCards = [
+		{
+			title: copy.kpi_total_value,
+			value: formatMoney(totalValue),
+			accent: [0.22, 0.55, 0.9],
+			valueColor: [0.08, 0.18, 0.31],
+		},
+		{
+			title: copy.kpi_absolute_return,
+			value: formatSignedMoney(returnAbsolute),
+			accent: perfColor,
+			valueColor: perfColor,
+		},
+		{
+			title: copy.kpi_return_percent,
+			value: formatSignedPct(returnPercent),
+			accent: perfColor,
+			valueColor: perfColor,
+		},
+	];
+
+	const cardY = 620;
+	const cardW = 176;
+	const cardH = 86;
+	for (const [index, card] of kpiCards.entries()) {
+		const x = 24 + index * (cardW + 18);
+		drawRect(x, cardY, cardW, cardH, [1, 1, 1]);
+		drawStrokeRect(x, cardY, cardW, cardH, [0.84, 0.88, 0.94], 1);
+		drawRect(x, cardY + cardH - 6, cardW, 6, card.accent);
+		drawText(card.title, x + 12, cardY + cardH - 24, { font: 'F1', size: 10, color: [0.41, 0.46, 0.56] });
+		drawText(card.value, x + 12, cardY + 30, { font: 'F2', size: 18, color: card.valueColor });
+	}
+
+	drawRect(24, 360, 564, 242, [1, 1, 1]);
+	drawStrokeRect(24, 360, 564, 242, [0.84, 0.88, 0.94], 1);
+	drawText(copy.evolution_title, 40, 580, { font: 'F2', size: 13, color: [0.1, 0.16, 0.28] });
+
+	const evolution = Array.isArray(payload?.evolution)
+		? payload.evolution
+			.map((point) => ({
+				date: normalizeDate(point?.date),
+				value: numeric(point?.value, NaN),
+			}))
+			.filter((point) => point.date && Number.isFinite(point.value))
+		: [];
+	const sampled = [];
+	let usedEstimatedEvolution = false;
+	if (evolution.length > 0) {
+		const limit = 18;
+		const size = Math.min(evolution.length, limit);
+		for (let i = 0; i < size; i += 1) {
+			const idx = Math.round((i * (evolution.length - 1)) / Math.max(1, size - 1));
+			sampled.push(evolution[idx]);
+		}
+	}
+	if (sampled.length < 2) {
+		const today = nowIso().slice(0, 10);
+		const inferredStartDate = addDays(today, -365);
+		const inferredStartValue = totalValue - returnAbsolute;
+		sampled.splice(
+			0,
+			sampled.length,
+			{
+				date: inferredStartDate,
+				value: Number.isFinite(inferredStartValue) ? inferredStartValue : totalValue,
+			},
+			{
+				date: today,
+				value: totalValue,
+			}
+		);
+		usedEstimatedEvolution = true;
+	}
+
+		const chartX = 44;
+		const chartY = 422;
+		const chartW = 420;
+		const chartH = 132;
+		drawRect(chartX, chartY, chartW, chartH, [0.97, 0.98, 1]);
+		drawStrokeRect(chartX, chartY, chartW, chartH, [0.88, 0.9, 0.95], 1);
+
+		if (sampled.length >= 2) {
+			let minValue = sampled[0].value;
+			let maxValue = sampled[0].value;
+			for (const point of sampled) {
+				if (point.value < minValue) minValue = point.value;
+				if (point.value > maxValue) maxValue = point.value;
+			}
+
+			const scaleTopRaw = Math.max(maxValue, 0);
+			const roundedMax = Math.max(100000, Math.ceil(scaleTopRaw / 100000) * 100000);
+			const scaleTop = roundedMax + (roundedMax / 2);
+			const tickFractions = [0, 0.125, 0.25, 0.5, 0.75, 1];
+			const formatScaleMarker = (value) => {
+				const amount = Math.max(0, numeric(value, 0));
+				if (amount === 0) return '0';
+				if (amount >= 1000000) return `${formatDecimal(amount / 1000000, 1, locale)}M`;
+				return `${formatDecimal(amount / 1000, 0, locale)}k`;
+			};
+			const scaleGutter = 34;
+			const plotX = chartX + scaleGutter;
+			const plotW = chartW - scaleGutter - 2;
+			const toChartY = (value) => chartY + clamp((numeric(value, 0) / scaleTop) * chartH, 0, chartH);
+
+			drawLine(plotX, chartY, plotX, chartY + chartH, [0.75, 0.8, 0.88], 1);
+			for (const fraction of tickFractions) {
+				const y = chartY + (chartH * fraction);
+				const markerValue = scaleTop * fraction;
+				drawLine(plotX, y, plotX + plotW, y, [0.9, 0.92, 0.96], 0.8);
+				drawLine(plotX - 3, y, plotX, y, [0.75, 0.8, 0.88], 1);
+				drawText(formatScaleMarker(markerValue), plotX - 5, y - 2.5, {
+					font: 'F1',
+					size: 6.2,
+					color: [0.36, 0.42, 0.52],
+					align: 'right',
+				});
+			}
+
+			const barCount = sampled.length;
+			const gap = 1.5;
+			const barWidth = Math.max(7, (plotW - gap * (barCount + 1)) / Math.max(1, barCount));
+			const barCenters = [];
+			for (const [index, point] of sampled.entries()) {
+				const height = toChartY(point.value) - chartY;
+				const x = plotX + gap + index * (barWidth + gap);
+				const centerX = x + barWidth / 2;
+				barCenters.push(centerX);
+				if (height > 0) {
+					drawRect(x, chartY, barWidth, height, [0.15, 0.54, 0.92]);
+				}
+
+				const dateLabel = formatMonthYearShort(point.date);
+				const dateFontSize = 5.6;
+				const dateLabelHeight = dateLabel.length * dateFontSize * 0.5;
+				const dateY = chartY - 2 - dateLabelHeight;
+				drawVerticalText(dateLabel, centerX, dateY, {
+					font: 'F2',
+					size: dateFontSize,
+					color: [0.35, 0.42, 0.54],
+					direction: 'up',
+				});
+
+				const amountLabel = formatMoney(point.value);
+				const amountFontSize = 4.8;
+				const amountLabelHeight = amountLabel.length * amountFontSize * 0.5;
+				if (height >= amountLabelHeight + 10) {
+					const insideY = chartY + Math.max(3, (height - amountLabelHeight) / 2);
+					drawVerticalText(amountLabel, centerX, insideY, {
+						font: 'F1',
+						size: amountFontSize,
+						color: [0.95, 0.98, 1],
+						direction: 'up',
+					});
+				} else {
+					const aboveY = chartY + height + 2;
+					drawVerticalText(amountLabel, centerX, aboveY, {
+						font: 'F1',
+						size: amountFontSize,
+						color: [0.12, 0.2, 0.33],
+						direction: 'up',
+					});
+				}
+			}
+
+			if (barCenters.length >= 2) {
+				const size = sampled.length;
+				let sumX = 0;
+				let sumY = 0;
+				let sumXY = 0;
+				let sumXX = 0;
+				for (let i = 0; i < size; i += 1) {
+					const x = i;
+					const y = sampled[i].value;
+					sumX += x;
+					sumY += y;
+					sumXY += x * y;
+					sumXX += x * x;
+				}
+				const denominator = (size * sumXX) - (sumX * sumX);
+				const slope = denominator === 0 ? 0 : ((size * sumXY) - (sumX * sumY)) / denominator;
+				const intercept = (sumY - (slope * sumX)) / size;
+				const trendValueAt = (index) => intercept + (slope * index);
+				const trendStartY = toChartY(trendValueAt(0));
+				const trendEndY = toChartY(trendValueAt(size - 1));
+				const trendColor = slope >= 0 ? [0.08, 0.58, 0.35] : [0.78, 0.2, 0.18];
+				drawLine(barCenters[0], trendStartY, barCenters[barCenters.length - 1], trendEndY, trendColor, 1.4);
+			}
+
+			const first = sampled[0];
+			const last = sampled[sampled.length - 1];
+			const statX = 474;
+			drawText(`${copy.evolution_start}: ${formatHumanDate(first.date, locale)}`, statX, 548, {
+				font: 'F1',
+				size: 8,
+				color: [0.35, 0.42, 0.54],
+			});
+			drawText(formatMoney(first.value), statX, 536, {
+				font: 'F2',
+				size: 9,
+				color: [0.09, 0.28, 0.53],
+			});
+			drawText(`${copy.evolution_end}: ${formatHumanDate(last.date, locale)}`, statX, 520, {
+				font: 'F1',
+				size: 8,
+				color: [0.35, 0.42, 0.54],
+			});
+			drawText(formatMoney(last.value), statX, 508, {
+				font: 'F2',
+				size: 9,
+				color: [0.09, 0.28, 0.53],
+			});
+			drawText(`${copy.evolution_min}: ${formatMoney(minValue)}`, statX, 492, {
+				font: 'F1',
+				size: 8,
+				color: [0.35, 0.42, 0.54],
+			});
+			drawText(`${copy.evolution_max}: ${formatMoney(maxValue)}`, statX, 480, {
+				font: 'F1',
+				size: 8,
+				color: [0.35, 0.42, 0.54],
+			});
+			if (usedEstimatedEvolution) {
+				drawText(copy.evolution_estimated, chartX, 404, {
+					font: 'F1',
+					size: 8,
+					color: [0.52, 0.56, 0.63],
+				});
+			}
+		} else {
+			drawText(copy.evolution_insufficient, chartX + 18, chartY + 62, {
+				font: 'F1',
+				size: 11,
+				color: [0.4, 0.45, 0.55],
+			});
+		}
+
+	const drawAllocationPanel = (title, entries, panelX) => {
+		const panelY = 88;
+		const panelW = 180;
+		const panelH = 254;
+		drawRect(panelX, panelY, panelW, panelH, [1, 1, 1]);
+		drawStrokeRect(panelX, panelY, panelW, panelH, [0.84, 0.88, 0.94], 1);
+		drawText(title, panelX + 10, panelY + panelH - 22, { font: 'F2', size: 11, color: [0.1, 0.16, 0.28] });
+
+			const sorted = Array.isArray(entries)
+				? [...entries]
+					.sort((left, right) => numeric(right?.value, 0) - numeric(left?.value, 0))
+					.slice(0, 4)
+				: [];
+			if (sorted.length === 0) {
+				drawText(copy.alloc_no_data, panelX + 10, panelY + panelH - 52, {
+					font: 'F1',
+					size: 10,
+					color: [0.42, 0.47, 0.56],
+				});
+				return;
+		}
+
+		let rowY = panelY + panelH - 56;
+		for (const [index, entry] of sorted.entries()) {
+			const palette = [
+				[0.19, 0.56, 0.92],
+				[0.17, 0.68, 0.64],
+				[0.65, 0.45, 0.89],
+				[0.95, 0.55, 0.23],
+			];
+			const color = palette[index % palette.length];
+			const label = truncateText(humanizeLabel(entry?.key || 'unknown'), 20);
+			const weightPct = numeric(entry?.weight_pct, 0);
+				drawText(label, panelX + 10, rowY, { font: 'F1', size: 9, color: [0.26, 0.32, 0.42] });
+				drawText(formatPct(weightPct), panelX + panelW - 10, rowY, {
+					font: 'F2',
+					size: 9,
+					color: [0.12, 0.2, 0.33],
+					align: 'right',
+				});
+				drawPercentBar(panelX + 10, rowY - 11, panelW - 20, 8, weightPct, color);
+				drawText(formatMoney(entry?.value), panelX + 10, rowY - 25, {
+					font: 'F1',
+					size: 8,
+					color: [0.44, 0.49, 0.58],
+				});
+			rowY -= 52;
+		}
+	};
+
+	drawAllocationPanel(copy.alloc_by_class, payload?.allocation_by_class, 24);
+	drawAllocationPanel(copy.alloc_by_currency, payload?.allocation_by_currency, 216);
+	drawAllocationPanel(copy.alloc_by_sector, payload?.allocation_by_sector, 408);
+
+	const content = `${drawCommands.join('\n')}\n`;
 	const objects = [
 		'1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n',
 		'2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n',
-		'3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj\n',
+		'3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R /F3 6 0 R >> >> /Contents 7 0 R >> endobj\n',
 		'4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n',
-		`5 0 obj << /Length ${Buffer.byteLength(content, 'utf8')} >> stream\n${content}endstream\nendobj\n`,
+		'5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >> endobj\n',
+		'6 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Courier >> endobj\n',
+		`7 0 obj << /Length ${Buffer.byteLength(content, 'utf8')} >> stream\n${content}endstream\nendobj\n`,
 	];
 
 	let output = '%PDF-1.4\n';
@@ -1039,6 +2017,566 @@ const createSimplePdfBuffer = (lines) => {
 	}
 	output += `trailer << /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
 	return Buffer.from(output, 'utf8');
+};
+
+const buildFancyReportConfig = (reportType, payload, context = {}) => {
+	const normalizedType = normalizeReportType(reportType);
+	const locale = normalizeReportLocale(context?.locale) || 'pt-BR';
+	const copy = getReportCopy(locale);
+	const formatMoney = (value, currency = 'BRL') => formatMoneyBr(value, locale, currency);
+	const formatPct = (value, digits = 2) => formatPercent(value, digits, locale);
+	const formatSignedPctValue = (value, digits = 2) => formatSignedPercent(value, digits, locale);
+
+	if (normalizedType === 'transactions') {
+		const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+		const byType = payload?.by_type && typeof payload.by_type === 'object' ? payload.by_type : {};
+		const breakdownRows = Object.entries(byType)
+			.sort((left, right) => numeric(right?.[1]?.gross_amount, 0) - numeric(left?.[1]?.gross_amount, 0))
+			.slice(0, 10)
+			.map(([type, stats]) => [
+				String(type || 'unknown').toUpperCase(),
+				String(numeric(stats?.count, 0)),
+				formatMoney(stats?.gross_amount),
+			]);
+		const recentRows = rows
+			.slice()
+			.sort((left, right) => String(right?.date || '').localeCompare(String(left?.date || '')))
+			.slice(0, 10)
+			.map((row) => [
+				formatHumanDate(row?.date, locale),
+				String(row?.ticker || '-').toUpperCase(),
+				String(row?.type || '-').toUpperCase(),
+				formatMoney(row?.amount),
+			]);
+		return {
+			title: copy.transactions_title,
+			subtitle: copy.transactions_subtitle,
+			meta: [
+				{ label: copy.portfolio_label, value: payload?.portfolioId || context?.portfolioId || '-' },
+				{
+					label: copy.range_label,
+					value: `${formatHumanDate(payload?.from, locale)} - ${formatHumanDate(payload?.to, locale)}`,
+				},
+				{ label: copy.filter_label, value: String(context?.period || payload?.period || 'current').toUpperCase() },
+			],
+			kpis: [
+				{ label: copy.kpi_total_transactions, value: String(numeric(payload?.total_transactions, rows.length)) },
+				{ label: copy.kpi_gross_amount, value: formatMoney(payload?.total_amount), tone: 'primary' },
+				{ label: copy.kpi_unique_types, value: String(Object.keys(byType).length) },
+			],
+			sections: [
+				{
+					title: copy.section_breakdown_type,
+					empty: copy.no_movements_range,
+					table: {
+						headers: [copy.header_type, copy.header_transactions, copy.header_gross_amount],
+						align: ['left', 'right', 'right'],
+						rows: breakdownRows,
+					},
+				},
+				{
+					title: copy.section_latest_movements,
+					empty: copy.no_movements_available,
+					table: {
+						headers: [copy.header_date, copy.header_ticker, copy.header_type, copy.header_amount],
+						align: ['left', 'left', 'left', 'right'],
+						rows: recentRows,
+					},
+				},
+			],
+		};
+	}
+
+	if (normalizedType === 'tax') {
+		const monthly = Array.isArray(payload?.monthly) ? payload.monthly : [];
+		const monthRows = monthly
+			.slice()
+			.sort((left, right) => String(right?.month || '').localeCompare(String(left?.month || '')))
+			.slice(0, 8)
+			.map((row) => {
+				const totalTax = Object.values(row?.tax_due || {}).reduce(
+					(sum, value) => sum + numeric(value, 0),
+					0
+				);
+				const realized = Object.values(row?.realized_gain || {}).reduce(
+					(sum, value) => sum + numeric(value, 0),
+					0
+				);
+				return `${formatMonthPeriod(row?.month, locale)} | ${copy.tax_gain_label} ${formatMoney(realized)} | ${copy.tax_due_label} ${formatMoney(totalTax)}`;
+			});
+		const carryLossRows = Object.entries(payload?.carry_loss_by_class || {})
+			.sort((left, right) => numeric(right?.[1], 0) - numeric(left?.[1], 0))
+			.slice(0, 8)
+			.map(([assetClass, amount]) => `${humanizeLabel(assetClass)}: ${formatMoney(amount)}`);
+		return {
+			title: copy.tax_title,
+			subtitle: copy.tax_subtitle,
+			meta: [
+				{ label: copy.portfolio_label, value: payload?.portfolioId || context?.portfolioId || '-' },
+				{ label: copy.year_label, value: String(payload?.year || context?.period || '-') },
+				{ label: copy.data_source_label, value: payload?.data_source || 'internal_calc' },
+			],
+			kpis: [
+				{ label: copy.kpi_estimated_darf, value: formatMoney(payload?.total_tax_due), tone: 'negative' },
+				{ label: copy.kpi_dividends_exempt, value: formatMoney(payload?.total_dividends_isentos), tone: 'positive' },
+				{ label: copy.kpi_jcp_taxable, value: formatMoney(payload?.total_jcp_tributavel) },
+			],
+			sections: [
+				{ title: copy.section_monthly_snapshot, rows: monthRows.length ? monthRows : [copy.no_monthly_records] },
+				{ title: copy.section_carry_loss, rows: carryLossRows.length ? carryLossRows : [copy.no_carry_loss] },
+			],
+		};
+	}
+
+	if (normalizedType === 'dividends') {
+		const monthly = Array.isArray(payload?.monthly_dividends) ? payload.monthly_dividends : [];
+		const monthlyRows = monthly
+			.slice()
+			.sort((left, right) => String(right?.period || '').localeCompare(String(left?.period || '')))
+			.slice(0, 12)
+			.map((row) => [formatMonthPeriod(row?.period, locale), formatMoney(row?.amount)]);
+		const upcoming = Array.isArray(payload?.calendar_upcoming) ? payload.calendar_upcoming : [];
+		const upcomingRows = upcoming
+			.slice()
+			.sort((left, right) =>
+				String(left?.eventDate || left?.date || '').localeCompare(String(right?.eventDate || right?.date || ''))
+			)
+			.slice(0, 12)
+			.map((event) => {
+				const eventValue = event?.details?.value ?? event?.value;
+				return [
+					formatHumanDate(event?.eventDate || event?.date, locale),
+					String(event?.ticker || '-').toUpperCase(),
+					String(event?.eventType || event?.type || '-').toUpperCase(),
+					Number.isFinite(Number(eventValue)) ? formatMoney(eventValue) : '-',
+				];
+			});
+		return {
+			title: copy.dividends_title,
+			subtitle: copy.dividends_subtitle,
+			meta: [
+				{ label: copy.portfolio_label, value: payload?.portfolioId || context?.portfolioId || '-' },
+				{ label: copy.from_label, value: formatHumanDate(payload?.period_from, locale) },
+				{ label: copy.to_label, value: formatHumanDate(payload?.period_to, locale) },
+			],
+			kpis: [
+				{ label: copy.kpi_last_12m, value: formatMoney(payload?.total_last_12_months), tone: 'positive' },
+				{ label: copy.kpi_projected_monthly, value: formatMoney(payload?.projected_monthly_income), tone: 'primary' },
+				{ label: copy.kpi_yield_on_cost, value: formatPct(payload?.yield_on_cost_realized), tone: 'positive' },
+			],
+			sections: [
+				{
+					title: copy.section_monthly_income,
+					empty: copy.no_dividends_range,
+					table: {
+						headers: [copy.header_period, copy.header_amount],
+						align: ['left', 'right'],
+						rows: monthlyRows,
+					},
+				},
+				{
+					title: copy.section_upcoming_events,
+					empty: copy.no_upcoming_events,
+					table: {
+						headers: [copy.header_date, copy.header_ticker, copy.header_event_type, copy.header_amount],
+						align: ['left', 'left', 'left', 'right'],
+						rows: upcomingRows,
+					},
+				},
+			],
+		};
+	}
+
+	if (normalizedType === 'performance') {
+		const benchmarks = Array.isArray(payload?.benchmarks) ? payload.benchmarks : [];
+		const benchmarkRows = benchmarks
+			.slice()
+			.sort((left, right) => numeric(right?.return_pct, 0) - numeric(left?.return_pct, 0))
+			.slice(0, 8)
+			.map((item) => `${String(item?.benchmark || item?.symbol || '-').toUpperCase()}: ${formatSignedPctValue(item?.return_pct)}`);
+		return {
+			title: copy.performance_title,
+			subtitle: copy.performance_subtitle,
+			meta: [
+				{ label: copy.portfolio_label, value: payload?.portfolioId || context?.portfolioId || '-' },
+				{ label: copy.from_label, value: formatHumanDate(payload?.from, locale) },
+				{ label: copy.to_label, value: formatHumanDate(payload?.to, locale) },
+			],
+			kpis: [
+				{ label: copy.kpi_portfolio_return, value: formatSignedPctValue(payload?.portfolio_return_pct), tone: 'primary' },
+				{
+					label: copy.kpi_selected_benchmark,
+					value: formatSignedPctValue(payload?.selected_benchmark?.return_pct),
+					tone: numeric(payload?.selected_benchmark?.return_pct, 0) >= 0 ? 'positive' : 'negative',
+				},
+				{
+					label: copy.kpi_alpha,
+					value: formatSignedPctValue(payload?.alpha),
+					tone: numeric(payload?.alpha, 0) >= 0 ? 'positive' : 'negative',
+				},
+			],
+			sections: [
+				{ title: copy.section_benchmark_ranking, rows: benchmarkRows.length ? benchmarkRows : [copy.no_benchmark_data] },
+			],
+		};
+	}
+
+	return null;
+};
+
+const createFancyInsightsPdfBuffer = (config, context = {}) => {
+	const drawCommands = [];
+	const locale = normalizeReportLocale(context?.locale) || 'pt-BR';
+	const copy = getReportCopy(locale);
+	const push = (line) => drawCommands.push(line);
+	const drawRect = (x, y, w, h, color = [1, 1, 1]) => {
+		push(`${color[0]} ${color[1]} ${color[2]} rg ${x} ${y} ${w} ${h} re f`);
+	};
+	const drawStrokeRect = (x, y, w, h, color = [0.8, 0.84, 0.9], lineWidth = 1) => {
+		push(`${color[0]} ${color[1]} ${color[2]} RG ${lineWidth} w ${x} ${y} ${w} ${h} re S`);
+	};
+	const drawLine = (x1, y1, x2, y2, color = [0.8, 0.84, 0.9], lineWidth = 1) => {
+		push(`${color[0]} ${color[1]} ${color[2]} RG ${lineWidth} w ${x1} ${y1} m ${x2} ${y2} l S`);
+	};
+	const drawText = (text, x, y, options = {}) => {
+		const font = options.font || 'F1';
+		const size = options.size || 11;
+		const color = options.color || [0.15, 0.18, 0.22];
+		const align = options.align || 'left';
+		const content = safePdfText(text || '');
+		const approxWidth = content.length * size * 0.5;
+		let textX = x;
+		if (align === 'right') textX = x - approxWidth;
+		if (align === 'center') textX = x - approxWidth / 2;
+		push(
+			`${color[0]} ${color[1]} ${color[2]} rg BT /${font} ${size} Tf 1 0 0 1 ${textX} ${y} Tm (${escapePdf(content)}) Tj ET`
+		);
+	};
+
+	const palette = {
+		primary: [0.19, 0.56, 0.92],
+		positive: [0.09, 0.58, 0.35],
+		negative: [0.8, 0.22, 0.2],
+		neutral: [0.47, 0.52, 0.6],
+	};
+
+	drawRect(0, 0, 612, 842, [0.96, 0.97, 0.99]);
+	drawRect(24, 758, 564, 60, [0.08, 0.14, 0.24]);
+	drawRect(24, 758, 564, 4, [0.14, 0.7, 0.79]);
+	drawText('WEALTHHUB', 40, 790, { font: 'F2', size: 23, color: [0.96, 0.98, 1] });
+	drawText(config?.title || 'Report', 40, 772, { font: 'F1', size: 12, color: [0.78, 0.86, 0.98] });
+	drawText(`${copy.generated}: ${formatHumanDateTime(context?.generatedAt || nowIso(), locale)}`, 572, 790, {
+		font: 'F1',
+		size: 9,
+		color: [0.79, 0.85, 0.96],
+		align: 'right',
+	});
+	drawText(`${copy.user}: ${context?.userId || '-'}`, 572, 776, {
+		font: 'F1',
+		size: 9,
+		color: [0.79, 0.85, 0.96],
+		align: 'right',
+	});
+
+	const metaEntries = Array.isArray(config?.meta) ? config.meta.slice(0, 3) : [];
+	const metaWidth = metaEntries.length > 0 ? Math.floor((564 - ((metaEntries.length - 1) * 12)) / metaEntries.length) : 0;
+	metaEntries.forEach((entry, index) => {
+		const x = 24 + index * (metaWidth + 12);
+		drawRect(x, 720, metaWidth, 28, [0.86, 0.9, 0.95]);
+		drawText(entry.label || '-', x + 8, 738, {
+			font: 'F1',
+			size: 8,
+			color: [0.38, 0.45, 0.56],
+		});
+		drawText(truncateText(entry.value || '-', 28), x + 8, 726, {
+			font: 'F2',
+			size: 10,
+			color: [0.1, 0.16, 0.28],
+		});
+	});
+
+	const kpis = Array.isArray(config?.kpis) ? config.kpis.slice(0, 3) : [];
+	const kpiWidth = kpis.length > 0 ? Math.floor((564 - ((kpis.length - 1) * 18)) / kpis.length) : 0;
+	kpis.forEach((kpi, index) => {
+		const x = 24 + index * (kpiWidth + 18);
+		const tone = String(kpi?.tone || 'neutral').toLowerCase();
+		const accent = palette[tone] || palette.neutral;
+		drawRect(x, 620, kpiWidth, 90, [1, 1, 1]);
+		drawStrokeRect(x, 620, kpiWidth, 90, [0.84, 0.88, 0.94], 1);
+		drawRect(x, 704, kpiWidth, 6, accent);
+		drawText(kpi?.label || '-', x + 12, 680, {
+			font: 'F1',
+			size: 10,
+			color: [0.41, 0.46, 0.56],
+		});
+		drawText(kpi?.value || '-', x + 12, 648, {
+			font: 'F2',
+			size: 17,
+			color: accent,
+		});
+	});
+
+	const drawTableSection = (section, x, y, w, h) => {
+		const table = section?.table || {};
+		const headers = Array.isArray(table.headers) ? table.headers : [];
+		const rows = Array.isArray(table.rows) ? table.rows : [];
+		const align = Array.isArray(table.align) ? table.align : [];
+		const areaX = x + 10;
+		const areaY = y + 12;
+		const areaW = w - 20;
+		const areaTop = y + h - 44;
+		const headerH = 16;
+		const rowH = 15;
+
+		if (headers.length === 0) {
+			drawText(section?.empty || copy.no_data_available, areaX, areaY + 8, {
+				font: 'F1',
+				size: 9,
+				color: [0.27, 0.33, 0.43],
+			});
+			return;
+		}
+
+		const colCount = headers.length;
+		const colWidths = Array(colCount).fill(areaW / colCount);
+		const customWidths = Array.isArray(table.widths) ? table.widths : [];
+		if (customWidths.length === colCount) {
+			const totalCustom = customWidths.reduce((sum, item) => sum + numeric(item, 0), 0);
+			if (totalCustom > 0) {
+				for (let i = 0; i < colCount; i += 1) {
+					colWidths[i] = (numeric(customWidths[i], 0) / totalCustom) * areaW;
+				}
+			}
+		}
+
+		const colStarts = [];
+		let cursor = areaX;
+		for (let i = 0; i < colCount; i += 1) {
+			colStarts.push(cursor);
+			cursor += colWidths[i];
+		}
+
+		drawRect(areaX, areaTop - headerH, areaW, headerH, [0.92, 0.95, 0.99]);
+		drawStrokeRect(areaX, areaY, areaW, areaTop - areaY, [0.84, 0.88, 0.94], 0.8);
+		for (let i = 1; i < colCount; i += 1) {
+			const boundaryX = colStarts[i];
+			drawLine(boundaryX, areaY, boundaryX, areaTop, [0.9, 0.93, 0.97], 0.6);
+		}
+
+		headers.forEach((header, index) => {
+			const colX = colStarts[index];
+			const colW = colWidths[index];
+			const maxChars = Math.max(4, Math.floor((colW - 6) / 4.5));
+			drawText(truncateText(header, maxChars), colX + 3, areaTop - headerH + 4, {
+				font: 'F2',
+				size: 8,
+				color: [0.2, 0.27, 0.39],
+			});
+		});
+
+		const maxRows = Math.max(0, Math.floor((areaTop - areaY - headerH) / rowH));
+		const visibleRows = rows.slice(0, maxRows);
+		visibleRows.forEach((row, rowIndex) => {
+			const rowTop = areaTop - headerH - rowIndex * rowH;
+			drawLine(areaX, rowTop, areaX + areaW, rowTop, [0.94, 0.95, 0.98], 0.5);
+			for (let col = 0; col < colCount; col += 1) {
+				const colX = colStarts[col];
+				const colW = colWidths[col];
+				const raw = Array.isArray(row) ? row[col] : row?.[col];
+				const cellText = safePdfText(raw == null ? '-' : String(raw));
+				const maxChars = Math.max(4, Math.floor((colW - 8) / 4.4));
+				const alignMode = ['left', 'center', 'right'].includes(String(align[col] || ''))
+					? align[col]
+					: 'left';
+				drawText(truncateText(cellText, maxChars), alignMode === 'right' ? colX + colW - 4 : alignMode === 'center' ? colX + colW / 2 : colX + 4, rowTop - rowH + 4, {
+					font: 'F1',
+					size: 8,
+					color: [0.27, 0.33, 0.43],
+					align: alignMode,
+				});
+			}
+		});
+
+		if (rows.length === 0) {
+			drawText(section?.empty || copy.no_data_available, areaX + 4, areaY + 8, {
+				font: 'F1',
+				size: 9,
+				color: [0.27, 0.33, 0.43],
+			});
+		} else if (rows.length > visibleRows.length) {
+			drawText(`+${rows.length - visibleRows.length} ${copy.header_more_rows}`, areaX + areaW - 4, areaY + 2, {
+				font: 'F1',
+				size: 8,
+				color: [0.48, 0.53, 0.61],
+				align: 'right',
+			});
+		}
+	};
+
+	const sections = Array.isArray(config?.sections) ? config.sections.slice(0, 4) : [];
+	sections.forEach((section, index) => {
+		const col = index % 2;
+		const row = Math.floor(index / 2);
+		const x = 24 + col * 282;
+		const y = 382 - row * 210;
+		const w = 270;
+		const h = 196;
+		drawRect(x, y, w, h, [1, 1, 1]);
+		drawStrokeRect(x, y, w, h, [0.84, 0.88, 0.94], 1);
+		drawText(section?.title || '-', x + 10, y + h - 22, {
+			font: 'F2',
+			size: 11,
+			color: [0.1, 0.16, 0.28],
+		});
+		if (section?.table) {
+			drawTableSection(section, x, y, w, h);
+			return;
+		}
+		let rowY = y + h - 44;
+		const rows = Array.isArray(section?.rows) ? section.rows.slice(0, 10) : [];
+		for (const rowText of rows) {
+			drawText(truncateText(rowText, 58), x + 10, rowY, {
+				font: 'F1',
+				size: 9,
+				color: [0.27, 0.33, 0.43],
+			});
+			rowY -= 16;
+			if (rowY < y + 12) break;
+		}
+	});
+
+	drawText(copy.footer, 24, 64, {
+		font: 'F1',
+		size: 9,
+		color: [0.45, 0.5, 0.58],
+	});
+
+	const content = `${drawCommands.join('\n')}\n`;
+	const objects = [
+		'1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n',
+		'2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n',
+		'3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >> endobj\n',
+		'4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n',
+		'5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >> endobj\n',
+		`6 0 obj << /Length ${Buffer.byteLength(content, 'utf8')} >> stream\n${content}endstream\nendobj\n`,
+	];
+
+	let output = '%PDF-1.4\n';
+	const offsets = [0];
+	for (const object of objects) {
+		offsets.push(Buffer.byteLength(output, 'utf8'));
+		output += object;
+	}
+	const xrefOffset = Buffer.byteLength(output, 'utf8');
+	output += `xref\n0 ${objects.length + 1}\n`;
+	output += '0000000000 65535 f \n';
+	for (let index = 1; index <= objects.length; index += 1) {
+		output += `${String(offsets[index]).padStart(10, '0')} 00000 n \n`;
+	}
+	output += `trailer << /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+	return Buffer.from(output, 'utf8');
+};
+
+const createSimplePdfBuffer = (lines) => {
+	const safeLines = Array.isArray(lines) ? lines : [];
+	const wrappedLines = [];
+	for (const line of safeLines) {
+		wrappedLines.push(...wrapPdfLine(line, 92));
+	}
+	if (wrappedLines.length === 0) wrappedLines.push('');
+
+	const linesPerPage = 46;
+	const lineHeight = 16;
+	const pageChunks = [];
+	for (let index = 0; index < wrappedLines.length; index += linesPerPage) {
+		pageChunks.push(wrappedLines.slice(index, index + linesPerPage));
+	}
+
+	const objectById = new Map();
+	let nextObjectId = 1;
+	const catalogId = nextObjectId++;
+	const pagesId = nextObjectId++;
+	const fontId = nextObjectId++;
+	const pageIds = [];
+	const contentIds = [];
+
+	for (let pageIndex = 0; pageIndex < pageChunks.length; pageIndex += 1) {
+		pageIds.push(nextObjectId++);
+		contentIds.push(nextObjectId++);
+	}
+
+	for (let pageIndex = 0; pageIndex < pageChunks.length; pageIndex += 1) {
+		const pageLines = pageChunks[pageIndex];
+		let y = 800;
+		const textCommands = [];
+		for (const line of pageLines) {
+			textCommands.push(`BT /F1 11 Tf 40 ${y} Td (${escapePdf(line)}) Tj ET`);
+			y -= lineHeight;
+		}
+		const content = `${textCommands.join('\n')}\n`;
+		const contentId = contentIds[pageIndex];
+		const pageId = pageIds[pageIndex];
+		objectById.set(
+			contentId,
+			`${contentId} 0 obj << /Length ${Buffer.byteLength(content, 'utf8')} >> stream\n${content}endstream\nendobj\n`
+		);
+		objectById.set(
+			pageId,
+			`${pageId} 0 obj << /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 ${fontId} 0 R >> >> /Contents ${contentId} 0 R >> endobj\n`
+		);
+	}
+
+	objectById.set(
+		pagesId,
+		`${pagesId} 0 obj << /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(' ')}] /Count ${pageIds.length} >> endobj\n`
+	);
+	objectById.set(
+		catalogId,
+		`${catalogId} 0 obj << /Type /Catalog /Pages ${pagesId} 0 R >> endobj\n`
+	);
+	objectById.set(
+		fontId,
+		`${fontId} 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n`
+	);
+
+	const maxObjectId = nextObjectId - 1;
+
+	let output = '%PDF-1.4\n';
+	const offsets = [0];
+	for (let objectId = 1; objectId <= maxObjectId; objectId += 1) {
+		const object = objectById.get(objectId);
+		if (!object) continue;
+		offsets.push(Buffer.byteLength(output, 'utf8'));
+		output += object;
+	}
+	const xrefOffset = Buffer.byteLength(output, 'utf8');
+	output += `xref\n0 ${maxObjectId + 1}\n`;
+	output += '0000000000 65535 f \n';
+	for (let index = 1; index <= maxObjectId; index += 1) {
+		const offset = offsets[index] || 0;
+		output += `${String(offset).padStart(10, '0')} 00000 n \n`;
+	}
+	output += `trailer << /Size ${maxObjectId + 1} /Root ${catalogId} 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+	return Buffer.from(output, 'utf8');
+};
+
+const streamToBuffer = async (body) => {
+	if (!body) return Buffer.alloc(0);
+	if (Buffer.isBuffer(body)) return body;
+	if (typeof body === 'string') return Buffer.from(body);
+	if (body instanceof Uint8Array) return Buffer.from(body);
+
+	const chunks = [];
+	for await (const chunk of body) {
+		if (Buffer.isBuffer(chunk)) {
+			chunks.push(chunk);
+		} else if (chunk instanceof Uint8Array) {
+			chunks.push(Buffer.from(chunk));
+		} else {
+			chunks.push(Buffer.from(String(chunk)));
+		}
+	}
+	return Buffer.concat(chunks);
 };
 
 const stdDev = (values) => {
@@ -4048,9 +5586,81 @@ class PlatformService {
 		};
 	}
 
+	async getTransactionsStatementReport(userId, period, options = {}) {
+		const portfolioId = await this.#resolvePortfolioId(userId, options.portfolioId);
+		const assets = await this.#listPortfolioAssets(portfolioId);
+		const assetById = new Map(assets.map((asset) => [asset.assetId, asset]));
+		const transactions = await this.#listPortfolioTransactions(portfolioId);
+
+		const today = nowIso().slice(0, 10);
+		const periodInput = String(period || '').trim();
+		let fromDate = null;
+		let toDate = today;
+
+		if (/^\d{4}$/.test(periodInput)) {
+			fromDate = `${periodInput}-01-01`;
+			toDate = `${periodInput}-12-31`;
+		} else {
+			const periodKey = String(periodInput || '1A').toUpperCase();
+			const days = Object.prototype.hasOwnProperty.call(PERIOD_TO_DAYS, periodKey)
+				? PERIOD_TO_DAYS[periodKey]
+				: PERIOD_TO_DAYS['1A'];
+			fromDate = days === null ? null : addDays(today, -days);
+		}
+
+		const rows = transactions
+			.map((tx) => {
+				const date = normalizeDate(tx.date || tx.createdAt);
+				if (!date) return null;
+				if (fromDate && date < fromDate) return null;
+				if (toDate && date > toDate) return null;
+
+				const asset = assetById.get(tx.assetId) || {};
+				return {
+					date,
+					transaction_id: tx.transId || null,
+					type: tx.type || null,
+					ticker: asset.ticker || null,
+					asset_name: asset.name || null,
+					quantity: numeric(tx.quantity, 0),
+					price: numeric(tx.price, 0),
+					amount: numeric(tx.amount, 0),
+					currency: tx.currency || asset.currency || 'BRL',
+					status: tx.status || null,
+					source: tx.sourceDocId || tx.institution || null,
+				};
+			})
+			.filter(Boolean)
+			.sort((left, right) => String(right.date || '').localeCompare(String(left.date || '')));
+
+		const summaryByType = {};
+		for (const row of rows) {
+			const key = String(row.type || 'unknown').toLowerCase();
+			if (!summaryByType[key]) {
+				summaryByType[key] = { count: 0, gross_amount: 0 };
+			}
+			summaryByType[key].count += 1;
+			summaryByType[key].gross_amount += numeric(row.amount, 0);
+		}
+
+		return {
+			portfolioId,
+			period: periodInput || (fromDate ? '1A' : 'MAX'),
+			from: fromDate,
+			to: toDate,
+			total_transactions: rows.length,
+			total_amount: rows.reduce((sum, row) => sum + numeric(row.amount, 0), 0),
+			by_type: summaryByType,
+			rows,
+			fetched_at: nowIso(),
+		};
+	}
+
 	async generatePDF(userId, reportType, period, options = {}) {
-		const normalizedType = String(reportType || 'portfolio').toLowerCase();
+		const normalizedType = normalizeReportType(reportType || 'portfolio') || 'portfolio';
+		const templateVersion = getReportTemplateVersion(normalizedType);
 		const reportId = `report-${hashId(`${userId}:${normalizedType}:${period || 'current'}:${nowIso()}`)}`;
+		const reportLocale = await this.#resolveReportLocale(userId, options?.locale);
 		let payload;
 
 		if (normalizedType === 'tax') {
@@ -4060,20 +5670,25 @@ class PlatformService {
 			payload = await this.getDividendAnalytics(userId, options);
 		} else if (normalizedType === 'performance') {
 			payload = await this.getBenchmarkComparison(userId, 'IBOV', period || '1A', options);
+		} else if (normalizedType === 'transactions') {
+			payload = await this.getTransactionsStatementReport(userId, period, options);
 		} else {
 			payload = await this.getDashboard(userId, options);
 		}
 
-		const lines = [
-			`WealthHub Report`,
-			`Type: ${normalizedType}`,
-			`User: ${userId}`,
-			`Generated at: ${nowIso()}`,
-			`Period: ${period || 'current'}`,
-			'',
-			JSON.stringify(payload, null, 2).slice(0, 3500),
-		];
-		const pdfBuffer = createSimplePdfBuffer(lines);
+		const reportContext = {
+			userId,
+			period: period || 'current',
+			portfolioId: options?.portfolioId || payload?.portfolioId || null,
+			generatedAt: nowIso(),
+			locale: reportLocale,
+		};
+		const fancyConfig = buildFancyReportConfig(normalizedType, payload, reportContext);
+		const pdfBuffer = normalizedType === 'portfolio'
+			? createFancyPortfolioPdfBuffer(payload, reportContext)
+			: fancyConfig
+				? createFancyInsightsPdfBuffer(fancyConfig, reportContext)
+				: createSimplePdfBuffer(buildPdfLines(normalizedType, payload, reportContext));
 		const yearFolder = String(new Date().getUTCFullYear());
 
 		let storage;
@@ -4111,6 +5726,9 @@ class PlatformService {
 			reportId,
 			reportType: normalizedType,
 			period: period || null,
+			portfolioId: options?.portfolioId || payload?.portfolioId || null,
+			locale: reportLocale,
+			templateVersion,
 			storage,
 			data_source: 'internal_calc',
 			fetched_at: nowIso(),
@@ -4123,8 +5741,212 @@ class PlatformService {
 		return item;
 	}
 
+	async #upgradeLegacyReportIfNeeded(userId, report, currentBuffer) {
+		const normalizedType = normalizeReportType(report?.reportType || '');
+		const supportedTypes = new Set(Object.keys(REPORT_TEMPLATE_VERSION));
+		if (!supportedTypes.has(normalizedType)) return currentBuffer;
+
+		const expectedTemplateVersion = getReportTemplateVersion(normalizedType);
+		const currentTemplateVersion = String(report?.templateVersion || '');
+		const needsUpgrade = currentTemplateVersion !== expectedTemplateVersion;
+		if (!needsUpgrade) return currentBuffer;
+		const reportLocale = await this.#resolveReportLocale(userId, report?.locale || null);
+
+		let payload = null;
+		if (normalizedType === 'portfolio') {
+			payload = await this.getDashboard(userId, {
+				portfolioId: report?.portfolioId || null,
+				period: report?.period || 'MAX',
+			});
+		} else if (normalizedType === 'transactions') {
+			payload = await this.getTransactionsStatementReport(userId, report?.period || null, {
+				portfolioId: report?.portfolioId || null,
+			});
+		} else if (normalizedType === 'tax') {
+			const year = Number(report?.period) || new Date().getUTCFullYear();
+			payload = await this.getTaxReport(userId, year, {
+				portfolioId: report?.portfolioId || null,
+			});
+		} else if (normalizedType === 'dividends') {
+			payload = await this.getDividendAnalytics(userId, {
+				portfolioId: report?.portfolioId || null,
+			});
+		} else if (normalizedType === 'performance') {
+			payload = await this.getBenchmarkComparison(
+				userId,
+				'IBOV',
+				report?.period || '1A',
+				{ portfolioId: report?.portfolioId || null }
+			);
+		}
+		const reportContext = {
+			userId,
+			period: report?.period || 'current',
+			portfolioId: report?.portfolioId || payload?.portfolioId || null,
+			generatedAt: nowIso(),
+			locale: reportLocale,
+		};
+		const fancyConfig = buildFancyReportConfig(normalizedType, payload, reportContext);
+		const upgradedBuffer = normalizedType === 'portfolio'
+			? createFancyPortfolioPdfBuffer(payload, reportContext)
+			: fancyConfig
+				? createFancyInsightsPdfBuffer(fancyConfig, reportContext)
+				: createSimplePdfBuffer(buildPdfLines(normalizedType, payload, reportContext));
+
+		const storage = report?.storage || {};
+		if (storage.type === 'local') {
+			const fallbackYear = String(new Date(report.createdAt || nowIso()).getUTCFullYear());
+			const filePath = storage.path || path.join(
+				this.reportsLocalDir,
+				userId,
+				fallbackYear,
+				normalizedType,
+				`${report.reportId}.pdf`
+			);
+			fs.mkdirSync(path.dirname(filePath), { recursive: true });
+			fs.writeFileSync(filePath, upgradedBuffer);
+		} else if ((storage.type === 's3' || storage.uri || storage.key) && this.s3) {
+			const parsedUri = String(storage.uri || '').match(/^s3:\/\/([^/]+)\/(.+)$/);
+			const bucket = storage.bucket || (parsedUri ? parsedUri[1] : this.s3Bucket);
+			const key = storage.key || (parsedUri ? parsedUri[2] : null);
+			if (!bucket || !key) throw new Error('Invalid S3 report storage metadata');
+			await this.s3.send(
+				new PutObjectCommand({
+					Bucket: bucket,
+					Key: key,
+					Body: upgradedBuffer,
+					ContentType: 'application/pdf',
+				})
+				);
+		}
+
+		const upgradedReport = {
+			...report,
+			reportType: normalizedType,
+			portfolioId: report?.portfolioId || payload?.portfolioId || null,
+			locale: reportLocale,
+			templateVersion: expectedTemplateVersion,
+			updatedAt: nowIso(),
+		};
+		await this.dynamo.send(new PutCommand({ TableName: this.tableName, Item: upgradedReport }));
+
+		return upgradedBuffer;
+	}
+
+	async getReportById(userId, reportId) {
+		const normalizedReportId = String(reportId || '').trim();
+		if (!normalizedReportId) throw new Error('reportId is required');
+		const response = await this.dynamo.send(
+			new GetCommand({
+				TableName: this.tableName,
+				Key: {
+					PK: `USER#${userId}`,
+					SK: `REPORT#${normalizedReportId}`,
+				},
+			})
+		);
+		if (!response.Item) {
+			const error = new Error(`Report '${normalizedReportId}' not found`);
+			error.statusCode = 404;
+			throw error;
+		}
+		return response.Item;
+	}
+
+	async getReportContent(userId, reportId) {
+		const report = await this.getReportById(userId, reportId);
+		const storage = report.storage || {};
+		let contentType = 'application/pdf';
+		const normalizedType = normalizeReportType(report.reportType || 'portfolio') || 'portfolio';
+		const safePeriod = report.period ? String(report.period).replace(/[^\w-]/g, '_') : 'current';
+		const filename = `${normalizedType}-${safePeriod}-${report.reportId}.pdf`;
+		let payloadBuffer = null;
+
+		if (storage.type === 'local') {
+			const fallbackYear = String(new Date(report.createdAt || nowIso()).getUTCFullYear());
+			const filePath = storage.path || path.join(
+				this.reportsLocalDir,
+				userId,
+				fallbackYear,
+				normalizedType,
+				`${report.reportId}.pdf`
+			);
+			if (!fs.existsSync(filePath)) {
+				throw new Error(`Report file not found: ${filePath}`);
+			}
+			payloadBuffer = fs.readFileSync(filePath);
+		} else if ((storage.type === 's3' || storage.uri || storage.key) && this.s3) {
+			const parsedUri = String(storage.uri || '').match(/^s3:\/\/([^/]+)\/(.+)$/);
+			const bucket = storage.bucket || (parsedUri ? parsedUri[1] : this.s3Bucket);
+			const key = storage.key || (parsedUri ? parsedUri[2] : null);
+			if (!bucket || !key) throw new Error('Invalid S3 report storage metadata');
+
+			const response = await this.s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+			contentType = response.ContentType || contentType;
+			payloadBuffer = await streamToBuffer(response.Body);
+		} else {
+			throw new Error('Unsupported report storage type');
+		}
+			payloadBuffer = await this.#upgradeLegacyReportIfNeeded(userId, report, payloadBuffer);
+
+		return {
+			reportId: report.reportId,
+			reportType: report.reportType || null,
+			period: report.period || null,
+			createdAt: report.createdAt || null,
+			contentType,
+			filename,
+			sizeBytes: payloadBuffer.length,
+			dataBase64: payloadBuffer.toString('base64'),
+			fetched_at: nowIso(),
+		};
+	}
+
+	async deleteReport(userId, reportId) {
+		const report = await this.getReportById(userId, reportId);
+		const storage = report.storage || {};
+		const normalizedType = normalizeReportType(report.reportType || 'portfolio') || 'portfolio';
+
+		if (storage.type === 'local') {
+			const fallbackYear = String(new Date(report.createdAt || nowIso()).getUTCFullYear());
+			const filePath = storage.path || path.join(
+				this.reportsLocalDir,
+				userId,
+				fallbackYear,
+				normalizedType,
+				`${report.reportId}.pdf`
+			);
+			if (fs.existsSync(filePath)) {
+				fs.unlinkSync(filePath);
+			}
+		} else if ((storage.type === 's3' || storage.uri || storage.key) && this.s3) {
+			const parsedUri = String(storage.uri || '').match(/^s3:\/\/([^/]+)\/(.+)$/);
+			const bucket = storage.bucket || (parsedUri ? parsedUri[1] : this.s3Bucket);
+			const key = storage.key || (parsedUri ? parsedUri[2] : null);
+			if (bucket && key) {
+				await this.s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+			}
+		}
+
+		await this.dynamo.send(
+			new DeleteCommand({
+				TableName: this.tableName,
+				Key: {
+					PK: `USER#${userId}`,
+					SK: `REPORT#${report.reportId}`,
+				},
+			})
+		);
+
+		return {
+			deleted: true,
+			reportId: report.reportId,
+			fetched_at: nowIso(),
+		};
+	}
+
 	async listReports(userId) {
-		return this.#queryAll({
+		const reports = await this.#queryAll({
 			TableName: this.tableName,
 			KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
 			ExpressionAttributeValues: {
@@ -4132,6 +5954,11 @@ class PlatformService {
 				':sk': 'REPORT#',
 			},
 		});
+		return reports.sort((left, right) =>
+			String(right.createdAt || right.fetched_at || '').localeCompare(
+				String(left.createdAt || left.fetched_at || '')
+			)
+		);
 	}
 
 	async publishIdea(userId, payload = {}) {
@@ -5134,6 +6961,42 @@ class PlatformService {
 		);
 		if (!asset) throw new Error(`Asset '${ticker}' not found in portfolio`);
 		return { portfolioId, asset };
+	}
+
+	async #resolveReportLocale(userId, explicitLocale) {
+		const explicit = normalizeReportLocale(explicitLocale);
+		if (explicit) return explicit;
+		try {
+			const response = await this.dynamo.send(
+				new GetCommand({
+					TableName: this.tableName,
+					Key: {
+						PK: `USER#${userId}`,
+						SK: 'SETTINGS#profile',
+					},
+				})
+			);
+			const profile = response?.Item || {};
+			const candidates = [
+				profile.locale,
+				profile.language,
+				profile.preferredLanguage,
+			];
+			for (const candidate of candidates) {
+				const normalized = normalizeReportLocale(candidate);
+				if (normalized) return normalized;
+			}
+		} catch (error) {
+			this.logger.warn(
+				JSON.stringify({
+					event: 'report_locale_resolve_failed',
+					userId,
+					error: error.message,
+					fetched_at: nowIso(),
+				})
+			);
+		}
+		return 'pt-BR';
 	}
 
 	async #resolvePortfolioId(userId, explicitPortfolioId) {
