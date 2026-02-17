@@ -11,6 +11,33 @@ const parsers = [
 ];
 
 /**
+ * Detect parser by workbook metadata and sample rows.
+ * @param {string} fileName
+ * @param {object} workbook
+ * @returns {{ parser: BaseParser, workbook: object } | null}
+ */
+function detectProviderFromWorkbook(fileName, workbook) {
+	if (!workbook || !Array.isArray(workbook.SheetNames)) return null;
+	const safeFileName = require('path').basename(fileName || 'upload.xlsx');
+	const sheetNames = workbook.SheetNames;
+	if (sheetNames.length === 0) return null;
+
+	// Get sample rows from first sheet for header sniffing
+	const firstSheet = workbook.Sheets[sheetNames[0]];
+	const sampleRows = XLSX.utils
+		.sheet_to_json(firstSheet, { header: 1, defval: '' })
+		.slice(0, 4);
+
+	for (const parser of parsers) {
+		if (parser.detect(safeFileName, sheetNames, sampleRows)) {
+			return { parser, workbook };
+		}
+	}
+
+	return null;
+}
+
+/**
  * Detect the appropriate parser for a given file.
  * @param {string} filePath - Path to the file
  * @returns {{ parser: BaseParser, workbook: object } | null}
@@ -18,19 +45,7 @@ const parsers = [
 function detectProvider(filePath) {
 	const fileName = require('path').basename(filePath);
 	const workbook = XLSX.readFile(filePath);
-	const sheetNames = workbook.SheetNames;
-
-	// Get sample rows from first sheet for header sniffing
-	const firstSheet = workbook.Sheets[sheetNames[0]];
-	const sampleRows = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: '' }).slice(0, 4);
-
-	for (const parser of parsers) {
-		if (parser.detect(fileName, sheetNames, sampleRows)) {
-			return { parser, workbook };
-		}
-	}
-
-	return null;
+	return detectProviderFromWorkbook(fileName, workbook);
 }
 
 /**
@@ -50,4 +65,4 @@ function listParsers() {
 	return parsers.map(p => ({ id: p.id, provider: p.provider }));
 }
 
-module.exports = { detectProvider, getParser, listParsers };
+module.exports = { detectProvider, detectProviderFromWorkbook, getParser, listParsers };

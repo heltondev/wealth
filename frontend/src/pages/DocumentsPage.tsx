@@ -3,7 +3,13 @@ import { useTranslation } from 'react-i18next';
 import Layout from '../components/Layout';
 import SharedDropdown from '../components/SharedDropdown';
 import { usePortfolioData } from '../context/PortfolioDataContext';
-import { api, type ReportContentResponse, type ReportRecord } from '../services/api';
+import {
+  api,
+  type ImportB3Response,
+  type ParserDescriptor,
+  type ReportContentResponse,
+  type ReportRecord,
+} from '../services/api';
 import './DocumentsPage.scss';
 
 type ReportType = 'portfolio' | 'tax' | 'dividends' | 'performance' | 'transactions';
@@ -42,7 +48,15 @@ const normalizeReportType = (value: unknown): ReportType | 'other' => {
 
 const DocumentsPage = () => {
   const { t, i18n } = useTranslation();
-  const { portfolios, selectedPortfolio, setSelectedPortfolio, assets, transactions } = usePortfolioData();
+  const {
+    portfolios,
+    selectedPortfolio,
+    setSelectedPortfolio,
+    assets,
+    transactions,
+    refreshMetrics,
+    refreshPortfolioData,
+  } = usePortfolioData();
 
   const [selectedReportType, setSelectedReportType] = useState<ReportType>('portfolio');
   const [selectedPeriodPreset, setSelectedPeriodPreset] = useState<PeriodPreset>('current');
@@ -56,6 +70,12 @@ const DocumentsPage = () => {
   const [deletingReportId, setDeletingReportId] = useState<string | null>(null);
   const [deleteModalReport, setDeleteModalReport] = useState<ReportRecord | null>(null);
   const [previewState, setPreviewState] = useState<{ reportId: string; title: string; url: string } | null>(null);
+  const [availableParsers, setAvailableParsers] = useState<ParserDescriptor[]>([]);
+  const [selectedImportParser, setSelectedImportParser] = useState('auto');
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importSummary, setImportSummary] = useState<ImportB3Response | null>(null);
+  const [importMessage, setImportMessage] = useState<string | null>(null);
 
   const numberLocale = i18n.language?.startsWith('pt') ? 'pt-BR' : 'en-US';
 
@@ -85,6 +105,16 @@ const DocumentsPage = () => {
       label: t(`documents.period.${period}`),
     }))
   ), [t]);
+
+  const parserOptions = useMemo(() => ([
+    { value: 'auto', label: t('documents.import.autoDetect') },
+    ...availableParsers.map((parser) => ({
+      value: parser.id,
+      label: t(`documents.import.parsers.${parser.id}`, {
+        defaultValue: `${parser.id} (${String(parser.provider || '').toUpperCase()})`,
+      }),
+    })),
+  ]), [availableParsers, t]);
 
   const resolveStorageLabel = useCallback((report: ReportRecord): string => {
     const normalized = String(report.storage?.type || '').toLowerCase();
@@ -120,9 +150,22 @@ const DocumentsPage = () => {
     }
   }, [t]);
 
+  const loadParsers = useCallback(async () => {
+    try {
+      const payload = await api.listParsers();
+      setAvailableParsers(Array.isArray(payload) ? payload : []);
+    } catch {
+      setAvailableParsers([]);
+    }
+  }, []);
+
   useEffect(() => {
     void loadReports();
   }, [loadReports]);
+
+  useEffect(() => {
+    void loadParsers();
+  }, [loadParsers]);
 
   const sortedReports = useMemo(() => (
     [...reports].sort((left, right) => {
@@ -234,6 +277,47 @@ const DocumentsPage = () => {
     i18n.language,
     t,
   ]);
+
+  const importB3File = useCallback(async () => {
+    if (!selectedPortfolio) {
+      setImportMessage(t('documents.import.errors.selectPortfolio'));
+      return;
+    }
+    if (!importFile) {
+      setImportMessage(t('documents.import.errors.selectFile'));
+      return;
+    }
+
+    setImporting(true);
+    setImportMessage(null);
+    setImportSummary(null);
+    try {
+      const payload = await api.importB3File(
+        selectedPortfolio,
+        importFile,
+        selectedImportParser === 'auto' ? undefined : selectedImportParser
+      );
+      setImportSummary(payload);
+      await refreshPortfolioData();
+      refreshMetrics();
+      setImportMessage(t('documents.import.success'));
+    } catch (reason) {
+      setImportMessage(reason instanceof Error ? reason.message : t('documents.import.error'));
+    } finally {
+      setImporting(false);
+    }
+  }, [
+    importFile,
+    refreshMetrics,
+    refreshPortfolioData,
+    selectedImportParser,
+    selectedPortfolio,
+    t,
+  ]);
+
+  const warningLabel = useCallback((warning: string) => (
+    t(`documents.import.warnings.${warning}`, { defaultValue: warning })
+  ), [t]);
 
   const exportTransactionsCsv = useCallback(() => {
     if (!selectedPortfolio || transactions.length === 0) {
@@ -368,6 +452,106 @@ const DocumentsPage = () => {
 
           {generateMessage ? (
             <p className="documents-page__message">{generateMessage}</p>
+          ) : null}
+        </section>
+
+        <section className="documents-card">
+          <header className="documents-card__header">
+            <h2>{t('documents.import.title')}</h2>
+          </header>
+          <p className="documents-page__import-hint">{t('documents.import.hint')}</p>
+
+          <div className="documents-page__controls">
+            {portfolioOptions.length > 0 ? (
+              <SharedDropdown
+                value={selectedPortfolio}
+                options={portfolioOptions}
+                onChange={setSelectedPortfolio}
+                ariaLabel={t('documents.selectPortfolio')}
+                className="documents-page__dropdown documents-page__dropdown--portfolio"
+                size="sm"
+              />
+            ) : null}
+            <SharedDropdown
+              value={selectedImportParser}
+              options={parserOptions}
+              onChange={setSelectedImportParser}
+              ariaLabel={t('documents.import.selectParser')}
+              className="documents-page__dropdown"
+              size="sm"
+            />
+            <label className="documents-page__file-picker">
+              <input
+                type="file"
+                accept=".xlsx,.xlsm,.xls"
+                className="documents-page__file-input"
+                onChange={(event) => {
+                  const file = event.target.files && event.target.files[0] ? event.target.files[0] : null;
+                  setImportFile(file);
+                }}
+              />
+              <span>{importFile?.name || t('documents.import.pickFile')}</span>
+            </label>
+            <button
+              type="button"
+              className="documents-page__action"
+              onClick={() => void importB3File()}
+              disabled={!selectedPortfolio || !importFile || importing}
+            >
+              {importing ? t('documents.import.importing') : t('documents.import.action')}
+            </button>
+          </div>
+
+          {importMessage ? (
+            <p className="documents-page__message">{importMessage}</p>
+          ) : null}
+
+          {importSummary ? (
+            <div className="documents-page__import-summary">
+              <div className="documents-page__import-summary-head">
+                <h3>{t('documents.import.summary.title')}</h3>
+                <span>{importSummary.sourceFile}</span>
+              </div>
+              <div className="documents-page__import-grid">
+                <div className="documents-page__import-item">
+                  <span>{t('documents.import.summary.parser')}</span>
+                  <strong>{importSummary.parser}</strong>
+                </div>
+                <div className="documents-page__import-item">
+                  <span>{t('documents.import.summary.detection')}</span>
+                  <strong>{importSummary.detectionMode}</strong>
+                </div>
+                <div className="documents-page__import-item">
+                  <span>{t('documents.import.summary.assets')}</span>
+                  <strong>
+                    {`+${importSummary.stats.assets.created} / ~${importSummary.stats.assets.updated || 0}`}
+                  </strong>
+                </div>
+                <div className="documents-page__import-item">
+                  <span>{t('documents.import.summary.transactions')}</span>
+                  <strong>
+                    {`+${importSummary.stats.transactions.created} / -${importSummary.stats.transactions.skipped}`}
+                  </strong>
+                </div>
+                <div className="documents-page__import-item">
+                  <span>{t('documents.import.summary.aliases')}</span>
+                  <strong>
+                    {`+${importSummary.stats.aliases.created} / -${importSummary.stats.aliases.skipped}`}
+                  </strong>
+                </div>
+                <div className="documents-page__import-item">
+                  <span>{t('documents.import.summary.filtered')}</span>
+                  <strong>{importSummary.stats.transactions.filtered || 0}</strong>
+                </div>
+              </div>
+              {Array.isArray(importSummary.warnings) && importSummary.warnings.length > 0 ? (
+                <ul className="documents-page__import-warnings">
+                  {importSummary.warnings.map((warning) => (
+                    <li key={warning}>{warningLabel(warning)}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
           ) : null}
         </section>
 

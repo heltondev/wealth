@@ -942,6 +942,39 @@
     "movementHint": "Dedicated export of all portfolio transactions in CSV format.",
     "movementCsvError": "No transactions available to export.",
     "exportCsv": "Export CSV Statement",
+    "import": {
+      "title": "Import B3 Spreadsheet",
+      "hint": "Upload a B3 Excel file to auto-detect report type and update assets, transactions, and aliases with duplicate-safe writes.",
+      "pickFile": "Select .xlsx file",
+      "selectParser": "Select parser",
+      "action": "Import file",
+      "importing": "Importing...",
+      "autoDetect": "Auto detect type",
+      "success": "Import completed.",
+      "error": "Failed to import file.",
+      "errors": {
+        "selectPortfolio": "Select a portfolio before importing.",
+        "selectFile": "Select a file to import."
+      },
+      "parsers": {
+        "b3-negociacao": "B3 Trades (negociacao)",
+        "b3-movimentacao": "B3 Movements",
+        "b3-posicao": "B3 Positions (snapshot)",
+        "b3-relatorio": "B3 Consolidated report"
+      },
+      "summary": {
+        "title": "Import summary",
+        "parser": "Parser",
+        "detection": "Detection",
+        "assets": "Assets (+created / ~updated)",
+        "transactions": "Transactions (+created / -skipped)",
+        "aliases": "Aliases (+created / -skipped)",
+        "filtered": "Filtered (report)"
+      },
+      "warnings": {
+        "relatorio_transactions_filtered_due_to_detailed_sources": "Consolidated report transactions were filtered because detailed sources already exist (negotiation/movements)."
+      }
+    },
     "type": {
       "all": "All types",
       "portfolio": "Portfolio Position",

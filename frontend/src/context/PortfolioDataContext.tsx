@@ -25,6 +25,7 @@ interface PortfolioDataContextType {
   loading: boolean;
   metrics: PortfolioMetricsData | null;
   refreshMetrics: () => void;
+  refreshPortfolioData: () => Promise<void>;
 }
 
 const METRICS_TTL_MS = 5 * 60 * 1000;
@@ -144,6 +145,14 @@ export const PortfolioDataProvider = ({ children }: { children: ReactNode }) => 
     readMetricsFromStorage(readSelectedFromStorage())
   );
 
+  const fetchPortfolioData = useCallback(async (portfolioId: string) => {
+    const [assetItems, transactionItems] = await Promise.all([
+      api.getAssets(portfolioId),
+      api.getTransactions(portfolioId),
+    ]);
+    return { assetItems, transactionItems };
+  }, []);
+
   const setSelectedPortfolio = useCallback((id: string) => {
     setSelectedPortfolioRaw(id);
     writeSelectedToStorage(id);
@@ -177,8 +186,8 @@ export const PortfolioDataProvider = ({ children }: { children: ReactNode }) => 
     let cancelled = false;
     setLoading(true);
 
-    Promise.all([api.getAssets(selectedPortfolio), api.getTransactions(selectedPortfolio)])
-      .then(([assetItems, transactionItems]) => {
+    fetchPortfolioData(selectedPortfolio)
+      .then(({ assetItems, transactionItems }) => {
         if (cancelled) return;
         setAssets(assetItems);
         setTransactions(transactionItems);
@@ -193,7 +202,7 @@ export const PortfolioDataProvider = ({ children }: { children: ReactNode }) => 
       });
 
     return () => { cancelled = true; };
-  }, [selectedPortfolio]);
+  }, [fetchPortfolioData, selectedPortfolio]);
 
   // Fetch metrics with TTL.
   const fetchMetrics = useCallback((portfolioId: string) => {
@@ -228,6 +237,21 @@ export const PortfolioDataProvider = ({ children }: { children: ReactNode }) => 
     if (selectedPortfolio) fetchMetrics(selectedPortfolio);
   }, [fetchMetrics, selectedPortfolio]);
 
+  const refreshPortfolioData = useCallback(async () => {
+    if (!selectedPortfolio) return;
+    setLoading(true);
+    try {
+      const { assetItems, transactionItems } = await fetchPortfolioData(selectedPortfolio);
+      setAssets(assetItems);
+      setTransactions(transactionItems);
+    } catch {
+      setAssets([]);
+      setTransactions([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [fetchPortfolioData, selectedPortfolio]);
+
   const value = useMemo<PortfolioDataContextType>(() => ({
     portfolios,
     selectedPortfolio,
@@ -237,7 +261,18 @@ export const PortfolioDataProvider = ({ children }: { children: ReactNode }) => 
     loading,
     metrics,
     refreshMetrics,
-  }), [portfolios, selectedPortfolio, setSelectedPortfolio, assets, transactions, loading, metrics, refreshMetrics]);
+    refreshPortfolioData,
+  }), [
+    portfolios,
+    selectedPortfolio,
+    setSelectedPortfolio,
+    assets,
+    transactions,
+    loading,
+    metrics,
+    refreshMetrics,
+    refreshPortfolioData,
+  ]);
 
   return (
     <PortfolioDataContext.Provider value={value}>

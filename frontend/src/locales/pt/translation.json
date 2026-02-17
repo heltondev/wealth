@@ -942,6 +942,39 @@
     "movementHint": "Exportação dedicada em CSV com todas as transações do portfólio.",
     "movementCsvError": "Não há transações para exportar.",
     "exportCsv": "Exportar Extrato CSV",
+    "import": {
+      "title": "Importar Planilha B3",
+      "hint": "Envie um arquivo Excel da B3 para identificar o tipo automaticamente e atualizar ativos, transações e aliases sem duplicar registros.",
+      "pickFile": "Selecionar arquivo .xlsx",
+      "selectParser": "Selecionar parser",
+      "action": "Importar arquivo",
+      "importing": "Importando...",
+      "autoDetect": "Auto detectar tipo",
+      "success": "Importação concluída.",
+      "error": "Falha ao importar arquivo.",
+      "errors": {
+        "selectPortfolio": "Selecione um portfólio antes de importar.",
+        "selectFile": "Selecione um arquivo para importar."
+      },
+      "parsers": {
+        "b3-negociacao": "B3 Negociação (trades)",
+        "b3-movimentacao": "B3 Movimentação",
+        "b3-posicao": "B3 Posição (snapshot)",
+        "b3-relatorio": "B3 Relatório consolidado"
+      },
+      "summary": {
+        "title": "Resumo da importação",
+        "parser": "Parser",
+        "detection": "Detecção",
+        "assets": "Ativos (+criados / ~atualizados)",
+        "transactions": "Transações (+criadas / -ignoradas)",
+        "aliases": "Aliases (+criados / -ignorados)",
+        "filtered": "Filtradas (relatório)"
+      },
+      "warnings": {
+        "relatorio_transactions_filtered_due_to_detailed_sources": "Transações do relatório consolidado foram filtradas porque já existem fontes detalhadas (negociação/movimentação)."
+      }
+    },
     "type": {
       "all": "Todos os tipos",
       "portfolio": "Posição Consolidada",

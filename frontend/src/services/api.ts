@@ -23,6 +23,22 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return response.json();
 }
 
+const fileToBase64 = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result !== 'string') {
+        reject(new Error('Failed to read file'));
+        return;
+      }
+      const commaIndex = result.indexOf(',');
+      resolve(commaIndex >= 0 ? result.slice(commaIndex + 1) : result);
+    };
+    reader.readAsDataURL(file);
+  });
+
 // --- Types ---
 
 export interface Portfolio {
@@ -468,6 +484,33 @@ export interface ReportContentResponse {
   fetched_at: string;
 }
 
+export interface ParserDescriptor {
+  id: string;
+  provider: string;
+}
+
+export interface ImportStatsByEntity {
+  created: number;
+  skipped: number;
+  updated?: number;
+  filtered?: number;
+}
+
+export interface ImportB3Response {
+  portfolioId: string;
+  parser: string;
+  provider: string;
+  detectionMode: 'auto' | 'manual' | string;
+  sourceFile: string;
+  importedAt: string;
+  stats: {
+    assets: ImportStatsByEntity;
+    transactions: ImportStatsByEntity;
+    aliases: ImportStatsByEntity;
+  };
+  warnings: string[];
+}
+
 export interface ContributionPayload {
   contributionId?: string;
   date?: string;
@@ -550,6 +593,18 @@ export const api = {
   getAliases: () => request<Alias[]>('/settings/aliases'),
   createAlias: (data: Partial<Alias>) =>
     request<Alias>('/settings/aliases', { method: 'POST', body: JSON.stringify(data) }),
+  listParsers: () => request<ParserDescriptor[]>('/parsers'),
+  importB3File: async (portfolioId: string, file: File, parserId?: string) => {
+    const fileContentBase64 = await fileToBase64(file);
+    return request<ImportB3Response>(`/portfolios/${encodeURIComponent(portfolioId)}/import`, {
+      method: 'POST',
+      body: JSON.stringify({
+        fileName: file.name,
+        parserId: parserId || null,
+        fileContentBase64,
+      }),
+    });
+  },
 
   // Dashboard + analytics
   getDashboard: (portfolioId: string, period = 'MAX') =>

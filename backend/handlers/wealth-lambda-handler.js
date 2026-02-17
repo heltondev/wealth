@@ -738,105 +738,70 @@ async function handleAliasesList(method) {
 }
 
 async function handleImport(portfolioId, body) {
-	const { fileName, parserId } = parseBody(body);
-	if (!fileName) throw errorResponse(400, 'fileName is required');
+	const { fileName, parserId, fileContentBase64 } = parseBody(body);
+	if (!fileName && !fileContentBase64) {
+		throw errorResponse(400, 'fileName or fileContentBase64 is required');
+	}
 
-	const { detectProvider, getParser } = require('../parsers/index');
+	const { detectProvider, detectProviderFromWorkbook, getParser } = require('../parsers/index');
+	const { importParsedB3 } = require('../services/import/b3-import-service');
 	const XLSX = require('xlsx');
+	const path = require('path');
 
-	let parser, workbook;
-	if (parserId) {
-		parser = getParser(parserId);
-		if (!parser) throw errorResponse(400, `Unknown parser: ${parserId}`);
-		workbook = XLSX.readFile(fileName);
+	const safeFileName = path.basename(fileName || 'b3-upload.xlsx');
+	let parser;
+	let workbook;
+	let detectionMode = parserId ? 'manual' : 'auto';
+
+	if (fileContentBase64) {
+		let fileBuffer;
+		try {
+			fileBuffer = Buffer.from(fileContentBase64, 'base64');
+		} catch {
+			throw errorResponse(400, 'Invalid fileContentBase64');
+		}
+		if (!fileBuffer || fileBuffer.length === 0) {
+			throw errorResponse(400, 'fileContentBase64 is empty');
+		}
+
+		try {
+			workbook = XLSX.read(fileBuffer, { type: 'buffer' });
+		} catch {
+			throw errorResponse(400, 'Invalid XLSX payload');
+		}
+
+		if (parserId) {
+			parser = getParser(parserId);
+			if (!parser) throw errorResponse(400, `Unknown parser: ${parserId}`);
+		} else {
+			const detected = detectProviderFromWorkbook(safeFileName, workbook);
+			if (!detected) throw errorResponse(400, 'Could not detect file format');
+			parser = detected.parser;
+			workbook = detected.workbook;
+		}
 	} else {
-		const detected = detectProvider(fileName);
-		if (!detected) throw errorResponse(400, 'Could not detect file format');
-		parser = detected.parser;
-		workbook = detected.workbook;
+		if (parserId) {
+			parser = getParser(parserId);
+			if (!parser) throw errorResponse(400, `Unknown parser: ${parserId}`);
+			workbook = XLSX.readFile(fileName);
+		} else {
+			const detected = detectProvider(fileName);
+			if (!detected) throw errorResponse(400, 'Could not detect file format');
+			parser = detected.parser;
+			workbook = detected.workbook;
+		}
 	}
 
-	const parsed = parser.parse(workbook, { sourceFile: fileName });
-	const sourceFile = require('path').basename(fileName);
-	const now = new Date().toISOString();
-	const results = { assets: 0, transactions: 0, aliases: 0 };
-
-	// Create assets
-	for (const asset of parsed.assets) {
-		const assetId = `asset-${asset.ticker.toLowerCase()}`;
-		await dynamo.send(new PutCommand({
-			TableName: TABLE_NAME,
-			Item: {
-				PK: `PORTFOLIO#${portfolioId}`,
-				SK: `ASSET#${assetId}`,
-				assetId,
-				portfolioId,
-				ticker: asset.ticker,
-				name: asset.name,
-				assetClass: asset.assetClass,
-				country: asset.country || 'BR',
-				currency: asset.currency || 'BRL',
-				quantity: parseAssetQuantity(asset.quantity),
-				source: sourceFile,
-				status: 'active',
-				createdAt: now,
-			},
-			ConditionExpression: 'attribute_not_exists(PK)',
-		}).catch(() => {}));
-		results.assets++;
-	}
-
-	// Create transactions
-	for (const trans of parsed.transactions) {
-		const assetId = `asset-${trans.ticker.toLowerCase()}`;
-		const transId = generateId();
-		await dynamo.send(new PutCommand({
-			TableName: TABLE_NAME,
-			Item: {
-				PK: `PORTFOLIO#${portfolioId}`,
-				SK: `TRANS#${transId}`,
-				transId,
-				portfolioId,
-				assetId,
-				ticker: trans.ticker,
-				type: trans.type,
-				date: trans.date,
-				quantity: trans.quantity,
-				price: trans.price,
-				currency: trans.currency || 'BRL',
-				amount: trans.amount,
-				status: 'confirmed',
-				institution: trans.institution || null,
-				direction: trans.direction || null,
-				market: trans.market || null,
-				sourceDocId: trans.source || null,
-				createdAt: now,
-			},
-		}));
-		results.transactions++;
-	}
-
-	// Create aliases
-	for (const alias of parsed.aliases) {
-		await dynamo.send(new PutCommand({
-			TableName: TABLE_NAME,
-			Item: {
-				PK: `ALIAS#${alias.normalizedName}`,
-				SK: `TICKER#${alias.ticker}`,
-				normalizedName: alias.normalizedName,
-				ticker: alias.ticker,
-				source: alias.source || 'b3',
-				createdAt: now,
-			},
-		}).catch(() => {}));
-		results.aliases++;
-	}
-
-	return {
-		parser: parser.id,
-		provider: parser.provider,
-		...results,
-	};
+	const parsed = parser.parse(workbook, { sourceFile: safeFileName });
+	return importParsedB3({
+		dynamo,
+		tableName: TABLE_NAME,
+		portfolioId,
+		parser,
+		parsed,
+		sourceFile: safeFileName,
+		detectionMode,
+	});
 }
 
 async function handleMarketDataRefresh(method, portfolioId, body) {

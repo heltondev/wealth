@@ -33,7 +33,7 @@ const MOCK_CLAIMS = {
 };
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: process.env.API_JSON_LIMIT || '30mb' }));
 
 // Convert Express request -> Lambda event format -> call handler -> return response
 app.all('/api/*path', async (req, res) => {
