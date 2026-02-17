@@ -12,7 +12,7 @@
     "tax": "Tax",
     "platform": "Platform",
     "documents": "Reports",
-    "imports": "Imports",
+    "imports": "Data Ingestion",
     "settings": "Settings",
     "logout": "Logout"
   },
@@ -917,7 +917,7 @@
     }
   },
   "imports": {
-    "title": "Imports",
+    "title": "Data Ingestion",
     "subtitle": "Import files from multiple providers and review the full creation, update, and deduplication report."
   },
   "documents": {

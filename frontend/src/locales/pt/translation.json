@@ -12,7 +12,7 @@
     "tax": "Imposto",
     "platform": "Plataforma",
     "documents": "Relatórios",
-    "imports": "Importações",
+    "imports": "Ingestão de Dados",
     "settings": "Configurações",
     "logout": "Sair"
   },
@@ -917,7 +917,7 @@
     }
   },
   "imports": {
-    "title": "Importações",
+    "title": "Ingestão de Dados",
     "subtitle": "Importe arquivos de múltiplos provedores e acompanhe o relatório completo de criação, atualização e deduplicação."
   },
   "documents": {
