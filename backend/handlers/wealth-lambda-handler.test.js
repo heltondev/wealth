@@ -562,6 +562,45 @@ test('handler POST /reports/generate delegates report generation to platform ser
 		}
 	});
 
+test('handler POST /reports/combine delegates report merge to platform service', async () => {
+	const original = platformService.combineReports;
+	platformService.combineReports = async (_userId, reportIds, options) => ({
+		reportId: 'combined-reports',
+		reportType: 'combined',
+		period: null,
+		createdAt: null,
+		contentType: 'application/pdf',
+		filename: 'combined-reports-2026-02-17.pdf',
+		sizeBytes: 321,
+		dataBase64: 'Zm9v',
+		fetched_at: '2026-02-17T00:00:00.000Z',
+		includedReports: reportIds.map((reportId) => ({
+			reportId,
+			reportType: 'portfolio',
+			period: 'current',
+			createdAt: null,
+		})),
+		locale: options.locale || null,
+	});
+
+	try {
+		const response = await handler(
+			makeEvent('POST', '/reports/combine', {
+				reportIds: ['report-a', 'report-b'],
+				locale: 'pt-BR',
+			})
+		);
+		assert.equal(response.statusCode, 200);
+		const body = JSON.parse(response.body);
+		assert.equal(body.reportType, 'combined');
+		assert.equal(body.contentType, 'application/pdf');
+		assert.equal(body.includedReports.length, 2);
+		assert.equal(body.includedReports[0].reportId, 'report-a');
+	} finally {
+		platformService.combineReports = original;
+	}
+});
+
 test('handler GET /reports/{id} delegates report metadata lookup to platform service', async () => {
 	const original = platformService.getReportById;
 	platformService.getReportById = async (_userId, reportId) => ({

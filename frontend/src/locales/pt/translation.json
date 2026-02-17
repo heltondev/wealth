@@ -11,7 +11,8 @@
     "multiCurrency": "Multi-moeda",
     "tax": "Imposto",
     "platform": "Plataforma",
-    "documents": "Documentos",
+    "documents": "Relatórios",
+    "imports": "Importações",
     "settings": "Configurações",
     "logout": "Sair"
   },
@@ -915,6 +916,10 @@
       }
     }
   },
+  "imports": {
+    "title": "Importações",
+    "subtitle": "Importe arquivos de múltiplos provedores e acompanhe o relatório completo de criação, atualização e deduplicação."
+  },
   "documents": {
     "title": "Relatórios e Exportações",
     "subtitle": "Gere PDFs, faça preview/download dos arquivos e exporte o extrato de movimentações.",
@@ -947,11 +952,27 @@
       "hint": "Envie um arquivo Excel da B3 para identificar o tipo automaticamente e atualizar ativos, transações e aliases sem duplicar registros.",
       "pickFile": "Selecionar arquivo .xlsx",
       "selectParser": "Selecionar parser",
+      "previewAction": "Pré-visualizar importação",
+      "previewing": "Gerando prévia...",
+      "previewReady": "Prévia pronta. Revise os dados e confirme para importar.",
+      "previewError": "Falha ao gerar prévia da importação.",
       "action": "Importar arquivo",
       "importing": "Importando...",
       "autoDetect": "Auto detectar tipo",
       "success": "Importação concluída.",
       "error": "Falha ao importar arquivo.",
+      "modes": {
+        "preview": "Prévia (sem gravação)",
+        "imported": "Importado"
+      },
+      "preview": {
+        "title": "Prévia da Importação"
+      },
+      "confirm": {
+        "title": "Confirmar Importação",
+        "body": "A importação vai aplicar alterações estimadas em {{assets}} ativo(s), {{transactions}} transação(ões) e {{aliases}} alias(es). Deseja continuar?",
+        "action": "Confirmar e importar"
+      },
       "errors": {
         "selectPortfolio": "Selecione um portfólio antes de importar.",
         "selectFile": "Selecione um arquivo para importar."
@@ -964,6 +985,7 @@
       },
       "summary": {
         "title": "Resumo da importação",
+        "mode": "Modo",
         "parser": "Parser",
         "detection": "Detecção",
         "assets": "Ativos (+criados / ~atualizados)",
@@ -1055,6 +1077,25 @@
   "deleteModal": {
     "title": "Excluir Relatório",
     "body": "Este relatório será removido permanentemente: {{reportId}}."
+  },
+  "bulk": {
+    "selectedCount": "{{count}} selecionado(s)",
+    "clear": "Limpar seleção",
+    "combinePreview": "Combinar e visualizar",
+    "combineDownload": "Combinar e baixar",
+    "combineMin": "Selecione pelo menos 2 relatórios para combinar.",
+    "combineOk": "{{count}} relatório(s) combinados com sucesso.",
+    "combineError": "Falha ao combinar relatórios.",
+    "deleteSelected": "Excluir selecionados",
+    "deleteOk": "{{count}} relatório(s) excluído(s) com sucesso.",
+    "deletePartial": "{{deleted}} excluído(s), {{failed}} falha(s).",
+    "deleteError": "Falha ao excluir relatórios selecionados.",
+    "selectAll": "Selecionar todos os relatórios filtrados",
+    "selectOne": "Selecionar relatório",
+    "deleteModal": {
+      "title": "Excluir Relatórios Selecionados",
+      "body": "Isto vai remover permanentemente {{count}} relatório(s)."
+    }
   },
   "status": {
     "uploaded": "Enviado",

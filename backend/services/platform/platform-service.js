@@ -48,6 +48,7 @@ const PERIOD_TO_DAYS = {
 	'5Y': 1825,
 	MAX: null,
 };
+const MAX_COMBINED_REPORTS = 20;
 
 const normalizeReportType = (reportType) => {
 	const normalized = String(reportType || '').trim().toLowerCase();
@@ -109,7 +110,9 @@ const REPORT_COPY = {
 		header_gross_amount: 'Valor Bruto',
 		header_date: 'Data',
 		header_ticker: 'Ticker',
+		header_benchmark: 'Benchmark',
 		header_amount: 'Valor',
+		header_class: 'Classe',
 		dividends_title: 'Dividendos e Proventos',
 		dividends_subtitle: 'Fluxo de renda, projecoes e eventos futuros',
 		from_label: 'De',
@@ -135,9 +138,13 @@ const REPORT_COPY = {
 		no_carry_loss: 'Sem prejuizo acumulado.',
 			performance_title: 'Performance vs Benchmarks',
 			performance_subtitle: 'Comparativo de retorno e analise de alpha',
+			performance_ranking_explainer: 'Ordenado pelo retorno percentual no periodo selecionado.',
 			kpi_portfolio_return: 'Retorno do Portifolio',
 			kpi_selected_benchmark: 'Benchmark Selecionado',
 			kpi_alpha: 'Alpha',
+			kpi_portfolio_return_note: 'Retorno acumulado da carteira no periodo.',
+			kpi_selected_benchmark_note: 'Retorno do benchmark usado como referencia.',
+			kpi_alpha_note: 'Diferenca entre carteira e benchmark.',
 			section_benchmark_ranking: 'Ranking de Benchmarks',
 			no_benchmark_data: 'Sem dados de benchmark disponiveis.',
 			header_period_range: 'Periodo',
@@ -186,7 +193,9 @@ const REPORT_COPY = {
 		header_gross_amount: 'Gross Amount',
 		header_date: 'Date',
 		header_ticker: 'Ticker',
+		header_benchmark: 'Benchmark',
 		header_amount: 'Amount',
+		header_class: 'Class',
 		dividends_title: 'Dividends & Provents',
 		dividends_subtitle: 'Income flow, projections and upcoming events',
 		from_label: 'From',
@@ -212,9 +221,13 @@ const REPORT_COPY = {
 		no_carry_loss: 'No carry loss tracked.',
 			performance_title: 'Performance vs Benchmarks',
 			performance_subtitle: 'Comparative return and alpha analysis',
+			performance_ranking_explainer: 'Sorted by percentage return in the selected period.',
 			kpi_portfolio_return: 'Portfolio Return',
 			kpi_selected_benchmark: 'Selected Benchmark',
 			kpi_alpha: 'Alpha',
+			kpi_portfolio_return_note: 'Cumulative portfolio return in the period.',
+			kpi_selected_benchmark_note: 'Return from the benchmark used as reference.',
+			kpi_alpha_note: 'Difference between portfolio and benchmark.',
 			section_benchmark_ranking: 'Benchmark Ranking',
 			no_benchmark_data: 'No benchmark data available.',
 			header_period_range: 'Period',
@@ -231,11 +244,11 @@ const getReportCopy = (locale) =>
 	(isPortugueseLocale(locale) ? REPORT_COPY.pt : REPORT_COPY.en);
 
 const REPORT_TEMPLATE_VERSION = {
-	portfolio: 'v7',
-	transactions: 'v5',
-	tax: 'v5',
-	dividends: 'v5',
-	performance: 'v5',
+	portfolio: 'v8',
+	transactions: 'v6',
+	tax: 'v7',
+	dividends: 'v7',
+	performance: 'v8',
 };
 
 const getReportTemplateVersion = (reportType) =>
@@ -1608,6 +1621,70 @@ const buildPdfLines = (reportType, payload, context = {}) => {
 	return buildGenericPdfLines(reportType, payload, context);
 };
 
+const buildCombinedSectionLines = (reportType, payload, context = {}) => {
+	const normalizedType = normalizeReportType(reportType || '');
+	if (normalizedType === 'portfolio' || normalizedType === 'transactions') {
+		return buildPdfLines(normalizedType, payload, context);
+	}
+
+	const fancyConfig = buildFancyReportConfig(normalizedType, payload, context);
+	if (!fancyConfig) {
+		return buildGenericPdfLines(normalizedType || 'report', payload, context);
+	}
+
+	const lines = [];
+	if (fancyConfig.title) lines.push(String(fancyConfig.title));
+	if (fancyConfig.subtitle) lines.push(String(fancyConfig.subtitle));
+	if (fancyConfig.title || fancyConfig.subtitle) lines.push('');
+
+	const meta = Array.isArray(fancyConfig.meta) ? fancyConfig.meta : [];
+	for (const entry of meta) {
+		lines.push(`${String(entry?.label || '-')}: ${String(entry?.value || '-')}`);
+	}
+	if (meta.length > 0) lines.push('');
+
+	const kpis = Array.isArray(fancyConfig.kpis) ? fancyConfig.kpis : [];
+	for (const kpi of kpis) {
+		lines.push(`${String(kpi?.label || '-')}: ${String(kpi?.value || '-')}`);
+	}
+	if (kpis.length > 0) lines.push('');
+
+	const sections = Array.isArray(fancyConfig.sections) ? fancyConfig.sections : [];
+	for (const section of sections) {
+		if (section?.title) lines.push(String(section.title));
+		if (section?.description) lines.push(String(section.description));
+		const table = section?.table || null;
+		if (table) {
+			const headers = Array.isArray(table.headers) ? table.headers.map((item) => String(item || '-')) : [];
+			if (headers.length > 0) lines.push(headers.join(' | '));
+			const rows = Array.isArray(table.rows) ? table.rows : [];
+			if (rows.length === 0) {
+				lines.push(String(section?.empty || 'No data available.'));
+			} else {
+				for (const row of rows) {
+					if (Array.isArray(row)) {
+						lines.push(row.map((item) => String(item == null ? '-' : item)).join(' | '));
+					} else {
+						lines.push(String(row || '-'));
+					}
+				}
+			}
+		} else {
+			const rows = Array.isArray(section?.rows) ? section.rows : [];
+			if (rows.length === 0) {
+				lines.push(String(section?.empty || 'No data available.'));
+			} else {
+				for (const row of rows) {
+					lines.push(String(row || '-'));
+				}
+			}
+		}
+		lines.push('');
+	}
+
+	return lines;
+};
+
 const createFancyPortfolioPdfBuffer = (payload, context = {}) => {
 	const drawCommands = [];
 	const push = (line) => drawCommands.push(line);
@@ -2102,12 +2179,24 @@ const buildFancyReportConfig = (reportType, payload, context = {}) => {
 					(sum, value) => sum + numeric(value, 0),
 					0
 				);
-				return `${formatMonthPeriod(row?.month, locale)} | ${copy.tax_gain_label} ${formatMoney(realized)} | ${copy.tax_due_label} ${formatMoney(totalTax)}`;
+				return [
+					formatMonthPeriod(row?.month, locale),
+					formatMoney(realized),
+					formatMoney(totalTax),
+				];
 			});
+		const safeMonthRows =
+			monthRows.length > 0
+				? monthRows
+				: [[copy.no_monthly_records, '-', '-']];
 		const carryLossRows = Object.entries(payload?.carry_loss_by_class || {})
 			.sort((left, right) => numeric(right?.[1], 0) - numeric(left?.[1], 0))
 			.slice(0, 8)
-			.map(([assetClass, amount]) => `${humanizeLabel(assetClass)}: ${formatMoney(amount)}`);
+			.map(([assetClass, amount]) => [humanizeLabel(assetClass), formatMoney(amount)]);
+		const safeCarryLossRows =
+			carryLossRows.length > 0
+				? carryLossRows
+				: [[copy.no_carry_loss, formatMoney(0)]];
 		return {
 			title: copy.tax_title,
 			subtitle: copy.tax_subtitle,
@@ -2122,8 +2211,24 @@ const buildFancyReportConfig = (reportType, payload, context = {}) => {
 				{ label: copy.kpi_jcp_taxable, value: formatMoney(payload?.total_jcp_tributavel) },
 			],
 			sections: [
-				{ title: copy.section_monthly_snapshot, rows: monthRows.length ? monthRows : [copy.no_monthly_records] },
-				{ title: copy.section_carry_loss, rows: carryLossRows.length ? carryLossRows : [copy.no_carry_loss] },
+				{
+					title: copy.section_monthly_snapshot,
+					empty: copy.no_monthly_records,
+					table: {
+						headers: [copy.header_period, copy.tax_gain_label, copy.tax_due_label],
+						align: ['left', 'right', 'right'],
+						rows: safeMonthRows,
+					},
+				},
+				{
+					title: copy.section_carry_loss,
+					empty: copy.no_carry_loss,
+					table: {
+						headers: [copy.header_class, copy.header_amount],
+						align: ['left', 'right'],
+						rows: safeCarryLossRows,
+					},
+				},
 			],
 		};
 	}
@@ -2172,6 +2277,9 @@ const buildFancyReportConfig = (reportType, payload, context = {}) => {
 						headers: [copy.header_period, copy.header_amount],
 						align: ['left', 'right'],
 						rows: monthlyRows,
+						fitRows: true,
+						minRowHeight: 10,
+						hideOverflowIndicator: true,
 					},
 				},
 				{
@@ -2193,7 +2301,10 @@ const buildFancyReportConfig = (reportType, payload, context = {}) => {
 			.slice()
 			.sort((left, right) => numeric(right?.return_pct, 0) - numeric(left?.return_pct, 0))
 			.slice(0, 8)
-			.map((item) => `${String(item?.benchmark || item?.symbol || '-').toUpperCase()}: ${formatSignedPctValue(item?.return_pct)}`);
+			.map((item) => [
+				String(item?.benchmark || item?.symbol || '-').toUpperCase(),
+				formatSignedPctValue(item?.return_pct),
+			]);
 		return {
 			title: copy.performance_title,
 			subtitle: copy.performance_subtitle,
@@ -2203,20 +2314,39 @@ const buildFancyReportConfig = (reportType, payload, context = {}) => {
 				{ label: copy.to_label, value: formatHumanDate(payload?.to, locale) },
 			],
 			kpis: [
-				{ label: copy.kpi_portfolio_return, value: formatSignedPctValue(payload?.portfolio_return_pct), tone: 'primary' },
+				{
+					label: copy.kpi_portfolio_return,
+					value: formatSignedPctValue(payload?.portfolio_return_pct),
+					tone: 'primary',
+					note: copy.kpi_portfolio_return_note,
+				},
 				{
 					label: copy.kpi_selected_benchmark,
 					value: formatSignedPctValue(payload?.selected_benchmark?.return_pct),
 					tone: numeric(payload?.selected_benchmark?.return_pct, 0) >= 0 ? 'positive' : 'negative',
+					note: copy.kpi_selected_benchmark_note,
 				},
 				{
 					label: copy.kpi_alpha,
 					value: formatSignedPctValue(payload?.alpha),
 					tone: numeric(payload?.alpha, 0) >= 0 ? 'positive' : 'negative',
+					note: copy.kpi_alpha_note,
 				},
 			],
 			sections: [
-				{ title: copy.section_benchmark_ranking, rows: benchmarkRows.length ? benchmarkRows : [copy.no_benchmark_data] },
+				{
+					title: copy.section_benchmark_ranking,
+					description: copy.performance_ranking_explainer,
+					empty: copy.no_benchmark_data,
+					table: {
+						headers: [copy.header_benchmark, copy.header_amount],
+						align: ['left', 'right'],
+						rows: benchmarkRows,
+						fitRows: true,
+						minRowHeight: 10,
+						hideOverflowIndicator: true,
+					},
+				},
 			],
 		};
 	}
@@ -2314,6 +2444,18 @@ const createFancyInsightsPdfBuffer = (config, context = {}) => {
 			size: 17,
 			color: accent,
 		});
+		const kpiNote = safePdfText(kpi?.note || '');
+		if (kpiNote) {
+			const maxChars = Math.max(16, Math.floor((kpiWidth - 24) / 4.5));
+			const noteLines = wrapPdfLine(kpiNote, maxChars).slice(0, 2);
+			noteLines.forEach((line, lineIndex) => {
+				drawText(line, x + 12, 636 - lineIndex * 9, {
+					font: 'F1',
+					size: 8,
+					color: [0.45, 0.5, 0.58],
+				});
+			});
+		}
 	});
 
 	const drawTableSection = (section, x, y, w, h) => {
@@ -2324,9 +2466,30 @@ const createFancyInsightsPdfBuffer = (config, context = {}) => {
 		const areaX = x + 10;
 		const areaY = y + 12;
 		const areaW = w - 20;
-		const areaTop = y + h - 44;
+		const descriptionText = safePdfText(section?.description || '');
+		let descriptionOffset = 0;
+		if (descriptionText) {
+			const maxDescChars = Math.max(24, Math.floor((areaW - 2) / 4.4));
+			const descriptionLines = wrapPdfLine(descriptionText, maxDescChars).slice(0, 2);
+			descriptionLines.forEach((line, lineIndex) => {
+				drawText(line, x + 10, y + h - 36 - lineIndex * 9, {
+					font: 'F1',
+					size: 8,
+					color: [0.45, 0.5, 0.58],
+				});
+			});
+			descriptionOffset = descriptionLines.length * 9 + 4;
+		}
+		const areaTop = y + h - 44 - descriptionOffset;
 		const headerH = 16;
-		const rowH = 15;
+		const availableRowsHeight = Math.max(0, areaTop - areaY - headerH);
+		const defaultRowH = 15;
+		const fitRows = table.fitRows !== false;
+		const rowH = fitRows && rows.length > 0
+			? Math.max(4, availableRowsHeight / rows.length)
+			: defaultRowH;
+		const rowFontSize = clamp(Math.round(rowH * 0.62), 5, 8);
+		const rowTextInset = Math.max(1, (rowH - rowFontSize) / 2);
 
 		if (headers.length === 0) {
 			drawText(section?.empty || copy.no_data_available, areaX, areaY + 8, {
@@ -2374,7 +2537,9 @@ const createFancyInsightsPdfBuffer = (config, context = {}) => {
 			});
 		});
 
-		const maxRows = Math.max(0, Math.floor((areaTop - areaY - headerH) / rowH));
+		const maxRows = fitRows
+			? rows.length
+			: Math.max(0, Math.floor(availableRowsHeight / rowH));
 		const visibleRows = rows.slice(0, maxRows);
 		visibleRows.forEach((row, rowIndex) => {
 			const rowTop = areaTop - headerH - rowIndex * rowH;
@@ -2388,9 +2553,9 @@ const createFancyInsightsPdfBuffer = (config, context = {}) => {
 				const alignMode = ['left', 'center', 'right'].includes(String(align[col] || ''))
 					? align[col]
 					: 'left';
-				drawText(truncateText(cellText, maxChars), alignMode === 'right' ? colX + colW - 4 : alignMode === 'center' ? colX + colW / 2 : colX + 4, rowTop - rowH + 4, {
+				drawText(truncateText(cellText, maxChars), alignMode === 'right' ? colX + colW - 4 : alignMode === 'center' ? colX + colW / 2 : colX + 4, rowTop - rowH + rowTextInset, {
 					font: 'F1',
-					size: 8,
+					size: rowFontSize,
 					color: [0.27, 0.33, 0.43],
 					align: alignMode,
 				});
@@ -2402,13 +2567,6 @@ const createFancyInsightsPdfBuffer = (config, context = {}) => {
 				font: 'F1',
 				size: 9,
 				color: [0.27, 0.33, 0.43],
-			});
-		} else if (rows.length > visibleRows.length) {
-			drawText(`+${rows.length - visibleRows.length} ${copy.header_more_rows}`, areaX + areaW - 4, areaY + 2, {
-				font: 'F1',
-				size: 8,
-				color: [0.48, 0.53, 0.61],
-				align: 'right',
 			});
 		}
 	};
@@ -5739,6 +5897,115 @@ class PlatformService {
 		await this.dynamo.send(new PutCommand({ TableName: this.tableName, Item: item }));
 
 		return item;
+	}
+
+	async combineReports(userId, reportIds = [], options = {}) {
+		const normalizedIds = [...new Set(
+			(Array.isArray(reportIds) ? reportIds : [])
+				.map((reportId) => String(reportId || '').trim())
+				.filter(Boolean)
+		)];
+		if (normalizedIds.length < 2) {
+			const error = new Error('Select at least 2 reports to combine');
+			error.statusCode = 400;
+			throw error;
+		}
+		if (normalizedIds.length > MAX_COMBINED_REPORTS) {
+			const error = new Error(`You can combine up to ${MAX_COMBINED_REPORTS} reports at once`);
+			error.statusCode = 400;
+			throw error;
+		}
+
+		const reportLocale = await this.#resolveReportLocale(userId, options?.locale);
+		const generatedAt = nowIso();
+		const isPt = isPortugueseLocale(reportLocale);
+		const lines = [
+			isPt ? 'WealthHub - Relatorio Combinado' : 'WealthHub - Combined Report',
+			'',
+			`${isPt ? 'Usuario' : 'User'}: ${userId}`,
+			`${isPt ? 'Total de relatorios' : 'Total reports'}: ${normalizedIds.length}`,
+			`${isPt ? 'Gerado em' : 'Generated'}: ${formatHumanDateTime(generatedAt, reportLocale)}`,
+			'',
+		];
+		const includedReports = [];
+
+		for (let index = 0; index < normalizedIds.length; index += 1) {
+			const selectedId = normalizedIds[index];
+			const report = await this.getReportById(userId, selectedId);
+			const normalizedType = normalizeReportType(report?.reportType || 'portfolio') || 'portfolio';
+			const period = report?.period || null;
+			const portfolioId = report?.portfolioId || null;
+
+			includedReports.push({
+				reportId: report?.reportId || selectedId,
+				reportType: normalizedType,
+				period: period || null,
+				createdAt: report?.createdAt || null,
+			});
+
+			const sectionTitle = `${index + 1}. ${String(normalizedType).toUpperCase()} - ${report?.reportId || selectedId}`;
+			lines.push('='.repeat(Math.min(92, Math.max(24, sectionTitle.length + 4))));
+			lines.push(sectionTitle);
+			lines.push(`${isPt ? 'Periodo' : 'Period'}: ${period || 'current'}`);
+			if (portfolioId) {
+				lines.push(`${isPt ? 'Portifolio' : 'Portfolio'}: ${portfolioId}`);
+			}
+			lines.push(
+				`${isPt ? 'Relatorio original em' : 'Original report at'}: ${
+					formatHumanDateTime(report?.createdAt || report?.fetched_at || generatedAt, reportLocale)
+				}`
+			);
+			lines.push('');
+
+			let payload = null;
+			try {
+				if (normalizedType === 'tax') {
+					const year = Number(period) || new Date().getUTCFullYear();
+					payload = await this.getTaxReport(userId, year, { portfolioId });
+				} else if (normalizedType === 'dividends') {
+					payload = await this.getDividendAnalytics(userId, { portfolioId });
+				} else if (normalizedType === 'performance') {
+					payload = await this.getBenchmarkComparison(userId, 'IBOV', period || '1A', { portfolioId });
+				} else if (normalizedType === 'transactions') {
+					payload = await this.getTransactionsStatementReport(userId, period, { portfolioId });
+				} else {
+					payload = await this.getDashboard(userId, { portfolioId, period: period || 'MAX' });
+				}
+				const sectionContext = {
+					userId,
+					period: period || 'current',
+					portfolioId: portfolioId || null,
+					generatedAt,
+					locale: reportLocale,
+				};
+				lines.push(...buildCombinedSectionLines(normalizedType, payload, sectionContext));
+			} catch (reason) {
+				lines.push(
+					isPt
+						? `Falha ao carregar dados do relatorio ${report?.reportId || selectedId}.`
+						: `Failed to load data for report ${report?.reportId || selectedId}.`
+				);
+				lines.push(String(reason?.message || reason || 'Unknown error'));
+				lines.push('');
+			}
+
+			lines.push('');
+		}
+
+		const pdfBuffer = createSimplePdfBuffer(lines);
+		const filenameDate = String(generatedAt).slice(0, 10);
+		return {
+			reportId: `combined-${hashId(`${userId}:${normalizedIds.join(',')}:${generatedAt}`)}`,
+			reportType: 'combined',
+			period: null,
+			createdAt: generatedAt,
+			contentType: 'application/pdf',
+			filename: `combined-reports-${filenameDate}.pdf`,
+			sizeBytes: pdfBuffer.length,
+			dataBase64: pdfBuffer.toString('base64'),
+			fetched_at: nowIso(),
+			includedReports,
+		};
 	}
 
 	async #upgradeLegacyReportIfNeeded(userId, report, currentBuffer) {

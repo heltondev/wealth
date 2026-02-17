@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from 'react-router';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router';
 import { Suspense, lazy } from 'react';
 import LoginPage from './pages/LoginPage';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -16,6 +16,7 @@ const CompareAssetsPage = lazy(() => import('./pages/CompareAssetsPage'));
 const MultiCurrencyPage = lazy(() => import('./pages/MultiCurrencyPage'));
 const TaxPage = lazy(() => import('./pages/TaxPage'));
 const DocumentsPage = lazy(() => import('./pages/DocumentsPage'));
+const ImportsPage = lazy(() => import('./pages/ImportsPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 
 const ALL_ROLES: AppRole[] = ['VIEWER', 'EDITOR', 'ADMIN'];
@@ -143,11 +144,25 @@ function App() {
           }
         />
         <Route
-          path="/documents"
+          path="/reports"
           element={
             <Suspense fallback={routeFallback}>
               <ProtectedRoute allowedRoles={ALL_ROLES}>
                 <DocumentsPage />
+              </ProtectedRoute>
+            </Suspense>
+          }
+        />
+        <Route
+          path="/documents"
+          element={<Navigate to="/reports" replace />}
+        />
+        <Route
+          path="/imports"
+          element={
+            <Suspense fallback={routeFallback}>
+              <ProtectedRoute allowedRoles={ALL_ROLES}>
+                <ImportsPage />
               </ProtectedRoute>
             </Suspense>
           }

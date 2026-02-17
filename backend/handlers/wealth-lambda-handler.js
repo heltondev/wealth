@@ -738,7 +738,13 @@ async function handleAliasesList(method) {
 }
 
 async function handleImport(portfolioId, body) {
-	const { fileName, parserId, fileContentBase64 } = parseBody(body);
+	const payload = parseBody(body);
+	const { fileName, parserId, fileContentBase64 } = payload;
+	const dryRun = Boolean(
+		payload?.dryRun
+		|| payload?.previewOnly
+		|| String(payload?.mode || '').toLowerCase() === 'preview'
+	);
 	if (!fileName && !fileContentBase64) {
 		throw errorResponse(400, 'fileName or fileContentBase64 is required');
 	}
@@ -801,6 +807,7 @@ async function handleImport(portfolioId, body) {
 		parsed,
 		sourceFile: safeFileName,
 		detectionMode,
+		dryRun,
 	});
 }
 
@@ -1079,6 +1086,17 @@ async function handleReports(method, id, userId, body, query = {}) {
 			payload.period || null,
 			{
 				portfolioId: payload.portfolioId || null,
+				locale: payload.locale || payload.language || null,
+			}
+		);
+	}
+	if (id === 'combine') {
+		if (method !== 'POST') throw errorResponse(405, 'Method not allowed');
+		const payload = parseBody(body);
+		return platformService.combineReports(
+			userId,
+			payload.reportIds || payload.report_ids || [],
+			{
 				locale: payload.locale || payload.language || null,
 			}
 		);

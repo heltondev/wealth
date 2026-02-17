@@ -11,7 +11,8 @@
     "multiCurrency": "Multi-currency",
     "tax": "Tax",
     "platform": "Platform",
-    "documents": "Documents",
+    "documents": "Reports",
+    "imports": "Imports",
     "settings": "Settings",
     "logout": "Logout"
   },
@@ -915,6 +916,10 @@
       }
     }
   },
+  "imports": {
+    "title": "Imports",
+    "subtitle": "Import files from multiple providers and review the full creation, update, and deduplication report."
+  },
   "documents": {
     "title": "Reports & Exports",
     "subtitle": "Generate PDF reports, preview and download files, and export transaction statements.",
@@ -947,11 +952,27 @@
       "hint": "Upload a B3 Excel file to auto-detect report type and update assets, transactions, and aliases with duplicate-safe writes.",
       "pickFile": "Select .xlsx file",
       "selectParser": "Select parser",
+      "previewAction": "Preview import",
+      "previewing": "Building preview...",
+      "previewReady": "Preview ready. Review data and confirm to import.",
+      "previewError": "Failed to build import preview.",
       "action": "Import file",
       "importing": "Importing...",
       "autoDetect": "Auto detect type",
       "success": "Import completed.",
       "error": "Failed to import file.",
+      "modes": {
+        "preview": "Preview (no write)",
+        "imported": "Imported"
+      },
+      "preview": {
+        "title": "Import Preview"
+      },
+      "confirm": {
+        "title": "Confirm Import",
+        "body": "This import will apply estimated changes to {{assets}} asset(s), {{transactions}} transaction(s), and {{aliases}} alias(es). Continue?",
+        "action": "Confirm and import"
+      },
       "errors": {
         "selectPortfolio": "Select a portfolio before importing.",
         "selectFile": "Select a file to import."
@@ -964,6 +985,7 @@
       },
       "summary": {
         "title": "Import summary",
+        "mode": "Mode",
         "parser": "Parser",
         "detection": "Detection",
         "assets": "Assets (+created / ~updated)",
@@ -1055,6 +1077,25 @@
   "deleteModal": {
     "title": "Delete Report",
     "body": "This report will be permanently removed: {{reportId}}."
+  },
+  "bulk": {
+    "selectedCount": "{{count}} selected",
+    "clear": "Clear selection",
+    "combinePreview": "Combine and preview",
+    "combineDownload": "Combine and download",
+    "combineMin": "Select at least 2 reports to combine.",
+    "combineOk": "{{count}} report(s) combined successfully.",
+    "combineError": "Failed to combine reports.",
+    "deleteSelected": "Delete selected",
+    "deleteOk": "{{count}} report(s) deleted successfully.",
+    "deletePartial": "{{deleted}} deleted, {{failed}} failed.",
+    "deleteError": "Failed to delete selected reports.",
+    "selectAll": "Select all filtered reports",
+    "selectOne": "Select report",
+    "deleteModal": {
+      "title": "Delete Selected Reports",
+      "body": "This will permanently remove {{count}} report(s)."
+    }
   },
   "status": {
     "uploaded": "Uploaded",

@@ -482,6 +482,12 @@ export interface ReportContentResponse {
   sizeBytes: number;
   dataBase64: string;
   fetched_at: string;
+  includedReports?: Array<{
+    reportId: string;
+    reportType: string | null;
+    period: string | null;
+    createdAt: string | null;
+  }>;
 }
 
 export interface ParserDescriptor {
@@ -536,6 +542,7 @@ export interface ImportB3Response {
   parser: string;
   provider: string;
   detectionMode: 'auto' | 'manual' | string;
+  dryRun?: boolean;
   sourceFile: string;
   importedAt: string;
   stats: {
@@ -560,6 +567,11 @@ export interface ImportB3Response {
     };
   };
   warnings: string[];
+}
+
+export interface ImportB3RequestOptions {
+  parserId?: string;
+  dryRun?: boolean;
 }
 
 export interface ContributionPayload {
@@ -645,13 +657,14 @@ export const api = {
   createAlias: (data: Partial<Alias>) =>
     request<Alias>('/settings/aliases', { method: 'POST', body: JSON.stringify(data) }),
   listParsers: () => request<ParserDescriptor[]>('/parsers'),
-  importB3File: async (portfolioId: string, file: File, parserId?: string) => {
+  importB3File: async (portfolioId: string, file: File, options?: ImportB3RequestOptions) => {
     const fileContentBase64 = await fileToBase64(file);
     return request<ImportB3Response>(`/portfolios/${encodeURIComponent(portfolioId)}/import`, {
       method: 'POST',
       body: JSON.stringify({
         fileName: file.name,
-        parserId: parserId || null,
+        parserId: options?.parserId || null,
+        dryRun: Boolean(options?.dryRun),
         fileContentBase64,
       }),
     });
@@ -807,6 +820,14 @@ export const api = {
     request<ReportRecord>(`/reports/${encodeURIComponent(reportId)}`),
   getReportContent: (reportId: string) =>
     request<ReportContentResponse>(`/reports/${encodeURIComponent(reportId)}?action=content`),
+  combineReports: (reportIds: string[], locale?: string) =>
+    request<ReportContentResponse>('/reports/combine', {
+      method: 'POST',
+      body: JSON.stringify({
+        reportIds,
+        locale: locale || null,
+      }),
+    }),
   deleteReport: (reportId: string) =>
     request<{ deleted: boolean; reportId: string; fetched_at: string }>(`/reports/${encodeURIComponent(reportId)}`, { method: 'DELETE' }),
 

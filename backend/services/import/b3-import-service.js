@@ -225,6 +225,7 @@ const createPlaceholderAsset = async ({
 	source,
 	now,
 	isActive,
+	dryRun = false,
 }) => {
 	const assetId = `asset-${ticker.toLowerCase()}`;
 	const item = {
@@ -245,12 +246,14 @@ const createPlaceholderAsset = async ({
 		createdAt: now,
 	};
 
-	await dynamo.send(
-		new PutCommand({
-			TableName: tableName,
-			Item: item,
-		})
-	);
+	if (!dryRun) {
+		await dynamo.send(
+			new PutCommand({
+				TableName: tableName,
+				Item: item,
+			})
+		);
+	}
 
 	return { assetId, item };
 };
@@ -300,6 +303,7 @@ const upsertImportedAssets = async ({
 	parserId,
 	sourceFile,
 	now,
+	dryRun = false,
 	importedAssetsByTicker,
 	existingAssetsByTicker,
 	stats,
@@ -338,33 +342,35 @@ const upsertImportedAssets = async ({
 				continue;
 			}
 
-			await dynamo.send(
-				new UpdateCommand({
-					TableName: tableName,
-					Key: {
-						PK: `PORTFOLIO#${portfolioId}`,
-						SK: `ASSET#${existing.assetId}`,
-					},
-					UpdateExpression: 'SET #s = :status, #n = :name, assetClass = :assetClass, country = :country, currency = :currency, quantity = :quantity, currentPrice = :currentPrice, currentValue = :currentValue, #src = :source, updatedAt = :updatedAt',
-					ExpressionAttributeNames: {
-						'#s': 'status',
-						'#n': 'name',
-						'#src': 'source',
-					},
-					ExpressionAttributeValues: {
-						':status': 'active',
-						':name': importedAsset.name || ticker,
-						':assetClass': importedAsset.assetClass || BaseParser.inferAssetClass(ticker, importedAsset.name || ''),
-						':country': importedAsset.country || 'BR',
-						':currency': importedAsset.currency || 'BRL',
-						':quantity': quantity,
-						':currentPrice': currentPrice,
-						':currentValue': currentValue,
-						':source': sourceFile || null,
-						':updatedAt': now,
-					},
-				})
-			);
+			if (!dryRun) {
+				await dynamo.send(
+					new UpdateCommand({
+						TableName: tableName,
+						Key: {
+							PK: `PORTFOLIO#${portfolioId}`,
+							SK: `ASSET#${existing.assetId}`,
+						},
+						UpdateExpression: 'SET #s = :status, #n = :name, assetClass = :assetClass, country = :country, currency = :currency, quantity = :quantity, currentPrice = :currentPrice, currentValue = :currentValue, #src = :source, updatedAt = :updatedAt',
+						ExpressionAttributeNames: {
+							'#s': 'status',
+							'#n': 'name',
+							'#src': 'source',
+						},
+						ExpressionAttributeValues: {
+							':status': 'active',
+							':name': importedAsset.name || ticker,
+							':assetClass': importedAsset.assetClass || BaseParser.inferAssetClass(ticker, importedAsset.name || ''),
+							':country': importedAsset.country || 'BR',
+							':currency': importedAsset.currency || 'BRL',
+							':quantity': quantity,
+							':currentPrice': currentPrice,
+							':currentValue': currentValue,
+							':source': sourceFile || null,
+							':updatedAt': now,
+						},
+					})
+				);
+			}
 			stats.assets.updated += 1;
 			report.assets.updated.push(
 				toAssetReportEntry(
@@ -409,12 +415,14 @@ const upsertImportedAssets = async ({
 			createdAt: now,
 		};
 
-		await dynamo.send(
-			new PutCommand({
-				TableName: tableName,
-				Item: item,
-			})
-		);
+		if (!dryRun) {
+			await dynamo.send(
+				new PutCommand({
+					TableName: tableName,
+					Item: item,
+				})
+			);
+		}
 
 		existingAssetsByTicker.set(ticker, { assetId, item });
 		stats.assets.created += 1;
@@ -435,6 +443,7 @@ const importTransactions = async ({
 	parserId,
 	sourceFile,
 	now,
+	dryRun = false,
 	parsedTransactions,
 	existingAssetsByTicker,
 	existingTransactionKeys,
@@ -513,6 +522,7 @@ const importTransactions = async ({
 				source: sourceFile,
 				now,
 				isActive: authoritativeSnapshot,
+				dryRun,
 			});
 			existingAssetsByTicker.set(ticker, assetRef);
 			stats.assets.created += 1;
@@ -545,12 +555,14 @@ const importTransactions = async ({
 			createdAt: now,
 		};
 
-		await dynamo.send(
-			new PutCommand({
-				TableName: tableName,
-				Item: item,
-			})
-		);
+		if (!dryRun) {
+			await dynamo.send(
+				new PutCommand({
+					TableName: tableName,
+					Item: item,
+				})
+			);
+		}
 
 		existingTransactionKeys.add(dedupKey);
 		intraImportKeys.add(dedupKey);
@@ -568,6 +580,7 @@ const importAliases = async ({
 	dynamo,
 	tableName,
 	now,
+	dryRun = false,
 	parsedAliases,
 	existingAliasKeys,
 	stats,
@@ -598,19 +611,21 @@ const importAliases = async ({
 			continue;
 		}
 
-		await dynamo.send(
-			new PutCommand({
-				TableName: tableName,
-				Item: {
-					PK: `ALIAS#${normalizedName}`,
-					SK: `TICKER#${ticker}`,
-					normalizedName,
-					ticker,
-					source: String(rawAlias?.source || 'b3').trim().toLowerCase() || 'b3',
-					createdAt: now,
-				},
-			})
-		);
+		if (!dryRun) {
+			await dynamo.send(
+				new PutCommand({
+					TableName: tableName,
+					Item: {
+						PK: `ALIAS#${normalizedName}`,
+						SK: `TICKER#${ticker}`,
+						normalizedName,
+						ticker,
+						source: String(rawAlias?.source || 'b3').trim().toLowerCase() || 'b3',
+						createdAt: now,
+					},
+				})
+			);
+		}
 
 		existingAliasKeys.add(aliasKey);
 		stats.aliases.created += 1;
@@ -631,6 +646,7 @@ async function importParsedB3({
 	parsed,
 	sourceFile,
 	detectionMode = 'auto',
+	dryRun = false,
 	now = new Date().toISOString(),
 }) {
 	if (!dynamo) throw new Error('dynamo client is required');
@@ -688,6 +704,7 @@ async function importParsedB3({
 		parserId: parser.id,
 		sourceFile,
 		now,
+		dryRun,
 		importedAssetsByTicker,
 		existingAssetsByTicker,
 		stats,
@@ -701,6 +718,7 @@ async function importParsedB3({
 		parserId: parser.id,
 		sourceFile,
 		now,
+		dryRun,
 		parsedTransactions,
 		existingAssetsByTicker,
 		existingTransactionKeys: existingTransactions.dedupeKeys,
@@ -714,6 +732,7 @@ async function importParsedB3({
 		dynamo,
 		tableName,
 		now,
+		dryRun,
 		parsedAliases,
 		existingAliasKeys,
 		stats,
@@ -730,6 +749,7 @@ async function importParsedB3({
 		parser: parser.id,
 		provider: parser.provider,
 		detectionMode,
+		dryRun: Boolean(dryRun),
 		sourceFile,
 		importedAt: now,
 		stats,

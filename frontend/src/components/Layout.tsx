@@ -30,7 +30,8 @@ const Layout = ({ children }: LayoutProps) => {
     { path: '/compare', label: t('nav.compare'), icon: '🆚' },
     { path: '/multi-currency', label: t('nav.multiCurrency'), icon: '💱' },
     { path: '/tax', label: t('nav.tax'), icon: '📑' },
-    { path: '/documents', label: t('nav.documents'), icon: '📄' },
+    { path: '/reports', label: t('nav.documents'), icon: '📄' },
+    { path: '/imports', label: t('nav.imports'), icon: '📥' },
     { path: '/settings', label: t('nav.settings'), icon: '⚙️' },
   ];
 

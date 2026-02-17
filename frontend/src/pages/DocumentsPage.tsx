@@ -5,8 +5,6 @@ import SharedDropdown from '../components/SharedDropdown';
 import { usePortfolioData } from '../context/PortfolioDataContext';
 import {
   api,
-  type ImportB3Response,
-  type ParserDescriptor,
   type ReportContentResponse,
   type ReportRecord,
 } from '../services/api';
@@ -14,6 +12,7 @@ import './DocumentsPage.scss';
 
 type ReportType = 'portfolio' | 'tax' | 'dividends' | 'performance' | 'transactions';
 type PeriodPreset = 'current' | '1M' | '3M' | '6M' | '1A' | '2A' | '5A' | 'MAX';
+type CombineMode = 'preview' | 'download';
 
 const REPORT_TYPES: ReportType[] = ['portfolio', 'tax', 'dividends', 'performance', 'transactions'];
 const PERIOD_PRESETS: PeriodPreset[] = ['current', '1M', '3M', '6M', '1A', '2A', '5A', 'MAX'];
@@ -54,8 +53,6 @@ const DocumentsPage = () => {
     setSelectedPortfolio,
     assets,
     transactions,
-    refreshMetrics,
-    refreshPortfolioData,
   } = usePortfolioData();
 
   const [selectedReportType, setSelectedReportType] = useState<ReportType>('portfolio');
@@ -64,20 +61,19 @@ const DocumentsPage = () => {
   const [reportsLoading, setReportsLoading] = useState(false);
   const [reportsError, setReportsError] = useState<string | null>(null);
   const [reports, setReports] = useState<ReportRecord[]>([]);
+  const [selectedReportIds, setSelectedReportIds] = useState<string[]>([]);
   const [generating, setGenerating] = useState(false);
   const [generateMessage, setGenerateMessage] = useState<string | null>(null);
   const [activeContentReportId, setActiveContentReportId] = useState<string | null>(null);
   const [deletingReportId, setDeletingReportId] = useState<string | null>(null);
   const [deleteModalReport, setDeleteModalReport] = useState<ReportRecord | null>(null);
+  const [bulkDeleteModalOpen, setBulkDeleteModalOpen] = useState(false);
+  const [bulkDeleteRunning, setBulkDeleteRunning] = useState(false);
+  const [combineMode, setCombineMode] = useState<CombineMode | null>(null);
   const [previewState, setPreviewState] = useState<{ reportId: string; title: string; url: string } | null>(null);
-  const [availableParsers, setAvailableParsers] = useState<ParserDescriptor[]>([]);
-  const [selectedImportParser, setSelectedImportParser] = useState('auto');
-  const [importFile, setImportFile] = useState<File | null>(null);
-  const [importing, setImporting] = useState(false);
-  const [importSummary, setImportSummary] = useState<ImportB3Response | null>(null);
-  const [importMessage, setImportMessage] = useState<string | null>(null);
 
   const numberLocale = i18n.language?.startsWith('pt') ? 'pt-BR' : 'en-US';
+  const isBulkBusy = bulkDeleteRunning || combineMode !== null;
 
   useEffect(() => () => {
     if (previewState?.url) URL.revokeObjectURL(previewState.url);
@@ -105,16 +101,6 @@ const DocumentsPage = () => {
       label: t(`documents.period.${period}`),
     }))
   ), [t]);
-
-  const parserOptions = useMemo(() => ([
-    { value: 'auto', label: t('documents.import.autoDetect') },
-    ...availableParsers.map((parser) => ({
-      value: parser.id,
-      label: t(`documents.import.parsers.${parser.id}`, {
-        defaultValue: `${parser.id} (${String(parser.provider || '').toUpperCase()})`,
-      }),
-    })),
-  ]), [availableParsers, t]);
 
   const resolveStorageLabel = useCallback((report: ReportRecord): string => {
     const normalized = String(report.storage?.type || '').toLowerCase();
@@ -150,22 +136,9 @@ const DocumentsPage = () => {
     }
   }, [t]);
 
-  const loadParsers = useCallback(async () => {
-    try {
-      const payload = await api.listParsers();
-      setAvailableParsers(Array.isArray(payload) ? payload : []);
-    } catch {
-      setAvailableParsers([]);
-    }
-  }, []);
-
   useEffect(() => {
     void loadReports();
   }, [loadReports]);
-
-  useEffect(() => {
-    void loadParsers();
-  }, [loadParsers]);
 
   const sortedReports = useMemo(() => (
     [...reports].sort((left, right) => {
@@ -181,6 +154,50 @@ const DocumentsPage = () => {
       return normalizeReportType(entry.reportType) === reportTypeFilter;
     })
   ), [reportTypeFilter, sortedReports]);
+
+  useEffect(() => {
+    const available = new Set(reports.map((item) => String(item.reportId || '').trim()).filter(Boolean));
+    setSelectedReportIds((previous) => previous.filter((reportId) => available.has(reportId)));
+  }, [reports]);
+
+  const selectedReportIdSet = useMemo(() => new Set(selectedReportIds), [selectedReportIds]);
+  const selectedCount = selectedReportIds.length;
+  const selectedFilteredCount = useMemo(
+    () => filteredReports.filter((report) => selectedReportIdSet.has(report.reportId)).length,
+    [filteredReports, selectedReportIdSet]
+  );
+  const allFilteredSelected = filteredReports.length > 0 && selectedFilteredCount === filteredReports.length;
+
+  const toggleSelectReport = useCallback((reportId: string, selected: boolean) => {
+    if (!reportId) return;
+    setSelectedReportIds((previous) => {
+      const currentSet = new Set(previous);
+      if (selected) currentSet.add(reportId);
+      else currentSet.delete(reportId);
+      return [...currentSet];
+    });
+  }, []);
+
+  const toggleSelectAllFiltered = useCallback((selected: boolean) => {
+    if (selected) {
+      setSelectedReportIds((previous) => {
+        const currentSet = new Set(previous);
+        for (const report of filteredReports) {
+          if (report.reportId) currentSet.add(report.reportId);
+        }
+        return [...currentSet];
+      });
+      return;
+    }
+    setSelectedReportIds((previous) => {
+      const toRemove = new Set(filteredReports.map((report) => report.reportId));
+      return previous.filter((reportId) => !toRemove.has(reportId));
+    });
+  }, [filteredReports]);
+
+  const clearSelection = useCallback(() => {
+    setSelectedReportIds([]);
+  }, []);
 
   const openReportContent = useCallback(async (report: ReportRecord, mode: 'preview' | 'download') => {
     if (!report.reportId) return;
@@ -211,6 +228,43 @@ const DocumentsPage = () => {
     }
   }, [t]);
 
+  const combineSelectedReports = useCallback(async (mode: CombineMode) => {
+    if (selectedReportIds.length < 2) {
+      setGenerateMessage(t('documents.bulk.combineMin'));
+      return;
+    }
+    setCombineMode(mode);
+    setGenerateMessage(null);
+    try {
+      const content = await api.combineReports(selectedReportIds, i18n.language || 'pt-BR');
+      const blob = decodeBase64ToBlob(content.dataBase64, content.contentType);
+      const objectUrl = URL.createObjectURL(blob);
+      if (mode === 'preview') {
+        setPreviewState((previous) => {
+          if (previous?.url) URL.revokeObjectURL(previous.url);
+          return {
+            reportId: content.reportId || 'combined',
+            title: content.filename || 'combined-reports.pdf',
+            url: objectUrl,
+          };
+        });
+      } else {
+        const anchor = document.createElement('a');
+        anchor.href = objectUrl;
+        anchor.download = content.filename || 'combined-reports.pdf';
+        document.body.appendChild(anchor);
+        anchor.click();
+        document.body.removeChild(anchor);
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
+      }
+      setGenerateMessage(t('documents.bulk.combineOk', { count: selectedReportIds.length }));
+    } catch (reason) {
+      setGenerateMessage(reason instanceof Error ? reason.message : t('documents.bulk.combineError'));
+    } finally {
+      setCombineMode(null);
+    }
+  }, [i18n.language, selectedReportIds, t]);
+
   const closePreview = useCallback(() => {
     setPreviewState((previous) => {
       if (previous?.url) URL.revokeObjectURL(previous.url);
@@ -236,6 +290,7 @@ const DocumentsPage = () => {
       if (previewState?.reportId === deleteModalReport.reportId) {
         closePreview();
       }
+      setSelectedReportIds((previous) => previous.filter((reportId) => reportId !== deleteModalReport.reportId));
       closeDeleteModal();
       await loadReports();
       setGenerateMessage(t('documents.deletedOk'));
@@ -245,6 +300,51 @@ const DocumentsPage = () => {
       setDeletingReportId(null);
     }
   }, [closeDeleteModal, closePreview, deleteModalReport?.reportId, loadReports, previewState?.reportId, t]);
+
+  const openBulkDeleteModal = useCallback(() => {
+    if (selectedReportIds.length === 0) return;
+    setBulkDeleteModalOpen(true);
+  }, [selectedReportIds.length]);
+
+  const closeBulkDeleteModal = useCallback(() => {
+    setBulkDeleteModalOpen(false);
+  }, []);
+
+  const deleteSelectedReports = useCallback(async () => {
+    if (selectedReportIds.length === 0) return;
+    setBulkDeleteRunning(true);
+    setGenerateMessage(null);
+    try {
+      const deleteTargets = [...selectedReportIds];
+      const results = await Promise.allSettled(deleteTargets.map((reportId) => api.deleteReport(reportId)));
+      const deletedIds: string[] = [];
+      let failures = 0;
+      results.forEach((result, index) => {
+        if (result.status === 'fulfilled') {
+          deletedIds.push(deleteTargets[index]);
+        } else {
+          failures += 1;
+        }
+      });
+
+      if (previewState?.reportId && deletedIds.includes(previewState.reportId)) {
+        closePreview();
+      }
+      setSelectedReportIds((previous) => previous.filter((reportId) => !deletedIds.includes(reportId)));
+      closeBulkDeleteModal();
+      await loadReports();
+
+      if (failures === 0) {
+        setGenerateMessage(t('documents.bulk.deleteOk', { count: deletedIds.length }));
+      } else {
+        setGenerateMessage(t('documents.bulk.deletePartial', { deleted: deletedIds.length, failed: failures }));
+      }
+    } catch (reason) {
+      setGenerateMessage(reason instanceof Error ? reason.message : t('documents.bulk.deleteError'));
+    } finally {
+      setBulkDeleteRunning(false);
+    }
+  }, [closeBulkDeleteModal, closePreview, loadReports, previewState?.reportId, selectedReportIds, t]);
 
   const generateReport = useCallback(async () => {
     if (!selectedPortfolio) return;
@@ -277,60 +377,6 @@ const DocumentsPage = () => {
     i18n.language,
     t,
   ]);
-
-  const importB3File = useCallback(async () => {
-    if (!selectedPortfolio) {
-      setImportMessage(t('documents.import.errors.selectPortfolio'));
-      return;
-    }
-    if (!importFile) {
-      setImportMessage(t('documents.import.errors.selectFile'));
-      return;
-    }
-
-    setImporting(true);
-    setImportMessage(null);
-    setImportSummary(null);
-    try {
-      const payload = await api.importB3File(
-        selectedPortfolio,
-        importFile,
-        selectedImportParser === 'auto' ? undefined : selectedImportParser
-      );
-      setImportSummary(payload);
-      await refreshPortfolioData();
-      refreshMetrics();
-      setImportMessage(t('documents.import.success'));
-    } catch (reason) {
-      setImportMessage(reason instanceof Error ? reason.message : t('documents.import.error'));
-    } finally {
-      setImporting(false);
-    }
-  }, [
-    importFile,
-    refreshMetrics,
-    refreshPortfolioData,
-    selectedImportParser,
-    selectedPortfolio,
-    t,
-  ]);
-
-  const warningLabel = useCallback((warning: string) => (
-    t(`documents.import.warnings.${warning}`, { defaultValue: warning })
-  ), [t]);
-
-  const reasonLabel = useCallback((reason?: string) => (
-    reason
-      ? t(`documents.import.reasons.${reason}`, { defaultValue: reason })
-      : t('assets.modal.noValue')
-  ), [t]);
-
-  const formatDateCell = useCallback((value?: string | null) => {
-    if (!value) return t('assets.modal.noValue');
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) return value;
-    return parsed.toLocaleDateString(numberLocale);
-  }, [numberLocale, t]);
 
   const exportTransactionsCsv = useCallback(() => {
     if (!selectedPortfolio || transactions.length === 0) {
@@ -434,7 +480,7 @@ const DocumentsPage = () => {
               type="button"
               className="documents-page__action"
               onClick={generateReport}
-              disabled={!selectedPortfolio || generating}
+              disabled={!selectedPortfolio || generating || isBulkBusy}
             >
               {generating ? t('documents.generating') : t('documents.generate')}
             </button>
@@ -442,7 +488,7 @@ const DocumentsPage = () => {
               type="button"
               className="documents-page__action documents-page__action--ghost"
               onClick={() => void loadReports()}
-              disabled={reportsLoading}
+              disabled={reportsLoading || isBulkBusy}
             >
               {t('documents.refresh')}
             </button>
@@ -457,7 +503,7 @@ const DocumentsPage = () => {
               type="button"
               className="documents-page__action"
               onClick={exportTransactionsCsv}
-              disabled={!selectedPortfolio || transactions.length === 0}
+              disabled={!selectedPortfolio || transactions.length === 0 || isBulkBusy}
             >
               {t('documents.exportCsv')}
             </button>
@@ -465,388 +511,6 @@ const DocumentsPage = () => {
 
           {generateMessage ? (
             <p className="documents-page__message">{generateMessage}</p>
-          ) : null}
-        </section>
-
-        <section className="documents-card">
-          <header className="documents-card__header">
-            <h2>{t('documents.import.title')}</h2>
-          </header>
-          <p className="documents-page__import-hint">{t('documents.import.hint')}</p>
-
-          <div className="documents-page__controls">
-            {portfolioOptions.length > 0 ? (
-              <SharedDropdown
-                value={selectedPortfolio}
-                options={portfolioOptions}
-                onChange={setSelectedPortfolio}
-                ariaLabel={t('documents.selectPortfolio')}
-                className="documents-page__dropdown documents-page__dropdown--portfolio"
-                size="sm"
-              />
-            ) : null}
-            <SharedDropdown
-              value={selectedImportParser}
-              options={parserOptions}
-              onChange={setSelectedImportParser}
-              ariaLabel={t('documents.import.selectParser')}
-              className="documents-page__dropdown"
-              size="sm"
-            />
-            <label className="documents-page__file-picker">
-              <input
-                type="file"
-                accept=".xlsx,.xlsm,.xls"
-                className="documents-page__file-input"
-                onChange={(event) => {
-                  const file = event.target.files && event.target.files[0] ? event.target.files[0] : null;
-                  setImportFile(file);
-                }}
-              />
-              <span>{importFile?.name || t('documents.import.pickFile')}</span>
-            </label>
-            <button
-              type="button"
-              className="documents-page__action"
-              onClick={() => void importB3File()}
-              disabled={!selectedPortfolio || !importFile || importing}
-            >
-              {importing ? t('documents.import.importing') : t('documents.import.action')}
-            </button>
-          </div>
-
-          {importMessage ? (
-            <p className="documents-page__message">{importMessage}</p>
-          ) : null}
-
-          {importSummary ? (
-            <div className="documents-page__import-summary">
-              <div className="documents-page__import-summary-head">
-                <h3>{t('documents.import.summary.title')}</h3>
-                <span>{importSummary.sourceFile}</span>
-              </div>
-              <div className="documents-page__import-grid">
-                <div className="documents-page__import-item">
-                  <span>{t('documents.import.summary.parser')}</span>
-                  <strong>{importSummary.parser}</strong>
-                </div>
-                <div className="documents-page__import-item">
-                  <span>{t('documents.import.summary.detection')}</span>
-                  <strong>{importSummary.detectionMode}</strong>
-                </div>
-                <div className="documents-page__import-item">
-                  <span>{t('documents.import.summary.assets')}</span>
-                  <strong>
-                    {`+${importSummary.stats.assets.created} / ~${importSummary.stats.assets.updated || 0}`}
-                  </strong>
-                </div>
-                <div className="documents-page__import-item">
-                  <span>{t('documents.import.summary.transactions')}</span>
-                  <strong>
-                    {`+${importSummary.stats.transactions.created} / -${importSummary.stats.transactions.skipped}`}
-                  </strong>
-                </div>
-                <div className="documents-page__import-item">
-                  <span>{t('documents.import.summary.aliases')}</span>
-                  <strong>
-                    {`+${importSummary.stats.aliases.created} / -${importSummary.stats.aliases.skipped}`}
-                  </strong>
-                </div>
-                <div className="documents-page__import-item">
-                  <span>{t('documents.import.summary.filtered')}</span>
-                  <strong>{importSummary.stats.transactions.filtered || 0}</strong>
-                </div>
-              </div>
-              {Array.isArray(importSummary.warnings) && importSummary.warnings.length > 0 ? (
-                <ul className="documents-page__import-warnings">
-                  {importSummary.warnings.map((warning) => (
-                    <li key={warning}>{warningLabel(warning)}</li>
-                  ))}
-                </ul>
-              ) : null}
-
-              <div className="documents-page__import-report">
-                <details className="documents-page__import-report-section" open>
-                  <summary>
-                    {t('documents.import.report.assetsCreated', { count: importSummary.report.assets.created.length })}
-                  </summary>
-                  <div className="documents-page__table-wrap">
-                    <table className="documents-page__table">
-                      <thead>
-                        <tr>
-                          <th>{t('documents.import.report.table.ticker')}</th>
-                          <th>{t('documents.import.report.table.name')}</th>
-                          <th>{t('documents.import.report.table.class')}</th>
-                          <th>{t('documents.import.report.table.quantity')}</th>
-                          <th>{t('documents.import.report.table.status')}</th>
-                          <th>{t('documents.import.report.table.reason')}</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {importSummary.report.assets.created.length === 0 ? (
-                          <tr>
-                            <td colSpan={6}>{t('documents.import.report.empty')}</td>
-                          </tr>
-                        ) : importSummary.report.assets.created.map((entry, index) => (
-                          <tr key={`${entry.assetId || entry.ticker || 'asset-created'}-${index}`}>
-                            <td>{entry.ticker || t('assets.modal.noValue')}</td>
-                            <td>{entry.name || t('assets.modal.noValue')}</td>
-                            <td>{entry.assetClass || t('assets.modal.noValue')}</td>
-                            <td>{entry.quantity}</td>
-                            <td>{entry.status || t('assets.modal.noValue')}</td>
-                            <td>{reasonLabel(entry.reason)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </details>
-
-                <details className="documents-page__import-report-section">
-                  <summary>
-                    {t('documents.import.report.assetsUpdated', { count: importSummary.report.assets.updated.length })}
-                  </summary>
-                  <div className="documents-page__table-wrap">
-                    <table className="documents-page__table">
-                      <thead>
-                        <tr>
-                          <th>{t('documents.import.report.table.ticker')}</th>
-                          <th>{t('documents.import.report.table.name')}</th>
-                          <th>{t('documents.import.report.table.class')}</th>
-                          <th>{t('documents.import.report.table.quantity')}</th>
-                          <th>{t('documents.import.report.table.status')}</th>
-                          <th>{t('documents.import.report.table.reason')}</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {importSummary.report.assets.updated.length === 0 ? (
-                          <tr>
-                            <td colSpan={6}>{t('documents.import.report.empty')}</td>
-                          </tr>
-                        ) : importSummary.report.assets.updated.map((entry, index) => (
-                          <tr key={`${entry.assetId || entry.ticker || 'asset-updated'}-${index}`}>
-                            <td>{entry.ticker || t('assets.modal.noValue')}</td>
-                            <td>{entry.name || t('assets.modal.noValue')}</td>
-                            <td>{entry.assetClass || t('assets.modal.noValue')}</td>
-                            <td>{entry.quantity}</td>
-                            <td>{entry.status || t('assets.modal.noValue')}</td>
-                            <td>{reasonLabel(entry.reason)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </details>
-
-                <details className="documents-page__import-report-section">
-                  <summary>
-                    {t('documents.import.report.assetsSkipped', { count: importSummary.report.assets.skipped.length })}
-                  </summary>
-                  <div className="documents-page__table-wrap">
-                    <table className="documents-page__table">
-                      <thead>
-                        <tr>
-                          <th>{t('documents.import.report.table.ticker')}</th>
-                          <th>{t('documents.import.report.table.name')}</th>
-                          <th>{t('documents.import.report.table.class')}</th>
-                          <th>{t('documents.import.report.table.quantity')}</th>
-                          <th>{t('documents.import.report.table.status')}</th>
-                          <th>{t('documents.import.report.table.reason')}</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {importSummary.report.assets.skipped.length === 0 ? (
-                          <tr>
-                            <td colSpan={6}>{t('documents.import.report.empty')}</td>
-                          </tr>
-                        ) : importSummary.report.assets.skipped.map((entry, index) => (
-                          <tr key={`${entry.assetId || entry.ticker || 'asset-skipped'}-${index}`}>
-                            <td>{entry.ticker || t('assets.modal.noValue')}</td>
-                            <td>{entry.name || t('assets.modal.noValue')}</td>
-                            <td>{entry.assetClass || t('assets.modal.noValue')}</td>
-                            <td>{entry.quantity}</td>
-                            <td>{entry.status || t('assets.modal.noValue')}</td>
-                            <td>{reasonLabel(entry.reason)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </details>
-
-                <details className="documents-page__import-report-section" open>
-                  <summary>
-                    {t('documents.import.report.transactionsCreated', { count: importSummary.report.transactions.created.length })}
-                  </summary>
-                  <div className="documents-page__table-wrap">
-                    <table className="documents-page__table">
-                      <thead>
-                        <tr>
-                          <th>{t('documents.import.report.table.ticker')}</th>
-                          <th>{t('documents.import.report.table.type')}</th>
-                          <th>{t('documents.import.report.table.date')}</th>
-                          <th>{t('documents.import.report.table.quantity')}</th>
-                          <th>{t('documents.import.report.table.amount')}</th>
-                          <th>{t('documents.import.report.table.reason')}</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {importSummary.report.transactions.created.length === 0 ? (
-                          <tr>
-                            <td colSpan={6}>{t('documents.import.report.empty')}</td>
-                          </tr>
-                        ) : importSummary.report.transactions.created.map((entry, index) => (
-                          <tr key={`${entry.transId || entry.dedupKey || 'trans-created'}-${index}`}>
-                            <td>{entry.ticker || t('assets.modal.noValue')}</td>
-                            <td>{entry.type || t('assets.modal.noValue')}</td>
-                            <td>{formatDateCell(entry.date)}</td>
-                            <td>{entry.quantity}</td>
-                            <td>{`${entry.currency || 'BRL'} ${entry.amount}`}</td>
-                            <td>{reasonLabel(entry.reason)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </details>
-
-                <details className="documents-page__import-report-section">
-                  <summary>
-                    {t('documents.import.report.transactionsSkipped', { count: importSummary.report.transactions.skipped.length })}
-                  </summary>
-                  <div className="documents-page__table-wrap">
-                    <table className="documents-page__table">
-                      <thead>
-                        <tr>
-                          <th>{t('documents.import.report.table.ticker')}</th>
-                          <th>{t('documents.import.report.table.type')}</th>
-                          <th>{t('documents.import.report.table.date')}</th>
-                          <th>{t('documents.import.report.table.quantity')}</th>
-                          <th>{t('documents.import.report.table.amount')}</th>
-                          <th>{t('documents.import.report.table.reason')}</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {importSummary.report.transactions.skipped.length === 0 ? (
-                          <tr>
-                            <td colSpan={6}>{t('documents.import.report.empty')}</td>
-                          </tr>
-                        ) : importSummary.report.transactions.skipped.map((entry, index) => (
-                          <tr key={`${entry.dedupKey || `${entry.ticker}-${entry.date}-${index}`}`}>
-                            <td>{entry.ticker || t('assets.modal.noValue')}</td>
-                            <td>{entry.type || t('assets.modal.noValue')}</td>
-                            <td>{formatDateCell(entry.date)}</td>
-                            <td>{entry.quantity}</td>
-                            <td>{`${entry.currency || 'BRL'} ${entry.amount}`}</td>
-                            <td>{reasonLabel(entry.reason)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </details>
-
-                <details className="documents-page__import-report-section">
-                  <summary>
-                    {t('documents.import.report.transactionsFiltered', { count: importSummary.report.transactions.filtered.length })}
-                  </summary>
-                  <div className="documents-page__table-wrap">
-                    <table className="documents-page__table">
-                      <thead>
-                        <tr>
-                          <th>{t('documents.import.report.table.ticker')}</th>
-                          <th>{t('documents.import.report.table.type')}</th>
-                          <th>{t('documents.import.report.table.date')}</th>
-                          <th>{t('documents.import.report.table.quantity')}</th>
-                          <th>{t('documents.import.report.table.amount')}</th>
-                          <th>{t('documents.import.report.table.reason')}</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {importSummary.report.transactions.filtered.length === 0 ? (
-                          <tr>
-                            <td colSpan={6}>{t('documents.import.report.empty')}</td>
-                          </tr>
-                        ) : importSummary.report.transactions.filtered.map((entry, index) => (
-                          <tr key={`${entry.dedupKey || `${entry.ticker}-${entry.date}-${index}`}`}>
-                            <td>{entry.ticker || t('assets.modal.noValue')}</td>
-                            <td>{entry.type || t('assets.modal.noValue')}</td>
-                            <td>{formatDateCell(entry.date)}</td>
-                            <td>{entry.quantity}</td>
-                            <td>{`${entry.currency || 'BRL'} ${entry.amount}`}</td>
-                            <td>{reasonLabel(entry.reason)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </details>
-
-                <details className="documents-page__import-report-section" open>
-                  <summary>
-                    {t('documents.import.report.aliasesCreated', { count: importSummary.report.aliases.created.length })}
-                  </summary>
-                  <div className="documents-page__table-wrap">
-                    <table className="documents-page__table">
-                      <thead>
-                        <tr>
-                          <th>{t('documents.import.report.table.alias')}</th>
-                          <th>{t('documents.import.report.table.ticker')}</th>
-                          <th>{t('documents.import.report.table.source')}</th>
-                          <th>{t('documents.import.report.table.reason')}</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {importSummary.report.aliases.created.length === 0 ? (
-                          <tr>
-                            <td colSpan={4}>{t('documents.import.report.empty')}</td>
-                          </tr>
-                        ) : importSummary.report.aliases.created.map((entry, index) => (
-                          <tr key={`${entry.normalizedName || 'alias-created'}-${entry.ticker || index}`}>
-                            <td>{entry.normalizedName || t('assets.modal.noValue')}</td>
-                            <td>{entry.ticker || t('assets.modal.noValue')}</td>
-                            <td>{entry.source || t('assets.modal.noValue')}</td>
-                            <td>{reasonLabel(entry.reason)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </details>
-
-                <details className="documents-page__import-report-section">
-                  <summary>
-                    {t('documents.import.report.aliasesSkipped', { count: importSummary.report.aliases.skipped.length })}
-                  </summary>
-                  <div className="documents-page__table-wrap">
-                    <table className="documents-page__table">
-                      <thead>
-                        <tr>
-                          <th>{t('documents.import.report.table.alias')}</th>
-                          <th>{t('documents.import.report.table.ticker')}</th>
-                          <th>{t('documents.import.report.table.source')}</th>
-                          <th>{t('documents.import.report.table.reason')}</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {importSummary.report.aliases.skipped.length === 0 ? (
-                          <tr>
-                            <td colSpan={4}>{t('documents.import.report.empty')}</td>
-                          </tr>
-                        ) : importSummary.report.aliases.skipped.map((entry, index) => (
-                          <tr key={`${entry.normalizedName || 'alias-skipped'}-${entry.ticker || index}`}>
-                            <td>{entry.normalizedName || t('assets.modal.noValue')}</td>
-                            <td>{entry.ticker || t('assets.modal.noValue')}</td>
-                            <td>{entry.source || t('assets.modal.noValue')}</td>
-                            <td>{reasonLabel(entry.reason)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </details>
-              </div>
-            </div>
           ) : null}
         </section>
 
@@ -862,6 +526,48 @@ const DocumentsPage = () => {
               size="sm"
             />
           </header>
+
+          <div className="documents-page__bulk-actions">
+            <span className="documents-page__bulk-summary">
+              {t('documents.bulk.selectedCount', { count: selectedCount })}
+            </span>
+            <button
+              type="button"
+              className="documents-page__row-btn"
+              onClick={clearSelection}
+              disabled={selectedCount === 0 || isBulkBusy}
+            >
+              {t('documents.bulk.clear')}
+            </button>
+            <button
+              type="button"
+              className="documents-page__row-btn"
+              onClick={() => void combineSelectedReports('preview')}
+              disabled={selectedCount < 2 || isBulkBusy}
+            >
+              {combineMode === 'preview'
+                ? t('documents.loadingContent')
+                : t('documents.bulk.combinePreview')}
+            </button>
+            <button
+              type="button"
+              className="documents-page__row-btn"
+              onClick={() => void combineSelectedReports('download')}
+              disabled={selectedCount < 2 || isBulkBusy}
+            >
+              {combineMode === 'download'
+                ? t('documents.loadingContent')
+                : t('documents.bulk.combineDownload')}
+            </button>
+            <button
+              type="button"
+              className="documents-page__row-btn documents-page__row-btn--danger"
+              onClick={openBulkDeleteModal}
+              disabled={selectedCount === 0 || isBulkBusy}
+            >
+              {t('documents.bulk.deleteSelected')}
+            </button>
+          </div>
 
           {reportsLoading ? (
             <div className="documents-page__state">{t('common.loading')}</div>
@@ -883,6 +589,16 @@ const DocumentsPage = () => {
               <table className="documents-page__table">
                 <thead>
                   <tr>
+                    <th className="documents-page__checkbox-col">
+                      <input
+                        type="checkbox"
+                        className="documents-page__checkbox"
+                        aria-label={t('documents.bulk.selectAll')}
+                        checked={allFilteredSelected}
+                        disabled={isBulkBusy}
+                        onChange={(event) => toggleSelectAllFiltered(event.target.checked)}
+                      />
+                    </th>
                     <th>{t('documents.table.createdAt')}</th>
                     <th>{t('documents.table.type')}</th>
                     <th>{t('documents.table.period')}</th>
@@ -906,8 +622,20 @@ const DocumentsPage = () => {
                     const typeLabel = normalizedType === 'other'
                       ? toSafeText(report.reportType || '').toUpperCase()
                       : t(`documents.type.${normalizedType}`);
+                    const isSelected = selectedReportIdSet.has(report.reportId);
+
                     return (
-                      <tr key={report.reportId}>
+                      <tr key={report.reportId} className={isSelected ? 'documents-page__table-row--selected' : undefined}>
+                        <td className="documents-page__checkbox-col">
+                          <input
+                            type="checkbox"
+                            className="documents-page__checkbox"
+                            aria-label={t('documents.bulk.selectOne')}
+                            checked={isSelected}
+                            onChange={(event) => toggleSelectReport(report.reportId, event.target.checked)}
+                            disabled={isBulkBusy}
+                          />
+                        </td>
                         <td>{createdText}</td>
                         <td>{typeLabel}</td>
                         <td>{report.period || t('documents.period.current')}</td>
@@ -918,7 +646,11 @@ const DocumentsPage = () => {
                               type="button"
                               className="documents-page__row-btn"
                               onClick={() => void openReportContent(report, 'preview')}
-                              disabled={activeContentReportId === report.reportId || deletingReportId === report.reportId}
+                              disabled={
+                                activeContentReportId === report.reportId ||
+                                deletingReportId === report.reportId ||
+                                isBulkBusy
+                              }
                             >
                               {activeContentReportId === report.reportId
                                 ? t('documents.loadingContent')
@@ -928,7 +660,11 @@ const DocumentsPage = () => {
                               type="button"
                               className="documents-page__row-btn"
                               onClick={() => void openReportContent(report, 'download')}
-                              disabled={activeContentReportId === report.reportId || deletingReportId === report.reportId}
+                              disabled={
+                                activeContentReportId === report.reportId ||
+                                deletingReportId === report.reportId ||
+                                isBulkBusy
+                              }
                             >
                               {t('documents.actions.download')}
                             </button>
@@ -936,7 +672,11 @@ const DocumentsPage = () => {
                               type="button"
                               className="documents-page__row-btn documents-page__row-btn--danger"
                               onClick={() => openDeleteModal(report)}
-                              disabled={activeContentReportId === report.reportId || deletingReportId === report.reportId}
+                              disabled={
+                                activeContentReportId === report.reportId ||
+                                deletingReportId === report.reportId ||
+                                isBulkBusy
+                              }
                             >
                               {deletingReportId === report.reportId
                                 ? t('documents.actions.deleting')
@@ -992,6 +732,36 @@ const DocumentsPage = () => {
                   {deletingReportId === deleteModalReport.reportId
                     ? t('documents.actions.deleting')
                     : t('documents.actions.delete')}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {bulkDeleteModalOpen ? (
+          <div className="documents-confirm" role="dialog" aria-modal="true" aria-label={t('documents.bulk.deleteModal.title')}>
+            <div className="documents-confirm__backdrop" onClick={closeBulkDeleteModal} />
+            <div className="documents-confirm__panel">
+              <h3>{t('documents.bulk.deleteModal.title')}</h3>
+              <p>{t('documents.bulk.deleteModal.body', { count: selectedCount })}</p>
+              <div className="documents-confirm__actions">
+                <button
+                  type="button"
+                  className="documents-confirm__btn documents-confirm__btn--cancel"
+                  onClick={closeBulkDeleteModal}
+                  disabled={bulkDeleteRunning}
+                >
+                  {t('common.cancel')}
+                </button>
+                <button
+                  type="button"
+                  className="documents-confirm__btn documents-confirm__btn--delete"
+                  onClick={() => void deleteSelectedReports()}
+                  disabled={bulkDeleteRunning}
+                >
+                  {bulkDeleteRunning
+                    ? t('documents.actions.deleting')
+                    : t('documents.bulk.deleteSelected')}
                 </button>
               </div>
             </div>
