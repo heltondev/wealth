@@ -256,12 +256,132 @@ const getReportTemplateVersion = (reportType) =>
 
 const BENCHMARK_SYMBOLS = {
 	IBOV: '^BVSP',
+	IBRA: 'IBRA.SA',
+	IBRX100: 'IBRX100.SA',
+	IBRX50: 'IBRX50.SA',
+	IDIV: 'IDIV.SA',
+	SMLL: 'SMLL.SA',
+	MLCX: 'MLCX.SA',
+	ICON: 'ICON.SA',
+	IFNC: 'IFNC.SA',
+	IMAT: 'IMAT.SA',
+	IMOB: 'IMOB.SA',
+	INDX: 'INDX.SA',
+	UTIL: 'UTIL.SA',
+	IEEX: 'IEEX.SA',
+	IGCT: 'IGCT.SA',
+	ITAG: 'ITAG.SA',
+	IVBX2: 'IVBX2.SA',
 	SNP500: '^GSPC',
 	SP500: '^GSPC',
 	SNP: '^GSPC',
+	NASDAQ: '^IXIC',
+	DOWJONES: '^DJI',
+	RUSSELL2000: '^RUT',
+	FTSE100: '^FTSE',
+	DAX: '^GDAXI',
+	CAC40: '^FCHI',
+	NIKKEI225: '^N225',
+	HANGSENG: '^HSI',
 	IFIX: 'IFIX.SA',
 	TSX: '^GSPTSE',
 };
+
+const BENCHMARK_CATALOG = [
+	'IBOV',
+	'IBRA',
+	'IBRX100',
+	'IBRX50',
+	'IDIV',
+	'SMLL',
+	'MLCX',
+	'ICON',
+	'IFNC',
+	'IMAT',
+	'IMOB',
+	'INDX',
+	'UTIL',
+	'IEEX',
+	'IGCT',
+	'ITAG',
+	'IVBX2',
+	'IFIX',
+	'CDI',
+	'IPCA',
+	'SELIC',
+	'POUPANCA',
+	'SNP500',
+	'NASDAQ',
+	'DOWJONES',
+	'RUSSELL2000',
+	'FTSE100',
+	'DAX',
+	'CAC40',
+	'NIKKEI225',
+	'HANGSENG',
+	'TSX',
+];
+
+const BENCHMARK_PROXY_SYMBOLS = {
+	IFIX: ['XFIX11.SA'],
+};
+
+const B3_BENCHMARK_KEYS = new Set([
+	'IBOV',
+	'IBRA',
+	'IBRX100',
+	'IBRX50',
+	'IDIV',
+	'SMLL',
+	'MLCX',
+	'ICON',
+	'IFNC',
+	'IMAT',
+	'IMOB',
+	'INDX',
+	'UTIL',
+	'IEEX',
+	'IGCT',
+	'ITAG',
+	'IVBX2',
+	'IFIX',
+]);
+
+const STATUS_INVEST_INDEX_DATE_KEY_HINTS = [
+	'date',
+	'data',
+	'timestamp',
+	'time',
+	'x',
+];
+
+const STATUS_INVEST_INDEX_VALUE_KEY_HINTS = [
+	'close',
+	'price',
+	'value',
+	'valor',
+	'quote',
+	'cotacao',
+	'point',
+	'ponto',
+	'last',
+	'y',
+];
+
+const STATUS_INVEST_INDEX_PATH_KEY_HINTS = [
+	'history',
+	'historico',
+	'chart',
+	'grafico',
+	'series',
+	'cotacao',
+	'points',
+	'pontos',
+	'candlestick',
+	'line',
+];
+
+const STATUS_INVEST_INDEX_MIN_HISTORY_ROWS = 20;
 
 const INDICATOR_SERIES = {
 	CDI: '12',
@@ -5361,39 +5481,91 @@ class PlatformService {
 		const toDate = portfolioSeries[portfolioSeries.length - 1]?.date || nowIso().slice(0, 10);
 
 		const selected = String(benchmark || 'IBOV').toUpperCase();
-		const symbols = [selected, 'CDI', 'IPCA', 'IBOV', 'SNP500', 'IFIX', 'POUPANCA'];
-		const seen = new Set();
+		const symbols = [selected, ...BENCHMARK_CATALOG]
+			.map((item) => String(item || '').toUpperCase())
+			.filter(Boolean)
+			.filter((item, index, values) => values.indexOf(item) === index);
 		const benchmarkResults = [];
-
-		for (const key of symbols) {
-			const normalizedKey = String(key).toUpperCase();
-			if (seen.has(normalizedKey)) continue;
-			seen.add(normalizedKey);
-
-			if (normalizedKey in INDICATOR_SERIES) {
-				const value = await this.#computeIndicatorReturn(INDICATOR_SERIES[normalizedKey], fromDate, toDate);
-				benchmarkResults.push({ benchmark: normalizedKey, return_pct: value });
-				continue;
-			}
-
-			const symbol = BENCHMARK_SYMBOLS[normalizedKey] || normalizedKey;
-			const rows = await this.#fetchBenchmarkHistory(symbol, fromDate);
-			const returnPct = this.#seriesReturnPct(rows.map((row) => ({ date: row.date, value: numeric(row.close, 0) })));
-			benchmarkResults.push({ benchmark: normalizedKey, symbol, return_pct: returnPct });
-		}
-
-		const selectedBenchmark = benchmarkResults.find((item) => item.benchmark === selected || item.symbol === selected) || null;
-		const alpha = selectedBenchmark ? portfolioReturn - numeric(selectedBenchmark.return_pct, 0) : null;
-
 		const normalizedSeries = {
 			portfolio: this.#normalizeSeries(portfolioSeries),
 			benchmarks: {},
 		};
-		for (const item of benchmarkResults) {
-			if (!item.symbol) continue;
-			const rows = await this.#fetchBenchmarkHistory(item.symbol, fromDate);
-			normalizedSeries.benchmarks[item.benchmark] = this.#normalizeSeries(rows.map((row) => ({ date: row.date, value: numeric(row.close, 0) })));
+		const benchmarkPayload = await Promise.all(symbols.map(async (normalizedKey) => {
+			if (normalizedKey in INDICATOR_SERIES) {
+				const seriesId = INDICATOR_SERIES[normalizedKey];
+				const rows = await this.#fetchIndicatorRows(seriesId, fromDate, toDate);
+				const hasSeries = rows.length > 1;
+				return {
+					benchmark: normalizedKey,
+					result: {
+						benchmark: normalizedKey,
+						return_pct: this.#computeIndicatorReturnFromRows(seriesId, rows),
+						has_series: hasSeries,
+						current_points: null,
+						month_min: null,
+						month_max: null,
+						week52_min: null,
+						week52_max: null,
+						points_source: null,
+					},
+					normalized: hasSeries ? this.#normalizeIndicatorSeries(seriesId, rows) : null,
+				};
+			}
+
+			const { symbol, rows } = await this.#fetchBenchmarkHistoryWithAliases(normalizedKey, fromDate);
+			const normalizedRows = rows.map((row) => ({ date: row.date, value: numeric(row.close, 0) }));
+			const hasSeries = normalizedRows.length > 1;
+			const historySnapshot = this.#buildBenchmarkRangeSnapshot(normalizedRows);
+			const statusInvestSnapshot = normalizedKey === 'IFIX'
+				? await this.#fetchStatusInvestTickerPriceIndexSnapshot(normalizedKey)
+				: null;
+			const hasMixedPointScale =
+				Boolean(statusInvestSnapshot) &&
+				!String(symbol || '').toUpperCase().startsWith('STATUSINVEST:');
+			const snapshot = {
+				current_points: statusInvestSnapshot?.current_points ?? historySnapshot?.current_points ?? null,
+				month_min: statusInvestSnapshot?.month_min ?? historySnapshot?.month_min ?? null,
+				month_max: statusInvestSnapshot?.month_max ?? historySnapshot?.month_max ?? null,
+				week52_min: hasMixedPointScale
+					? null
+					: (historySnapshot?.week52_min ?? statusInvestSnapshot?.week52_min ?? null),
+				week52_max: hasMixedPointScale
+					? null
+					: (historySnapshot?.week52_max ?? statusInvestSnapshot?.week52_max ?? null),
+				points_source: statusInvestSnapshot?.source || (historySnapshot ? 'history_series' : null),
+			};
+			return {
+				benchmark: normalizedKey,
+				result: {
+					benchmark: normalizedKey,
+					symbol,
+					return_pct: hasSeries ? this.#seriesReturnPct(normalizedRows) : 0,
+					has_series: hasSeries,
+					current_points: snapshot.current_points,
+					month_min: snapshot.month_min,
+					month_max: snapshot.month_max,
+					week52_min: snapshot.week52_min,
+					week52_max: snapshot.week52_max,
+					points_source: snapshot.points_source,
+				},
+				normalized: hasSeries ? this.#normalizeSeries(normalizedRows) : null,
+			};
+		}));
+
+		for (const item of benchmarkPayload) {
+			benchmarkResults.push(item.result);
+			if (item.normalized) {
+				normalizedSeries.benchmarks[item.benchmark] = item.normalized;
+			}
 		}
+
+		const selectedBenchmark =
+			benchmarkResults.find((item) => item.benchmark === selected || item.symbol === selected) ||
+			benchmarkResults[0] ||
+			null;
+		const alpha = selectedBenchmark
+			? portfolioReturn - (selectedBenchmark.has_series ? numeric(selectedBenchmark.return_pct, 0) : 0)
+			: null;
 
 		return {
 			portfolioId,
@@ -5405,6 +5577,7 @@ class PlatformService {
 			selected_benchmark: selectedBenchmark,
 			alpha,
 			normalized_series: normalizedSeries,
+			available_benchmarks: symbols,
 			fetched_at: nowIso(),
 		};
 	}
@@ -7740,6 +7913,34 @@ class PlatformService {
 		return ((last / first) - 1) * 100;
 	}
 
+	#buildBenchmarkRangeSnapshot(rows) {
+		if (!Array.isArray(rows) || rows.length === 0) return null;
+		const normalizedRows = rows
+			.map((row) => ({
+				date: normalizeDate(row?.date),
+				value: toNumberOrNull(row?.value ?? row?.close),
+			}))
+			.filter((row) => row.date && row.value !== null && row.value > 0)
+			.sort((left, right) => String(left.date).localeCompare(String(right.date)));
+		if (normalizedRows.length === 0) return null;
+
+		const latest = normalizedRows[normalizedRows.length - 1];
+		const latestMonth = String(latest.date).slice(0, 7);
+		const monthRows = normalizedRows.filter((row) => String(row.date).startsWith(latestMonth));
+		const week52Start = addDays(latest.date, -364);
+		const week52Rows = normalizedRows.filter((row) => row.date >= week52Start);
+		const monthValues = monthRows.map((row) => numeric(row.value, 0));
+		const week52Values = week52Rows.map((row) => numeric(row.value, 0));
+
+		return {
+			current_points: numeric(latest.value, 0),
+			month_min: monthValues.length > 0 ? Math.min(...monthValues) : null,
+			month_max: monthValues.length > 0 ? Math.max(...monthValues) : null,
+			week52_min: week52Values.length > 0 ? Math.min(...week52Values) : null,
+			week52_max: week52Values.length > 0 ? Math.max(...week52Values) : null,
+		};
+	}
+
 	#normalizeSeries(series) {
 		if (!Array.isArray(series) || series.length === 0) return [];
 		const first = numeric(series[0].value, 0);
@@ -7760,7 +7961,7 @@ class PlatformService {
 			.sort((left, right) => right.value - left.value);
 	}
 
-	async #computeIndicatorReturn(seriesId, fromDate, toDate) {
+	async #fetchIndicatorRows(seriesId, fromDate, toDate) {
 		const rows = await this.#queryAll({
 			TableName: this.tableName,
 			KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
@@ -7769,9 +7970,12 @@ class PlatformService {
 				':sk': 'DATE#',
 			},
 		});
-		const filtered = rows
+		return rows
 			.filter((row) => row.date >= fromDate && row.date <= toDate)
 			.sort((left, right) => String(left.date).localeCompare(String(right.date)));
+	}
+
+	#computeIndicatorReturnFromRows(seriesId, filtered) {
 		if (!filtered.length) return 0;
 
 		if (seriesId === INDICATOR_SERIES.CDI || seriesId === INDICATOR_SERIES.SELIC || seriesId === INDICATOR_SERIES.POUPANCA) {
@@ -7788,23 +7992,102 @@ class PlatformService {
 		return ((last / first) - 1) * 100;
 	}
 
+	#normalizeIndicatorSeries(seriesId, filtered) {
+		if (!Array.isArray(filtered) || filtered.length === 0) return [];
+
+		if (seriesId === INDICATOR_SERIES.CDI || seriesId === INDICATOR_SERIES.SELIC || seriesId === INDICATOR_SERIES.POUPANCA) {
+			let factor = 1;
+			return filtered.map((row) => {
+				factor *= 1 + (numeric(row.value, 0) / 10000);
+				return {
+					date: row.date,
+					value: factor * 100,
+				};
+			});
+		}
+
+		const first = numeric(filtered[0].value, 0);
+		if (first <= 0) {
+			return filtered.map((row) => ({ date: row.date, value: 100 }));
+		}
+		return filtered.map((row) => ({
+			date: row.date,
+			value: (numeric(row.value, 0) / first) * 100,
+		}));
+	}
+
+	async #computeIndicatorReturn(seriesId, fromDate, toDate) {
+		const filtered = await this.#fetchIndicatorRows(seriesId, fromDate, toDate);
+		return this.#computeIndicatorReturnFromRows(seriesId, filtered);
+	}
+
 	async #computeIndicatorAccumulation(seriesId, fromDate, toDate) {
-		const rows = await this.#queryAll({
-			TableName: this.tableName,
-			KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
-			ExpressionAttributeValues: {
-				':pk': `ECON#${seriesId}`,
-				':sk': 'DATE#',
-			},
-		});
-		const filtered = rows
-			.filter((row) => row.date >= fromDate && row.date <= toDate)
-			.sort((left, right) => String(left.date).localeCompare(String(right.date)));
+		const filtered = await this.#fetchIndicatorRows(seriesId, fromDate, toDate);
 		if (!filtered.length) return 0;
 
 		let factor = 1;
 		for (const row of filtered) factor *= 1 + (numeric(row.value, 0) / 10000);
 		return factor - 1;
+	}
+
+	#getBenchmarkSymbolCandidates(benchmarkKey) {
+		const normalizedKey = String(benchmarkKey || '').toUpperCase();
+		const configured = String(BENCHMARK_SYMBOLS[normalizedKey] || normalizedKey).toUpperCase();
+		const candidates = [configured];
+
+		// B3 indexes frequently switch between caret and .SA forms depending on provider routing.
+		if (B3_BENCHMARK_KEYS.has(normalizedKey)) {
+			candidates.push(`^${normalizedKey}`);
+			candidates.push(`${normalizedKey}.SA`);
+			candidates.push(normalizedKey);
+		}
+
+		return candidates
+			.map((item) => String(item || '').trim())
+			.filter(Boolean)
+			.filter((item, index, values) => values.indexOf(item) === index);
+	}
+
+	async #fetchBenchmarkHistoryWithAliases(benchmarkKey, fromDate) {
+		const normalizedBenchmarkKey = String(benchmarkKey || '').toUpperCase();
+		const candidates = this.#getBenchmarkSymbolCandidates(benchmarkKey);
+		for (const symbol of candidates) {
+			const rows = await this.#fetchBenchmarkHistory(symbol, fromDate);
+			if (rows.length > 1) {
+				return { symbol, rows };
+			}
+		}
+
+		const proxySymbols = Array.isArray(BENCHMARK_PROXY_SYMBOLS[normalizedBenchmarkKey])
+			? BENCHMARK_PROXY_SYMBOLS[normalizedBenchmarkKey]
+			: [];
+
+		// B3 indices are often unavailable on Yahoo depending on symbol routing, so we
+		// fallback to Status Invest index history endpoint.
+		if (B3_BENCHMARK_KEYS.has(normalizedBenchmarkKey)) {
+			const statusInvestRows = await this.#fetchStatusInvestIndexHistory(normalizedBenchmarkKey, fromDate);
+			if (statusInvestRows.length >= STATUS_INVEST_INDEX_MIN_HISTORY_ROWS || proxySymbols.length === 0) {
+				return {
+					symbol: `STATUSINVEST:${normalizedBenchmarkKey}`,
+					rows: statusInvestRows,
+				};
+			}
+		}
+
+		for (const proxySymbol of proxySymbols) {
+			const proxyRows = await this.#fetchBenchmarkHistory(proxySymbol, fromDate);
+			if (proxyRows.length > 1) {
+				return {
+					symbol: proxySymbol,
+					rows: proxyRows,
+				};
+			}
+		}
+
+		return {
+			symbol: candidates[0] || String(benchmarkKey || '').toUpperCase(),
+			rows: [],
+		};
 	}
 
 	async #fetchBenchmarkHistory(symbol, fromDate) {
@@ -7814,10 +8097,461 @@ class PlatformService {
 				period: fromDate ? null : 'max',
 				allowEmpty: true,
 			});
-			return (payload.rows || []).map((row) => ({ date: row.date, close: numeric(row.close, 0) }));
+			const rows = (payload.rows || []).map((row) => ({ date: row.date, close: numeric(row.close, 0) }));
+			if (rows.length > 1) {
+				return rows;
+			}
+		} catch {
+			// Ignore and fallback to Yahoo query2 endpoint below.
+		}
+
+		return this.#fetchBenchmarkHistoryFromYahooQuery2(symbol, fromDate);
+	}
+
+	async #fetchBenchmarkHistoryFromYahooQuery2(symbol, fromDate) {
+		const normalizedSymbol = String(symbol || '').trim().toUpperCase();
+		if (!normalizedSymbol) return [];
+
+		const timeoutMs = Number(
+			process.env.MARKET_DATA_YAHOO_TIMEOUT_MS ||
+			process.env.MARKET_DATA_YFINANCE_TIMEOUT_MS ||
+			15000
+		);
+		const normalizedFromDate = normalizeDate(fromDate);
+		const period1 = normalizedFromDate
+			? Math.floor(Date.parse(`${normalizedFromDate}T00:00:00Z`) / 1000)
+			: null;
+		const period2 = Math.floor(Date.now() / 1000);
+		const endpoint = period1 && Number.isFinite(period1)
+			? `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(normalizedSymbol)}?period1=${period1}&period2=${period2}&interval=1d&events=div,split`
+			: `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(normalizedSymbol)}?range=max&interval=1d&events=div,split`;
+
+		let response;
+		try {
+			response = await withRetry(
+				() =>
+					fetchWithTimeout(endpoint, {
+						timeoutMs,
+						headers: {
+							Accept: 'application/json, text/plain, */*',
+							'User-Agent': 'Mozilla/5.0 (compatible; WealthBot/1.0)',
+						},
+					}),
+				{ retries: 0, baseDelayMs: 300, factor: 2 }
+			);
 		} catch {
 			return [];
 		}
+		if (!response?.ok) return [];
+
+		let payload;
+		try {
+			payload = await response.json();
+		} catch {
+			return [];
+		}
+
+		const result = payload?.chart?.result?.[0];
+		const timestamps = Array.isArray(result?.timestamp) ? result.timestamp : [];
+		const quote = result?.indicators?.quote?.[0] || {};
+		if (timestamps.length === 0) return [];
+
+		const rows = [];
+		for (let index = 0; index < timestamps.length; index += 1) {
+			const timestamp = Number(timestamps[index]);
+			if (!Number.isFinite(timestamp)) continue;
+			const date = new Date(timestamp * 1000).toISOString().slice(0, 10);
+			const close = toNumberOrNull(quote.close?.[index]);
+			if (!date || close === null || close <= 0) continue;
+			rows.push({ date, close });
+		}
+
+		return rows
+			.filter((row) => !normalizedFromDate || row.date >= normalizedFromDate)
+			.sort((left, right) => String(left.date).localeCompare(String(right.date)));
+	}
+
+	#buildStatusInvestIndexUrl(indexCode) {
+		const slug = String(indexCode || '')
+			.toLowerCase()
+			.replace(/[^a-z0-9]/g, '');
+		if (!slug) return null;
+		return `https://statusinvest.com.br/indices/${slug}`;
+	}
+
+	#normalizeStatusInvestIndexDate(value) {
+		if (value === null || value === undefined || value === '') return null;
+
+		if (typeof value === 'number' && Number.isFinite(value)) {
+			const epoch = value > 1_000_000_000_000 ? value : value * 1000;
+			const parsed = new Date(epoch);
+			if (!Number.isNaN(parsed.getTime())) {
+				return parsed.toISOString().slice(0, 10);
+			}
+		}
+
+		const text = String(value).trim();
+		if (!text) return null;
+		const brDateTimeLong = text.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:\s+\d{2}:\d{2}(?::\d{2})?)?$/);
+		if (brDateTimeLong) {
+			return `${brDateTimeLong[3]}-${brDateTimeLong[2]}-${brDateTimeLong[1]}`;
+		}
+		const brDateTimeShort = text.match(/^(\d{2})\/(\d{2})\/(\d{2})(?:\s+\d{2}:\d{2}(?::\d{2})?)?$/);
+		if (brDateTimeShort) {
+			const year = Number(brDateTimeShort[3]);
+			const fullYear = Number.isFinite(year)
+				? year >= 70 ? 1900 + year : 2000 + year
+				: null;
+			if (fullYear !== null) {
+				return `${String(fullYear).padStart(4, '0')}-${brDateTimeShort[2]}-${brDateTimeShort[1]}`;
+			}
+		}
+		if (/^\d{11,13}$/.test(text)) {
+			const numericValue = Number(text);
+			if (Number.isFinite(numericValue)) {
+				const epoch = text.length >= 13 ? numericValue : numericValue * 1000;
+				const parsed = new Date(epoch);
+				if (!Number.isNaN(parsed.getTime())) {
+					return parsed.toISOString().slice(0, 10);
+				}
+			}
+		}
+
+		return normalizeDate(text);
+	}
+
+	async #fetchStatusInvestTickerPriceIndexSnapshot(indexCode) {
+		const rows = await this.#fetchStatusInvestTickerPriceIndexHistory(indexCode, null);
+		if (!Array.isArray(rows) || rows.length === 0) return null;
+		const snapshot = this.#buildBenchmarkRangeSnapshot(
+			rows.map((row) => ({
+				date: row?.date,
+				value: row?.close,
+			}))
+		);
+		if (!snapshot) return null;
+		return {
+			...snapshot,
+			source: 'statusinvest_tickerprice',
+		};
+	}
+
+	#extractStatusInvestIndexRowsFromArray(rows, path = 'root') {
+		if (!Array.isArray(rows) || rows.length < 3 || rows.length > 10000) return null;
+
+		const parsed = [];
+		for (const row of rows) {
+			let dateRaw = null;
+			let valueRaw = null;
+
+			if (Array.isArray(row) && row.length >= 2) {
+				dateRaw = row[0];
+				valueRaw = row[1];
+			} else if (isObjectRecord(row)) {
+				dateRaw =
+					findRecordValueByHints(row, STATUS_INVEST_INDEX_DATE_KEY_HINTS) ??
+					row.date ??
+					row.data ??
+					row.timestamp ??
+					row.time ??
+					row.x ??
+					null;
+				valueRaw =
+					findRecordValueByHints(row, STATUS_INVEST_INDEX_VALUE_KEY_HINTS) ??
+					row.close ??
+					row.price ??
+					row.value ??
+					row.quote ??
+					row.cotacao ??
+					row.y ??
+					null;
+			}
+
+			const date = this.#normalizeStatusInvestIndexDate(dateRaw);
+			const close = parseLocalizedNumber(valueRaw);
+			if (!date || close === null || close <= 0) continue;
+
+			parsed.push({ date, close });
+		}
+
+		if (parsed.length < 3) return null;
+
+		const deduped = new Map();
+		for (const item of parsed) {
+			deduped.set(item.date, item);
+		}
+
+		const normalizedRows = Array.from(deduped.values())
+			.sort((left, right) => String(left.date).localeCompare(String(right.date)));
+		if (normalizedRows.length < 3) return null;
+
+		const normalizedPath = normalizeRecordKey(path);
+		const pathBonus = STATUS_INVEST_INDEX_PATH_KEY_HINTS.some((hint) => normalizedPath.includes(hint)) ? 20 : 0;
+
+		return {
+			path,
+			score: normalizedRows.length + pathBonus,
+			rows: normalizedRows,
+		};
+	}
+
+	#extractStatusInvestIndexRowsFromNextData(html) {
+		const content = String(html || '');
+		if (!content) return [];
+
+		const script = extractJsonScriptContent(content, '__NEXT_DATA__');
+		if (!script) return [];
+
+		let payload;
+		try {
+			payload = JSON.parse(script);
+		} catch {
+			return [];
+		}
+
+		const queue = [{ value: payload, path: 'root' }];
+		const candidates = [];
+		const visited = new Set();
+
+		while (queue.length > 0) {
+			const current = queue.shift();
+			const value = current?.value;
+			const path = current?.path || 'root';
+
+			if (Array.isArray(value)) {
+				const extracted = this.#extractStatusInvestIndexRowsFromArray(value, path);
+				if (extracted) candidates.push(extracted);
+				for (let index = 0; index < value.length; index += 1) {
+					const entry = value[index];
+					if (entry && typeof entry === 'object') {
+						queue.push({
+							value: entry,
+							path: `${path}[${index}]`,
+						});
+					}
+				}
+				continue;
+			}
+
+			if (!isObjectRecord(value)) continue;
+			if (visited.has(value)) continue;
+			visited.add(value);
+
+			for (const [key, entry] of Object.entries(value)) {
+				if (entry && typeof entry === 'object') {
+					queue.push({
+						value: entry,
+						path: `${path}.${key}`,
+					});
+				}
+			}
+		}
+
+		if (candidates.length === 0) return [];
+		return candidates
+			.sort((left, right) => right.score - left.score)[0]
+			.rows;
+	}
+
+	#extractStatusInvestIndexRowsFromHtml(html) {
+		const content = String(html || '');
+		if (!content) return [];
+
+		const rows = content.match(/<tr[\s\S]*?<\/tr>/gi) || [];
+		const parsed = [];
+
+		for (const row of rows) {
+			const cells = [];
+			const cellRegex = /<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi;
+			let match;
+			while ((match = cellRegex.exec(row)) !== null) {
+				const text = this.#htmlToPlainText(match[1]);
+				if (text) cells.push(text);
+			}
+			if (cells.length < 2) continue;
+
+			const dateCell = cells.find((cell) => /\b\d{2}\/\d{2}\/\d{4}\b/.test(cell));
+			const date = this.#normalizeStatusInvestIndexDate(dateCell);
+			if (!date) continue;
+
+			let close = null;
+			for (const cell of cells) {
+				if (cell === dateCell) continue;
+				const numericValue = parseLocalizedNumber(cell);
+				if (numericValue !== null && numericValue > 0) {
+					close = numericValue;
+					break;
+				}
+			}
+			if (close === null) continue;
+
+			parsed.push({ date, close });
+		}
+
+		const deduped = new Map();
+		for (const item of parsed) deduped.set(item.date, item);
+		return Array.from(deduped.values())
+			.sort((left, right) => String(left.date).localeCompare(String(right.date)));
+	}
+
+	async #fetchStatusInvestIndexHistory(indexCode, fromDate) {
+		const fromTickerPrice = await this.#fetchStatusInvestTickerPriceIndexHistory(indexCode, fromDate);
+		if (fromTickerPrice.length > 1) {
+			return fromTickerPrice;
+		}
+
+		const sourceUrl = this.#buildStatusInvestIndexUrl(indexCode);
+		if (!sourceUrl) return [];
+
+		const timeoutMs = Number(process.env.MARKET_DATA_STATUSINVEST_TIMEOUT_MS || 9000);
+		let response;
+		try {
+			response = await withRetry(
+				() =>
+					fetchWithTimeout(sourceUrl, {
+						timeoutMs,
+						headers: {
+							Accept: 'text/html,*/*',
+							'User-Agent': 'Mozilla/5.0 (compatible; WealthBot/1.0)',
+						},
+					}),
+				{ retries: 0, baseDelayMs: 300, factor: 2 }
+			);
+		} catch {
+			return [];
+		}
+		if (!response?.ok) return [];
+
+		const html = await response.text();
+		const fromNextData = this.#extractStatusInvestIndexRowsFromNextData(html);
+		const fromHtml = this.#extractStatusInvestIndexRowsFromHtml(html);
+		const merged = new Map();
+		for (const row of [...fromHtml, ...fromNextData]) {
+			const date = normalizeDate(row?.date);
+			const close = parseLocalizedNumber(row?.close);
+			if (!date || close === null || close <= 0) continue;
+			merged.set(date, {
+				date,
+				close,
+			});
+		}
+
+		const normalizedFromDate = normalizeDate(fromDate) || null;
+		return Array.from(merged.values())
+			.filter((row) => !normalizedFromDate || row.date >= normalizedFromDate)
+			.sort((left, right) => String(left.date).localeCompare(String(right.date)));
+	}
+
+	#extractStatusInvestTickerPriceRows(payload) {
+		const queue = [{ value: payload, path: 'root' }];
+		const candidates = [];
+		const visited = new Set();
+
+		while (queue.length > 0) {
+			const current = queue.shift();
+			const value = current?.value;
+			const path = current?.path || 'root';
+
+			if (Array.isArray(value)) {
+				const extracted = this.#extractStatusInvestIndexRowsFromArray(value, path);
+				if (extracted) candidates.push(extracted);
+				for (let index = 0; index < value.length; index += 1) {
+					const entry = value[index];
+					if (entry && typeof entry === 'object') {
+						queue.push({
+							value: entry,
+							path: `${path}[${index}]`,
+						});
+					}
+				}
+				continue;
+			}
+
+			if (!isObjectRecord(value)) continue;
+			if (visited.has(value)) continue;
+			visited.add(value);
+
+			for (const [key, entry] of Object.entries(value)) {
+				if (entry && typeof entry === 'object') {
+					queue.push({
+						value: entry,
+						path: `${path}.${key}`,
+					});
+				}
+			}
+		}
+
+		if (candidates.length === 0) return [];
+		return candidates
+			.sort((left, right) => right.score - left.score)[0]
+			.rows;
+	}
+
+	async #fetchStatusInvestTickerPriceIndexHistory(indexCode, fromDate) {
+		const normalizedIndexCode = String(indexCode || '')
+			.toLowerCase()
+			.replace(/[^a-z0-9]/g, '');
+		if (!normalizedIndexCode) return [];
+
+		const timeoutMs = Number(process.env.MARKET_DATA_STATUSINVEST_TIMEOUT_MS || 9000);
+		const form = new URLSearchParams();
+		form.set('ticker', normalizedIndexCode);
+		form.set('type', '0');
+		form.append('currences[]', '1');
+		form.set('_cache', String(Date.now()));
+		form.set('unit', 'R$ ');
+		form.set('categorytype', '2');
+		form.set('title', String(indexCode || '').toUpperCase());
+		form.set('indicecode', normalizedIndexCode);
+
+		let response;
+		try {
+			response = await withRetry(
+				() =>
+					fetchWithTimeout('https://statusinvest.com.br/indice/tickerprice', {
+						method: 'POST',
+						timeoutMs,
+						headers: {
+							Accept: 'application/json, text/plain, */*',
+							'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+							Origin: 'https://statusinvest.com.br',
+							Referer: 'https://statusinvest.com.br/home/indiceassets',
+							'User-Agent': 'Mozilla/5.0 (compatible; WealthBot/1.0)',
+							'X-Requested-With': 'XMLHttpRequest',
+						},
+						body: form.toString(),
+					}),
+				{ retries: 0, baseDelayMs: 250, factor: 2 }
+			);
+		} catch {
+			return [];
+		}
+		if (!response?.ok) return [];
+
+		const rawText = await response.text();
+		const text = String(rawText || '').trim();
+		if (!text || text.startsWith('<!DOCTYPE html')) return [];
+
+		let parsed;
+		try {
+			parsed = JSON.parse(text);
+		} catch {
+			const jsonMatch = text.match(/\{[\s\S]*\}$/);
+			if (!jsonMatch) return [];
+			try {
+				parsed = JSON.parse(jsonMatch[0]);
+			} catch {
+				return [];
+			}
+		}
+
+		const rows = this.#extractStatusInvestTickerPriceRows(parsed);
+		if (!Array.isArray(rows) || rows.length < 2) return [];
+
+		const normalizedFromDate = normalizeDate(fromDate) || null;
+		return rows
+			.filter((row) => !normalizedFromDate || row.date >= normalizedFromDate)
+			.sort((left, right) => String(left.date).localeCompare(String(right.date)));
 	}
 
 	async #getAssetRiskSnapshot(portfolioId, assetId) {

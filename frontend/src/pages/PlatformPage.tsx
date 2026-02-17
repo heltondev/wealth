@@ -121,7 +121,43 @@ const PlatformPage = () => {
     await runAction(key, () => fn(selectedPortfolio));
   };
 
-  const benchmarkOptions = useMemo(() => ['IBOV', 'CDI', 'IPCA', 'SNP500', 'IFIX', 'POUPANCA', 'TSX'], []);
+  const benchmarkOptions = useMemo(
+    () => [
+      'IBOV',
+      'IBRA',
+      'IBRX100',
+      'IBRX50',
+      'IDIV',
+      'SMLL',
+      'MLCX',
+      'ICON',
+      'IFNC',
+      'IMAT',
+      'IMOB',
+      'INDX',
+      'UTIL',
+      'IEEX',
+      'IGCT',
+      'ITAG',
+      'IVBX2',
+      'IFIX',
+      'CDI',
+      'IPCA',
+      'SELIC',
+      'POUPANCA',
+      'SNP500',
+      'NASDAQ',
+      'DOWJONES',
+      'RUSSELL2000',
+      'FTSE100',
+      'DAX',
+      'CAC40',
+      'NIKKEI225',
+      'HANGSENG',
+      'TSX',
+    ],
+    []
+  );
   const periodOptions = useMemo(() => ['1M', '3M', '6M', '1A', '2A', '5A', 'MAX'], []);
 
   return (

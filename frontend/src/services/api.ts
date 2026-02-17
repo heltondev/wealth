@@ -302,6 +302,13 @@ export interface BenchmarkReturnItem {
   benchmark: string;
   symbol?: string;
   return_pct: number;
+  has_series?: boolean;
+  current_points?: number | null;
+  month_min?: number | null;
+  month_max?: number | null;
+  week52_min?: number | null;
+  week52_max?: number | null;
+  points_source?: string | null;
 }
 
 export interface BenchmarkNormalizedPoint {
@@ -318,6 +325,7 @@ export interface BenchmarksResponse {
   benchmarks: BenchmarkReturnItem[];
   selected_benchmark: BenchmarkReturnItem | null;
   alpha: number | null;
+  available_benchmarks?: string[];
   normalized_series: {
     portfolio: BenchmarkNormalizedPoint[];
     benchmarks: Record<string, BenchmarkNormalizedPoint[]>;

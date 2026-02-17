@@ -20,11 +20,122 @@ import { usePortfolioData } from '../context/PortfolioDataContext';
 import { api, type BenchmarksResponse } from '../services/api';
 import './BenchmarksPage.scss';
 
-const BENCHMARK_OPTIONS = ['IBOV', 'CDI', 'IPCA', 'SNP500', 'IFIX', 'POUPANCA', 'TSX'] as const;
+const BENCHMARK_OPTIONS = [
+  'IBOV',
+  'IBRA',
+  'IBRX100',
+  'IBRX50',
+  'IDIV',
+  'SMLL',
+  'MLCX',
+  'ICON',
+  'IFNC',
+  'IMAT',
+  'IMOB',
+  'INDX',
+  'UTIL',
+  'IEEX',
+  'IGCT',
+  'ITAG',
+  'IVBX2',
+  'IFIX',
+  'CDI',
+  'IPCA',
+  'SELIC',
+  'POUPANCA',
+  'SNP500',
+  'NASDAQ',
+  'DOWJONES',
+  'RUSSELL2000',
+  'FTSE100',
+  'DAX',
+  'CAC40',
+  'NIKKEI225',
+  'HANGSENG',
+  'TSX',
+] as const;
 const PERIOD_OPTIONS = ['1M', '3M', '6M', '1Y', '2Y', '5Y', 'MAX'] as const;
-const SERIES_COLORS = ['#22d3ee', '#818cf8', '#34d399', '#f59e0b', '#fb7185', '#f87171', '#38bdf8'];
+const DEFAULT_SELECTED_BENCHMARKS = ['IBOV', 'IFIX', 'CDI', 'IPCA', 'SELIC', 'POUPANCA'] as const;
+const SERIES_COLORS = [
+  '#22d3ee',
+  '#818cf8',
+  '#34d399',
+  '#f59e0b',
+  '#fb7185',
+  '#f87171',
+  '#38bdf8',
+  '#a78bfa',
+  '#2dd4bf',
+  '#f97316',
+  '#84cc16',
+  '#f43f5e',
+  '#14b8a6',
+  '#facc15',
+  '#60a5fa',
+  '#fb923c',
+  '#10b981',
+  '#c084fc',
+  '#0ea5e9',
+  '#ef4444',
+  '#06b6d4',
+  '#eab308',
+  '#8b5cf6',
+  '#22c55e',
+];
+
+type BenchmarkGroup = {
+  id: string;
+  labelKey: string;
+  codes: string[];
+};
+
+function normalizeCode(value: unknown): string {
+  return String(value || '').toUpperCase().trim();
+}
+
+const BENCHMARK_GROUPS: BenchmarkGroup[] = [
+  {
+    id: 'fii',
+    labelKey: 'benchmarks.groups.fii',
+    codes: ['IFIX'],
+  },
+  {
+    id: 'macro',
+    labelKey: 'benchmarks.groups.macro',
+    codes: ['CDI', 'SELIC', 'IPCA', 'POUPANCA'],
+  },
+  {
+    id: 'brazilBroad',
+    labelKey: 'benchmarks.groups.brazilBroad',
+    codes: ['IBOV', 'IBRA', 'IBRX100', 'IBRX50', 'IVBX2'],
+  },
+  {
+    id: 'international',
+    labelKey: 'benchmarks.groups.international',
+    codes: ['SNP500', 'NASDAQ', 'DOWJONES', 'RUSSELL2000', 'FTSE100', 'DAX', 'CAC40', 'NIKKEI225', 'HANGSENG', 'TSX'],
+  },
+  {
+    id: 'brazilSectors',
+    labelKey: 'benchmarks.groups.brazilSectors',
+    codes: ['IDIV', 'SMLL', 'MLCX', 'ICON', 'IFNC', 'IMAT', 'IMOB', 'INDX', 'UTIL', 'IEEX', 'IGCT', 'ITAG'],
+  },
+];
+
+const BENCHMARK_GROUP_BY_CODE = new Map<string, string>(
+  BENCHMARK_GROUPS.flatMap((group) => group.codes.map((code) => [normalizeCode(code), group.id] as const))
+);
 
 type NormalizedChartRow = { date: string } & Record<string, string | number | null | undefined>;
+
+type ReturnRow = {
+  key: string;
+  label: string;
+  returnPct: number;
+  alphaVsPortfolio: number;
+  isPortfolio: boolean;
+  isSelected: boolean;
+  hasSeries: boolean;
+};
 
 const toNumber = (value: unknown): number => {
   const parsed = Number(value);
@@ -42,11 +153,25 @@ const parseIsoDateUtc = (value: string): Date => {
   return new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
 };
 
+const resolveDefaultBenchmarkSelection = (availableBenchmarkCodes: string[]): string[] => {
+  const defaults = DEFAULT_SELECTED_BENCHMARKS
+    .map((code) => normalizeCode(code))
+    .filter((code) => availableBenchmarkCodes.includes(code));
+  if (defaults.length > 0) {
+    return defaults;
+  }
+  if (availableBenchmarkCodes.length > 0) {
+    return [availableBenchmarkCodes[0]];
+  }
+  return [];
+};
+
 const BenchmarksPage = () => {
   const { t, i18n } = useTranslation();
   const { portfolios, selectedPortfolio, setSelectedPortfolio } = usePortfolioData();
-  const [selectedBenchmark, setSelectedBenchmark] = useState<(typeof BENCHMARK_OPTIONS)[number]>('IBOV');
   const [selectedPeriod, setSelectedPeriod] = useState<(typeof PERIOD_OPTIONS)[number]>('1Y');
+  const [selectedBenchmarks, setSelectedBenchmarks] = useState<string[]>([]);
+  const [selectionInitialized, setSelectionInitialized] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [payload, setPayload] = useState<BenchmarksResponse | null>(null);
@@ -57,6 +182,13 @@ const BenchmarksPage = () => {
       minimumFractionDigits: fractionDigits,
       maximumFractionDigits: fractionDigits,
     })}%`;
+  const formatPoints = (value: number | null): string => {
+    if (value === null || value === undefined || !Number.isFinite(value)) return '—';
+    return toNumber(value).toLocaleString(numberLocale, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+  };
 
   const portfolioOptions = useMemo(
     () => portfolios.map((portfolio) => ({ value: portfolio.portfolioId, label: portfolio.name })),
@@ -66,13 +198,13 @@ const BenchmarksPage = () => {
   const benchmarkOptions = useMemo(
     () => BENCHMARK_OPTIONS.map((benchmark) => ({
       value: benchmark,
-      label: t(`benchmarks.options.${benchmark}`),
+      label: t(`benchmarks.options.${benchmark}`, { defaultValue: benchmark }),
     })),
     [t]
   );
 
   const benchmarkLabelByCode = useMemo(
-    () => new Map<string, string>(benchmarkOptions.map((item) => [String(item.value), item.label])),
+    () => new Map<string, string>(benchmarkOptions.map((item) => [normalizeCode(item.value), item.label])),
     [benchmarkOptions]
   );
 
@@ -96,7 +228,7 @@ const BenchmarksPage = () => {
     setLoading(true);
     setError(null);
 
-    api.getBenchmarks(selectedPortfolio, selectedBenchmark, selectedPeriod)
+    api.getBenchmarks(selectedPortfolio, 'IBOV', selectedPeriod)
       .then((response) => {
         if (cancelled) return;
         setPayload(response);
@@ -111,14 +243,164 @@ const BenchmarksPage = () => {
       });
 
     return () => { cancelled = true; };
-  }, [selectedBenchmark, selectedPeriod, selectedPortfolio]);
+  }, [selectedPeriod, selectedPortfolio]);
 
-  const selectedBenchmarkReturn = toNumber(payload?.selected_benchmark?.return_pct);
-  const alphaValue = payload?.alpha === null || payload?.alpha === undefined
-    ? null
-    : toNumber(payload.alpha);
+  useEffect(() => {
+    setSelectionInitialized(false);
+    setSelectedBenchmarks([]);
+  }, [selectedPortfolio]);
 
-  const returnRows = useMemo(() => {
+  const availableBenchmarkCodes = useMemo(() => {
+    if (!payload) return [];
+
+    const rawCodes = Array.isArray(payload.available_benchmarks) && payload.available_benchmarks.length > 0
+      ? payload.available_benchmarks
+      : payload.benchmarks.map((item) => item.benchmark);
+
+    const uniqueCodes = rawCodes
+      .map((item) => normalizeCode(item))
+      .filter(Boolean)
+      .filter((item, index, values) => values.indexOf(item) === index);
+
+    const known = BENCHMARK_OPTIONS.filter((option) => uniqueCodes.includes(option));
+    const extras = uniqueCodes.filter((code) => !BENCHMARK_OPTIONS.includes(code as (typeof BENCHMARK_OPTIONS)[number]));
+    return [...known, ...extras];
+  }, [payload]);
+
+  useEffect(() => {
+    if (availableBenchmarkCodes.length === 0) {
+      setSelectedBenchmarks([]);
+      setSelectionInitialized(false);
+      return;
+    }
+
+    setSelectedBenchmarks((previous) => {
+      const normalizedPrevious = previous
+        .map((code) => normalizeCode(code))
+        .filter((code) => availableBenchmarkCodes.includes(code));
+
+      if (selectionInitialized) {
+        return normalizedPrevious;
+      }
+
+      return resolveDefaultBenchmarkSelection(availableBenchmarkCodes);
+    });
+
+    if (!selectionInitialized) {
+      setSelectionInitialized(true);
+    }
+  }, [availableBenchmarkCodes, selectionInitialized]);
+
+  const selectedBenchmarkSet = useMemo(
+    () => new Set(selectedBenchmarks.map((code) => normalizeCode(code))),
+    [selectedBenchmarks]
+  );
+
+  const benchmarkDataByCode = useMemo(() => {
+    const map = new Map<string, BenchmarksResponse['benchmarks'][number]>();
+    (payload?.benchmarks || []).forEach((item) => {
+      const key = normalizeCode(item.benchmark);
+      if (!key) return;
+      map.set(key, item);
+    });
+    return map;
+  }, [payload]);
+
+  const normalizedBenchmarkEntries = useMemo(() => {
+    if (!payload) return [] as Array<[string, Array<{ date: string; value: number }>]>;
+
+    const byBenchmark = payload.normalized_series?.benchmarks || {};
+    return Object.entries(byBenchmark)
+      .map(([code, series]) => [normalizeCode(code), series] as [string, Array<{ date: string; value: number }>])
+      .filter(([code, series]) => Boolean(code) && Array.isArray(series) && series.length > 1)
+      .sort((left, right) => {
+        const leftIndex = availableBenchmarkCodes.indexOf(left[0]);
+        const rightIndex = availableBenchmarkCodes.indexOf(right[0]);
+        const leftRank = leftIndex === -1 ? Number.POSITIVE_INFINITY : leftIndex;
+        const rightRank = rightIndex === -1 ? Number.POSITIVE_INFINITY : rightIndex;
+        return leftRank - rightRank;
+      });
+  }, [availableBenchmarkCodes, payload]);
+
+  const selectedNormalizedBenchmarkEntries = useMemo(
+    () => normalizedBenchmarkEntries.filter(([benchmark]) => selectedBenchmarkSet.has(benchmark)),
+    [normalizedBenchmarkEntries, selectedBenchmarkSet]
+  );
+
+  const selectionRows = useMemo(() => availableBenchmarkCodes.map((code) => {
+    const item = benchmarkDataByCode.get(code);
+    const hasSeries = Boolean(item?.has_series) || normalizedBenchmarkEntries.some(([benchmark]) => benchmark === code);
+    const returnPct = hasSeries ? toNumber(item?.return_pct) : null;
+    const alphaVsPortfolio = hasSeries && payload
+      ? toNumber(payload.portfolio_return_pct) - toNumber(item?.return_pct)
+      : null;
+
+    return {
+      code,
+      label: benchmarkLabelByCode.get(code) || code,
+      symbol: item?.symbol || null,
+      selected: selectedBenchmarkSet.has(code),
+      hasSeries,
+      returnPct,
+      alphaVsPortfolio,
+      currentPoints: item?.current_points ?? null,
+      monthMin: item?.month_min ?? null,
+      monthMax: item?.month_max ?? null,
+      week52Min: item?.week52_min ?? null,
+      week52Max: item?.week52_max ?? null,
+    };
+  }), [availableBenchmarkCodes, benchmarkDataByCode, benchmarkLabelByCode, normalizedBenchmarkEntries, payload, selectedBenchmarkSet]);
+
+  const visibleSelectionRows = useMemo(() => (
+    selectionRows.filter((row) => (
+      row.hasSeries
+      || row.currentPoints !== null
+      || row.monthMin !== null
+      || row.monthMax !== null
+      || row.week52Min !== null
+      || row.week52Max !== null
+    ))
+  ), [selectionRows]);
+
+  const visibleBenchmarkCodes = useMemo(
+    () => visibleSelectionRows.map((row) => row.code),
+    [visibleSelectionRows]
+  );
+
+  const groupedSelectionRows = useMemo(() => {
+    const groupedRows = BENCHMARK_GROUPS.map((group) => ({
+      id: group.id,
+      label: t(group.labelKey),
+      rows: [] as typeof selectionRows,
+    }));
+    const groupById = new Map(groupedRows.map((group) => [group.id, group]));
+    const otherGroup = {
+      id: 'other',
+      label: t('benchmarks.groups.other'),
+      rows: [] as typeof selectionRows,
+    };
+
+    for (const row of visibleSelectionRows) {
+      const groupId = BENCHMARK_GROUP_BY_CODE.get(normalizeCode(row.code));
+      if (!groupId) {
+        otherGroup.rows.push(row);
+        continue;
+      }
+      const group = groupById.get(groupId);
+      if (!group) {
+        otherGroup.rows.push(row);
+        continue;
+      }
+      group.rows.push(row);
+    }
+
+    return [
+      ...groupedRows.filter((group) => group.rows.length > 0),
+      ...(otherGroup.rows.length > 0 ? [otherGroup] : []),
+    ];
+  }, [visibleSelectionRows, t]);
+
+  const returnRows = useMemo<ReturnRow[]>(() => {
     if (!payload) return [];
 
     return [
@@ -129,31 +411,21 @@ const BenchmarksPage = () => {
         alphaVsPortfolio: 0,
         isPortfolio: true,
         isSelected: false,
+        hasSeries: true,
       },
-      ...payload.benchmarks.map((item) => ({
-        key: item.benchmark,
-        label: benchmarkLabelByCode.get(item.benchmark) || item.benchmark,
-        returnPct: toNumber(item.return_pct),
-        alphaVsPortfolio: toNumber(payload.portfolio_return_pct) - toNumber(item.return_pct),
-        isPortfolio: false,
-        isSelected: String(payload.selected_benchmark?.benchmark || '').toUpperCase() === String(item.benchmark || '').toUpperCase(),
-      })),
+      ...visibleSelectionRows
+        .filter((row) => row.selected)
+        .map((row) => ({
+          key: row.code,
+          label: row.label,
+          returnPct: row.returnPct === null ? 0 : row.returnPct,
+          alphaVsPortfolio: row.alphaVsPortfolio === null ? 0 : row.alphaVsPortfolio,
+          isPortfolio: false,
+          isSelected: row.selected,
+          hasSeries: row.hasSeries,
+        })),
     ];
-  }, [benchmarkLabelByCode, payload, t]);
-
-  const normalizedBenchmarkEntries = useMemo(() => {
-    if (!payload) return [];
-    const byBenchmark = payload.normalized_series?.benchmarks || {};
-    return Object.entries(byBenchmark)
-      .filter(([, series]) => Array.isArray(series) && series.length > 1)
-      .sort((left, right) => {
-        const leftIndex = BENCHMARK_OPTIONS.indexOf(left[0] as (typeof BENCHMARK_OPTIONS)[number]);
-        const rightIndex = BENCHMARK_OPTIONS.indexOf(right[0] as (typeof BENCHMARK_OPTIONS)[number]);
-        const leftRank = leftIndex === -1 ? Number.POSITIVE_INFINITY : leftIndex;
-        const rightRank = rightIndex === -1 ? Number.POSITIVE_INFINITY : rightIndex;
-        return leftRank - rightRank;
-      });
-  }, [payload]);
+  }, [payload, visibleSelectionRows, t]);
 
   const normalizedChartRows = useMemo<NormalizedChartRow[]>(() => {
     if (!payload) return [];
@@ -166,8 +438,7 @@ const BenchmarksPage = () => {
       byDate.get(date)!.portfolio = toNumber(point.value);
     }
 
-    // Merge every benchmark series by date so each line can render independently.
-    for (const [benchmark, series] of normalizedBenchmarkEntries) {
+    for (const [benchmark, series] of selectedNormalizedBenchmarkEntries) {
       for (const point of series || []) {
         const date = String(point.date || '');
         if (!date) continue;
@@ -178,26 +449,24 @@ const BenchmarksPage = () => {
 
     return Array.from(byDate.values())
       .sort((left, right) => String(left.date).localeCompare(String(right.date)));
-  }, [normalizedBenchmarkEntries, payload]);
+  }, [payload, selectedNormalizedBenchmarkEntries]);
 
   const normalizedSeriesMissing = useMemo(() => {
-    if (!payload) return [];
-    const available = new Set(normalizedBenchmarkEntries.map(([benchmark]) => String(benchmark || '').toUpperCase()));
-    return payload.benchmarks
-      .map((item) => String(item.benchmark || '').toUpperCase())
-      .filter((benchmark, index, values) => values.indexOf(benchmark) === index)
-      .filter((benchmark) => !available.has(benchmark))
-      .map((benchmark) => benchmarkLabelByCode.get(benchmark) || benchmark);
-  }, [benchmarkLabelByCode, normalizedBenchmarkEntries, payload]);
+    const available = new Set(selectedNormalizedBenchmarkEntries.map(([benchmark]) => normalizeCode(benchmark)));
+    return selectionRows
+      .filter((row) => row.selected)
+      .filter((row) => !available.has(row.code))
+      .map((row) => row.label);
+  }, [selectedNormalizedBenchmarkEntries, selectionRows]);
 
   const colorBySeriesKey = useMemo(() => {
     const map = new Map<string, string>();
     map.set('portfolio', '#22d3ee');
-    normalizedBenchmarkEntries.forEach(([benchmark], index) => {
+    availableBenchmarkCodes.forEach((benchmark, index) => {
       map.set(benchmark, SERIES_COLORS[(index + 1) % SERIES_COLORS.length]);
     });
     return map;
-  }, [normalizedBenchmarkEntries]);
+  }, [availableBenchmarkCodes]);
 
   const formatTickDate = (date: string): string => {
     const parsed = parseIsoDateUtc(date);
@@ -207,6 +476,37 @@ const BenchmarksPage = () => {
       year: '2-digit',
       timeZone: 'UTC',
     });
+  };
+
+  const selectedBenchmarkReturn = toNumber(payload?.selected_benchmark?.return_pct);
+  const alphaValue = payload?.alpha === null || payload?.alpha === undefined
+    ? null
+    : toNumber(payload.alpha);
+
+  const selectedCount = visibleSelectionRows.filter((row) => row.selected).length;
+
+  const toggleBenchmark = (code: string, checked: boolean) => {
+    setSelectedBenchmarks((previous) => {
+      const next = new Set(previous.map((item) => normalizeCode(item)));
+      if (checked) {
+        next.add(code);
+      } else {
+        next.delete(code);
+      }
+      return availableBenchmarkCodes.filter((item) => next.has(item));
+    });
+  };
+
+  const selectAllBenchmarks = () => {
+    setSelectedBenchmarks([...visibleBenchmarkCodes]);
+  };
+
+  const clearAllBenchmarks = () => {
+    setSelectedBenchmarks([]);
+  };
+
+  const resetToDefaultBenchmarks = () => {
+    setSelectedBenchmarks(resolveDefaultBenchmarkSelection(visibleBenchmarkCodes));
   };
 
   return (
@@ -225,14 +525,6 @@ const BenchmarksPage = () => {
                 size="sm"
               />
             )}
-            <SharedDropdown
-              value={selectedBenchmark}
-              options={benchmarkOptions}
-              onChange={(value) => setSelectedBenchmark(value as (typeof BENCHMARK_OPTIONS)[number])}
-              ariaLabel={t('benchmarks.selectBenchmark')}
-              className="benchmarks-page__dropdown"
-              size="sm"
-            />
             <SharedDropdown
               value={selectedPeriod}
               options={periodOptions}
@@ -289,6 +581,38 @@ const BenchmarksPage = () => {
             <section className="benchmarks-card">
               <header className="benchmarks-card__header">
                 <h2>{t('benchmarks.sections.normalized')}</h2>
+                <div className="benchmarks-selection__actions">
+                  <span className="benchmarks-selection__summary">
+                    {t('benchmarks.selection.selectedSummary', {
+                      selected: selectedCount,
+                      total: visibleBenchmarkCodes.length,
+                    })}
+                  </span>
+                  <button
+                    type="button"
+                    className="benchmarks-selection__btn"
+                    onClick={selectAllBenchmarks}
+                    disabled={selectedCount === visibleBenchmarkCodes.length}
+                  >
+                    {t('benchmarks.selection.selectAll')}
+                  </button>
+                  <button
+                    type="button"
+                    className="benchmarks-selection__btn"
+                    onClick={clearAllBenchmarks}
+                    disabled={selectedCount === 0}
+                  >
+                    {t('benchmarks.selection.clearAll')}
+                  </button>
+                  <button
+                    type="button"
+                    className="benchmarks-selection__btn"
+                    onClick={resetToDefaultBenchmarks}
+                    disabled={visibleBenchmarkCodes.length === 0}
+                  >
+                    {t('benchmarks.selection.resetDefault')}
+                  </button>
+                </div>
               </header>
               {normalizedChartRows.length === 0 ? (
                 <p className="benchmarks-card__empty">{t('benchmarks.noNormalizedSeries')}</p>
@@ -324,7 +648,7 @@ const BenchmarksPage = () => {
                         dot={false}
                         isAnimationActive={false}
                       />
-                      {normalizedBenchmarkEntries.map(([benchmark]) => (
+                      {selectedNormalizedBenchmarkEntries.map(([benchmark]) => (
                         <Line
                           key={`line-${benchmark}`}
                           type="monotone"
@@ -348,7 +672,7 @@ const BenchmarksPage = () => {
               )}
             </section>
 
-            <section className="benchmarks-card benchmarks-card--half">
+            <section className="benchmarks-card">
               <header className="benchmarks-card__header">
                 <h2>{t('benchmarks.sections.returns')}</h2>
               </header>
@@ -369,6 +693,7 @@ const BenchmarksPage = () => {
                     <Bar dataKey="returnPct" isAnimationActive={false}>
                       {returnRows.map((row) => {
                         if (row.isPortfolio) return <Cell key={`return-${row.key}`} fill="#22d3ee" />;
+                        if (!row.hasSeries) return <Cell key={`return-${row.key}`} fill="rgba(148, 163, 184, 0.35)" />;
                         if (row.isSelected) return <Cell key={`return-${row.key}`} fill="#818cf8" />;
                         return <Cell key={`return-${row.key}`} fill={row.returnPct >= 0 ? '#34d399' : '#f87171'} />;
                       })}
@@ -378,36 +703,101 @@ const BenchmarksPage = () => {
               )}
             </section>
 
-            <section className="benchmarks-card benchmarks-card--half">
+            <section className="benchmarks-card">
               <header className="benchmarks-card__header">
                 <h2>{t('benchmarks.sections.details')}</h2>
               </header>
-              {returnRows.length === 0 ? (
+              {visibleSelectionRows.length === 0 ? (
                 <p className="benchmarks-card__empty">{t('benchmarks.noSeries')}</p>
               ) : (
-                <div className="benchmarks-table-wrapper">
-                  <table className="benchmarks-table">
-                    <thead>
-                      <tr>
-                        <th>{t('benchmarks.table.benchmark')}</th>
-                        <th>{t('benchmarks.table.returnPct')}</th>
-                        <th>{t('benchmarks.table.alphaVsPortfolio')}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {returnRows.map((row) => (
-                        <tr key={`detail-${row.key}`} className={row.isSelected ? 'benchmarks-table__row--selected' : ''}>
-                          <td>{row.label}</td>
-                          <td className={row.returnPct >= 0 ? 'benchmarks-table__value benchmarks-table__value--positive' : 'benchmarks-table__value benchmarks-table__value--negative'}>
-                            {formatSignedPercent(row.returnPct)}
-                          </td>
-                          <td className={row.alphaVsPortfolio >= 0 ? 'benchmarks-table__value benchmarks-table__value--positive' : 'benchmarks-table__value benchmarks-table__value--negative'}>
-                            {row.isPortfolio ? '—' : formatSignedPercent(row.alphaVsPortfolio)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="benchmarks-groups">
+                  {groupedSelectionRows.map((group) => (
+                    <article key={group.id} className="benchmarks-group">
+                      <header className="benchmarks-group__header">
+                        <h3>{group.label}</h3>
+                        <span>{t('benchmarks.groups.count', { count: group.rows.length })}</span>
+                      </header>
+                      <div className="benchmarks-table-wrapper">
+                        <table className="benchmarks-table">
+                          <thead>
+                            <tr>
+                              <th className="benchmarks-table__checkbox-col">{t('benchmarks.table.visible')}</th>
+                              <th>{t('benchmarks.table.benchmark')}</th>
+                              <th>{t('benchmarks.table.returnPct')}</th>
+                              <th>{t('benchmarks.table.alphaVsPortfolio')}</th>
+                              <th>{t('benchmarks.table.points')}</th>
+                              <th>{t('benchmarks.table.monthMin')}</th>
+                              <th>{t('benchmarks.table.monthMax')}</th>
+                              <th>{t('benchmarks.table.week52Min')}</th>
+                              <th>{t('benchmarks.table.week52Max')}</th>
+                              <th>{t('benchmarks.table.series')}</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {group.rows.map((row) => (
+                              <tr key={`detail-${group.id}-${row.code}`} className={row.selected ? 'benchmarks-table__row--selected' : ''}>
+                                <td className="benchmarks-table__checkbox-col">
+                                  <input
+                                    type="checkbox"
+                                    className="benchmarks-table__checkbox"
+                                    checked={row.selected}
+                                    onChange={(event) => toggleBenchmark(row.code, event.target.checked)}
+                                    aria-label={t('benchmarks.selection.toggleOne', { benchmark: row.label })}
+                                  />
+                                </td>
+                                <td>
+                                  <div className="benchmarks-table__benchmark-cell">
+                                    <span>{row.label}</span>
+                                    {row.symbol ? <small>{row.symbol}</small> : null}
+                                  </div>
+                                </td>
+                                <td className={
+                                  row.returnPct === null
+                                    ? 'benchmarks-table__value'
+                                    : row.returnPct >= 0
+                                      ? 'benchmarks-table__value benchmarks-table__value--positive'
+                                      : 'benchmarks-table__value benchmarks-table__value--negative'
+                                }
+                                >
+                                  {row.returnPct === null ? '—' : formatSignedPercent(row.returnPct)}
+                                </td>
+                                <td className={
+                                  row.alphaVsPortfolio === null
+                                    ? 'benchmarks-table__value'
+                                    : row.alphaVsPortfolio >= 0
+                                      ? 'benchmarks-table__value benchmarks-table__value--positive'
+                                      : 'benchmarks-table__value benchmarks-table__value--negative'
+                                }
+                                >
+                                  {row.alphaVsPortfolio === null ? '—' : formatSignedPercent(row.alphaVsPortfolio)}
+                                </td>
+                                <td className="benchmarks-table__value">
+                                  {formatPoints(row.currentPoints)}
+                                </td>
+                                <td className="benchmarks-table__value">
+                                  {formatPoints(row.monthMin)}
+                                </td>
+                                <td className="benchmarks-table__value">
+                                  {formatPoints(row.monthMax)}
+                                </td>
+                                <td className="benchmarks-table__value">
+                                  {formatPoints(row.week52Min)}
+                                </td>
+                                <td className="benchmarks-table__value">
+                                  {formatPoints(row.week52Max)}
+                                </td>
+                                <td>
+                                  {row.hasSeries
+                                    ? t('benchmarks.selection.seriesAvailable')
+                                    : t('benchmarks.selection.seriesUnavailable')}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </article>
+                  ))}
                 </div>
               )}
             </section>

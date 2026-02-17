@@ -160,16 +160,88 @@
   }
 }
 
+.benchmarks-selection {
+  &__actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.42rem;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  &__summary {
+    color: var(--text-secondary);
+    font-size: 0.76rem;
+    margin-right: 0.2rem;
+  }
+
+  &__btn {
+    border: 1px solid rgba(148, 163, 184, 0.32);
+    background: rgba(15, 23, 42, 0.26);
+    color: var(--text-primary);
+    border-radius: 999px;
+    padding: 0.34rem 0.62rem;
+    font-size: 0.73rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+
+    &:hover:not(:disabled) {
+      background: rgba(59, 130, 246, 0.16);
+      border-color: rgba(59, 130, 246, 0.5);
+    }
+
+    &:disabled {
+      opacity: 0.52;
+      cursor: not-allowed;
+    }
+  }
+}
+
 .benchmarks-table-wrapper {
   overflow: auto;
   border-radius: 12px;
   border: 1px solid var(--glass-border);
 }
 
+.benchmarks-groups {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-md;
+}
+
+.benchmarks-group {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
+}
+
+.benchmarks-group__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-sm;
+
+  h3 {
+    margin: 0;
+    font-size: 0.92rem;
+    color: var(--text-primary);
+    letter-spacing: 0.2px;
+  }
+
+  span {
+    color: var(--text-secondary);
+    font-size: 0.74rem;
+    text-transform: uppercase;
+    letter-spacing: 0.35px;
+    font-weight: 600;
+  }
+}
+
 .benchmarks-table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 520px;
+  min-width: 1160px;
 
   th,
   td {
@@ -199,6 +271,31 @@
 
   &__row--selected {
     background: rgba(99, 102, 241, 0.14);
+  }
+
+  &__checkbox-col {
+    width: 56px;
+    text-align: center;
+  }
+
+  &__checkbox {
+    width: 16px;
+    height: 16px;
+    accent-color: #818cf8;
+    cursor: pointer;
+  }
+
+  &__benchmark-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 0.12rem;
+
+    small {
+      color: var(--text-secondary);
+      font-size: 0.7rem;
+      letter-spacing: 0.2px;
+      text-transform: uppercase;
+    }
   }
 
   &__value {
