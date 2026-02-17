@@ -212,6 +212,39 @@
     font-size: 0.8rem;
   }
 
+  &__import-report {
+    display: flex;
+    flex-direction: column;
+    gap: 0.44rem;
+  }
+
+  &__import-report-section {
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    border-radius: 10px;
+    background: rgba(15, 23, 42, 0.2);
+    overflow: hidden;
+
+    summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 0.52rem 0.66rem;
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: var(--text-primary);
+      border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+      background: rgba(15, 23, 42, 0.3);
+    }
+
+    summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .documents-page__table-wrap {
+      border: 0;
+      border-radius: 0;
+    }
+  }
+
   &__state {
     padding: $spacing-lg;
     text-align: center;

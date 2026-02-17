@@ -319,6 +319,19 @@ const DocumentsPage = () => {
     t(`documents.import.warnings.${warning}`, { defaultValue: warning })
   ), [t]);
 
+  const reasonLabel = useCallback((reason?: string) => (
+    reason
+      ? t(`documents.import.reasons.${reason}`, { defaultValue: reason })
+      : t('assets.modal.noValue')
+  ), [t]);
+
+  const formatDateCell = useCallback((value?: string | null) => {
+    if (!value) return t('assets.modal.noValue');
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return value;
+    return parsed.toLocaleDateString(numberLocale);
+  }, [numberLocale, t]);
+
   const exportTransactionsCsv = useCallback(() => {
     if (!selectedPortfolio || transactions.length === 0) {
       setGenerateMessage(t('documents.movementCsvError'));
@@ -551,6 +564,288 @@ const DocumentsPage = () => {
                   ))}
                 </ul>
               ) : null}
+
+              <div className="documents-page__import-report">
+                <details className="documents-page__import-report-section" open>
+                  <summary>
+                    {t('documents.import.report.assetsCreated', { count: importSummary.report.assets.created.length })}
+                  </summary>
+                  <div className="documents-page__table-wrap">
+                    <table className="documents-page__table">
+                      <thead>
+                        <tr>
+                          <th>{t('documents.import.report.table.ticker')}</th>
+                          <th>{t('documents.import.report.table.name')}</th>
+                          <th>{t('documents.import.report.table.class')}</th>
+                          <th>{t('documents.import.report.table.quantity')}</th>
+                          <th>{t('documents.import.report.table.status')}</th>
+                          <th>{t('documents.import.report.table.reason')}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importSummary.report.assets.created.length === 0 ? (
+                          <tr>
+                            <td colSpan={6}>{t('documents.import.report.empty')}</td>
+                          </tr>
+                        ) : importSummary.report.assets.created.map((entry, index) => (
+                          <tr key={`${entry.assetId || entry.ticker || 'asset-created'}-${index}`}>
+                            <td>{entry.ticker || t('assets.modal.noValue')}</td>
+                            <td>{entry.name || t('assets.modal.noValue')}</td>
+                            <td>{entry.assetClass || t('assets.modal.noValue')}</td>
+                            <td>{entry.quantity}</td>
+                            <td>{entry.status || t('assets.modal.noValue')}</td>
+                            <td>{reasonLabel(entry.reason)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
+
+                <details className="documents-page__import-report-section">
+                  <summary>
+                    {t('documents.import.report.assetsUpdated', { count: importSummary.report.assets.updated.length })}
+                  </summary>
+                  <div className="documents-page__table-wrap">
+                    <table className="documents-page__table">
+                      <thead>
+                        <tr>
+                          <th>{t('documents.import.report.table.ticker')}</th>
+                          <th>{t('documents.import.report.table.name')}</th>
+                          <th>{t('documents.import.report.table.class')}</th>
+                          <th>{t('documents.import.report.table.quantity')}</th>
+                          <th>{t('documents.import.report.table.status')}</th>
+                          <th>{t('documents.import.report.table.reason')}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importSummary.report.assets.updated.length === 0 ? (
+                          <tr>
+                            <td colSpan={6}>{t('documents.import.report.empty')}</td>
+                          </tr>
+                        ) : importSummary.report.assets.updated.map((entry, index) => (
+                          <tr key={`${entry.assetId || entry.ticker || 'asset-updated'}-${index}`}>
+                            <td>{entry.ticker || t('assets.modal.noValue')}</td>
+                            <td>{entry.name || t('assets.modal.noValue')}</td>
+                            <td>{entry.assetClass || t('assets.modal.noValue')}</td>
+                            <td>{entry.quantity}</td>
+                            <td>{entry.status || t('assets.modal.noValue')}</td>
+                            <td>{reasonLabel(entry.reason)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
+
+                <details className="documents-page__import-report-section">
+                  <summary>
+                    {t('documents.import.report.assetsSkipped', { count: importSummary.report.assets.skipped.length })}
+                  </summary>
+                  <div className="documents-page__table-wrap">
+                    <table className="documents-page__table">
+                      <thead>
+                        <tr>
+                          <th>{t('documents.import.report.table.ticker')}</th>
+                          <th>{t('documents.import.report.table.name')}</th>
+                          <th>{t('documents.import.report.table.class')}</th>
+                          <th>{t('documents.import.report.table.quantity')}</th>
+                          <th>{t('documents.import.report.table.status')}</th>
+                          <th>{t('documents.import.report.table.reason')}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importSummary.report.assets.skipped.length === 0 ? (
+                          <tr>
+                            <td colSpan={6}>{t('documents.import.report.empty')}</td>
+                          </tr>
+                        ) : importSummary.report.assets.skipped.map((entry, index) => (
+                          <tr key={`${entry.assetId || entry.ticker || 'asset-skipped'}-${index}`}>
+                            <td>{entry.ticker || t('assets.modal.noValue')}</td>
+                            <td>{entry.name || t('assets.modal.noValue')}</td>
+                            <td>{entry.assetClass || t('assets.modal.noValue')}</td>
+                            <td>{entry.quantity}</td>
+                            <td>{entry.status || t('assets.modal.noValue')}</td>
+                            <td>{reasonLabel(entry.reason)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
+
+                <details className="documents-page__import-report-section" open>
+                  <summary>
+                    {t('documents.import.report.transactionsCreated', { count: importSummary.report.transactions.created.length })}
+                  </summary>
+                  <div className="documents-page__table-wrap">
+                    <table className="documents-page__table">
+                      <thead>
+                        <tr>
+                          <th>{t('documents.import.report.table.ticker')}</th>
+                          <th>{t('documents.import.report.table.type')}</th>
+                          <th>{t('documents.import.report.table.date')}</th>
+                          <th>{t('documents.import.report.table.quantity')}</th>
+                          <th>{t('documents.import.report.table.amount')}</th>
+                          <th>{t('documents.import.report.table.reason')}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importSummary.report.transactions.created.length === 0 ? (
+                          <tr>
+                            <td colSpan={6}>{t('documents.import.report.empty')}</td>
+                          </tr>
+                        ) : importSummary.report.transactions.created.map((entry, index) => (
+                          <tr key={`${entry.transId || entry.dedupKey || 'trans-created'}-${index}`}>
+                            <td>{entry.ticker || t('assets.modal.noValue')}</td>
+                            <td>{entry.type || t('assets.modal.noValue')}</td>
+                            <td>{formatDateCell(entry.date)}</td>
+                            <td>{entry.quantity}</td>
+                            <td>{`${entry.currency || 'BRL'} ${entry.amount}`}</td>
+                            <td>{reasonLabel(entry.reason)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
+
+                <details className="documents-page__import-report-section">
+                  <summary>
+                    {t('documents.import.report.transactionsSkipped', { count: importSummary.report.transactions.skipped.length })}
+                  </summary>
+                  <div className="documents-page__table-wrap">
+                    <table className="documents-page__table">
+                      <thead>
+                        <tr>
+                          <th>{t('documents.import.report.table.ticker')}</th>
+                          <th>{t('documents.import.report.table.type')}</th>
+                          <th>{t('documents.import.report.table.date')}</th>
+                          <th>{t('documents.import.report.table.quantity')}</th>
+                          <th>{t('documents.import.report.table.amount')}</th>
+                          <th>{t('documents.import.report.table.reason')}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importSummary.report.transactions.skipped.length === 0 ? (
+                          <tr>
+                            <td colSpan={6}>{t('documents.import.report.empty')}</td>
+                          </tr>
+                        ) : importSummary.report.transactions.skipped.map((entry, index) => (
+                          <tr key={`${entry.dedupKey || `${entry.ticker}-${entry.date}-${index}`}`}>
+                            <td>{entry.ticker || t('assets.modal.noValue')}</td>
+                            <td>{entry.type || t('assets.modal.noValue')}</td>
+                            <td>{formatDateCell(entry.date)}</td>
+                            <td>{entry.quantity}</td>
+                            <td>{`${entry.currency || 'BRL'} ${entry.amount}`}</td>
+                            <td>{reasonLabel(entry.reason)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
+
+                <details className="documents-page__import-report-section">
+                  <summary>
+                    {t('documents.import.report.transactionsFiltered', { count: importSummary.report.transactions.filtered.length })}
+                  </summary>
+                  <div className="documents-page__table-wrap">
+                    <table className="documents-page__table">
+                      <thead>
+                        <tr>
+                          <th>{t('documents.import.report.table.ticker')}</th>
+                          <th>{t('documents.import.report.table.type')}</th>
+                          <th>{t('documents.import.report.table.date')}</th>
+                          <th>{t('documents.import.report.table.quantity')}</th>
+                          <th>{t('documents.import.report.table.amount')}</th>
+                          <th>{t('documents.import.report.table.reason')}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importSummary.report.transactions.filtered.length === 0 ? (
+                          <tr>
+                            <td colSpan={6}>{t('documents.import.report.empty')}</td>
+                          </tr>
+                        ) : importSummary.report.transactions.filtered.map((entry, index) => (
+                          <tr key={`${entry.dedupKey || `${entry.ticker}-${entry.date}-${index}`}`}>
+                            <td>{entry.ticker || t('assets.modal.noValue')}</td>
+                            <td>{entry.type || t('assets.modal.noValue')}</td>
+                            <td>{formatDateCell(entry.date)}</td>
+                            <td>{entry.quantity}</td>
+                            <td>{`${entry.currency || 'BRL'} ${entry.amount}`}</td>
+                            <td>{reasonLabel(entry.reason)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
+
+                <details className="documents-page__import-report-section" open>
+                  <summary>
+                    {t('documents.import.report.aliasesCreated', { count: importSummary.report.aliases.created.length })}
+                  </summary>
+                  <div className="documents-page__table-wrap">
+                    <table className="documents-page__table">
+                      <thead>
+                        <tr>
+                          <th>{t('documents.import.report.table.alias')}</th>
+                          <th>{t('documents.import.report.table.ticker')}</th>
+                          <th>{t('documents.import.report.table.source')}</th>
+                          <th>{t('documents.import.report.table.reason')}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importSummary.report.aliases.created.length === 0 ? (
+                          <tr>
+                            <td colSpan={4}>{t('documents.import.report.empty')}</td>
+                          </tr>
+                        ) : importSummary.report.aliases.created.map((entry, index) => (
+                          <tr key={`${entry.normalizedName || 'alias-created'}-${entry.ticker || index}`}>
+                            <td>{entry.normalizedName || t('assets.modal.noValue')}</td>
+                            <td>{entry.ticker || t('assets.modal.noValue')}</td>
+                            <td>{entry.source || t('assets.modal.noValue')}</td>
+                            <td>{reasonLabel(entry.reason)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
+
+                <details className="documents-page__import-report-section">
+                  <summary>
+                    {t('documents.import.report.aliasesSkipped', { count: importSummary.report.aliases.skipped.length })}
+                  </summary>
+                  <div className="documents-page__table-wrap">
+                    <table className="documents-page__table">
+                      <thead>
+                        <tr>
+                          <th>{t('documents.import.report.table.alias')}</th>
+                          <th>{t('documents.import.report.table.ticker')}</th>
+                          <th>{t('documents.import.report.table.source')}</th>
+                          <th>{t('documents.import.report.table.reason')}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importSummary.report.aliases.skipped.length === 0 ? (
+                          <tr>
+                            <td colSpan={4}>{t('documents.import.report.empty')}</td>
+                          </tr>
+                        ) : importSummary.report.aliases.skipped.map((entry, index) => (
+                          <tr key={`${entry.normalizedName || 'alias-skipped'}-${entry.ticker || index}`}>
+                            <td>{entry.normalizedName || t('assets.modal.noValue')}</td>
+                            <td>{entry.ticker || t('assets.modal.noValue')}</td>
+                            <td>{entry.source || t('assets.modal.noValue')}</td>
+                            <td>{reasonLabel(entry.reason)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
+              </div>
             </div>
           ) : null}
         </section>

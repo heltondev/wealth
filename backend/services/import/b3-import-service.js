@@ -255,6 +255,44 @@ const createPlaceholderAsset = async ({
 	return { assetId, item };
 };
 
+const toAssetReportEntry = (asset, extra = {}) => ({
+	assetId: asset?.assetId || null,
+	ticker: normalizeTicker(asset?.ticker),
+	name: String(asset?.name || '').trim() || null,
+	assetClass: String(asset?.assetClass || '').trim().toLowerCase() || null,
+	country: String(asset?.country || '').trim().toUpperCase() || null,
+	currency: String(asset?.currency || '').trim().toUpperCase() || null,
+	quantity: toFiniteNumber(asset?.quantity, 0),
+	currentPrice: Number.isFinite(Number(asset?.currentPrice))
+		? Number(asset.currentPrice)
+		: null,
+	currentValue: Number.isFinite(Number(asset?.currentValue))
+		? Number(asset.currentValue)
+		: null,
+	status: String(asset?.status || '').trim().toLowerCase() || null,
+	...extra,
+});
+
+const toTransactionReportEntry = (transaction, extra = {}) => ({
+	transId: transaction?.transId || null,
+	ticker: normalizeTicker(transaction?.ticker),
+	type: String(transaction?.type || '').trim().toLowerCase() || null,
+	date: String(transaction?.date || '').slice(0, 10) || null,
+	quantity: parseTransactionQuantity(transaction?.quantity),
+	price: toFiniteNumber(transaction?.price, 0),
+	amount: toFiniteNumber(transaction?.amount, 0),
+	currency: String(transaction?.currency || 'BRL').trim().toUpperCase() || 'BRL',
+	source: String(transaction?.sourceDocId || transaction?.source || '').trim() || null,
+	...extra,
+});
+
+const toAliasReportEntry = (alias, extra = {}) => ({
+	normalizedName: String(alias?.normalizedName || '').trim().toLowerCase() || null,
+	ticker: normalizeTicker(alias?.ticker),
+	source: String(alias?.source || '').trim().toLowerCase() || null,
+	...extra,
+});
+
 const upsertImportedAssets = async ({
 	dynamo,
 	tableName,
@@ -265,6 +303,7 @@ const upsertImportedAssets = async ({
 	importedAssetsByTicker,
 	existingAssetsByTicker,
 	stats,
+	report,
 }) => {
 	const authoritativeSnapshot = AUTHORITATIVE_SNAPSHOT_PARSERS.has(parserId);
 
@@ -277,6 +316,25 @@ const upsertImportedAssets = async ({
 		if (existing) {
 			if (!authoritativeSnapshot) {
 				stats.assets.skipped += 1;
+				report.assets.skipped.push(
+					toAssetReportEntry(
+						{
+							assetId: existing.assetId,
+							ticker,
+							name: importedAsset.name || ticker,
+							assetClass:
+								importedAsset.assetClass
+								|| BaseParser.inferAssetClass(ticker, importedAsset.name || ''),
+							country: importedAsset.country || 'BR',
+							currency: importedAsset.currency || 'BRL',
+							quantity,
+							currentPrice,
+							currentValue,
+							status: existing?.item?.status || 'active',
+						},
+						{ reason: 'existing_asset_not_snapshot_source' }
+					)
+				);
 				continue;
 			}
 
@@ -308,6 +366,25 @@ const upsertImportedAssets = async ({
 				})
 			);
 			stats.assets.updated += 1;
+			report.assets.updated.push(
+				toAssetReportEntry(
+					{
+						assetId: existing.assetId,
+						ticker,
+						name: importedAsset.name || ticker,
+						assetClass:
+							importedAsset.assetClass
+							|| BaseParser.inferAssetClass(ticker, importedAsset.name || ''),
+						country: importedAsset.country || 'BR',
+						currency: importedAsset.currency || 'BRL',
+						quantity,
+						currentPrice,
+						currentValue,
+						status: 'active',
+					},
+					{ reason: 'updated_from_authoritative_snapshot' }
+				)
+			);
 			continue;
 		}
 
@@ -341,6 +418,13 @@ const upsertImportedAssets = async ({
 
 		existingAssetsByTicker.set(ticker, { assetId, item });
 		stats.assets.created += 1;
+		report.assets.created.push(
+			toAssetReportEntry(item, {
+				reason: authoritativeSnapshot
+					? 'created_from_authoritative_snapshot'
+					: 'created_from_non_snapshot_import',
+			})
+		);
 	}
 };
 
@@ -357,6 +441,7 @@ const importTransactions = async ({
 	hasDetailedNegotiationTrades,
 	hasDetailedIncomeEvents,
 	stats,
+	report,
 }) => {
 	const intraImportKeys = new Set();
 	const authoritativeSnapshot = AUTHORITATIVE_SNAPSHOT_PARSERS.has(parserId);
@@ -367,6 +452,11 @@ const importTransactions = async ({
 		const type = String(rawTransaction?.type || '').trim().toLowerCase();
 		if (!ticker || !date || !type) {
 			stats.transactions.skipped += 1;
+			report.transactions.skipped.push(
+				toTransactionReportEntry(rawTransaction, {
+					reason: 'invalid_transaction_record',
+				})
+			);
 			continue;
 		}
 
@@ -376,6 +466,11 @@ const importTransactions = async ({
 			&& RELATORIO_TRADE_TYPES.has(type)
 		) {
 			stats.transactions.filtered += 1;
+			report.transactions.filtered.push(
+				toTransactionReportEntry(rawTransaction, {
+					reason: 'filtered_relatorio_duplicate_source',
+				})
+			);
 			continue;
 		}
 
@@ -385,6 +480,11 @@ const importTransactions = async ({
 			&& RELATORIO_INCOME_TYPES.has(type)
 		) {
 			stats.transactions.filtered += 1;
+			report.transactions.filtered.push(
+				toTransactionReportEntry(rawTransaction, {
+					reason: 'filtered_relatorio_duplicate_source',
+				})
+			);
 			continue;
 		}
 
@@ -394,6 +494,12 @@ const importTransactions = async ({
 
 		if (existingTransactionKeys.has(dedupKey) || intraImportKeys.has(dedupKey)) {
 			stats.transactions.skipped += 1;
+			report.transactions.skipped.push(
+				toTransactionReportEntry(rawTransaction, {
+					reason: 'duplicate_transaction',
+					dedupKey,
+				})
+			);
 			continue;
 		}
 
@@ -410,6 +516,11 @@ const importTransactions = async ({
 			});
 			existingAssetsByTicker.set(ticker, assetRef);
 			stats.assets.created += 1;
+			report.assets.created.push(
+				toAssetReportEntry(assetRef.item, {
+					reason: 'auto_created_from_transaction',
+				})
+			);
 		}
 
 		const transId = generateId();
@@ -444,6 +555,12 @@ const importTransactions = async ({
 		existingTransactionKeys.add(dedupKey);
 		intraImportKeys.add(dedupKey);
 		stats.transactions.created += 1;
+		report.transactions.created.push(
+			toTransactionReportEntry(item, {
+				reason: 'created',
+				dedupKey,
+			})
+		);
 	}
 };
 
@@ -454,18 +571,30 @@ const importAliases = async ({
 	parsedAliases,
 	existingAliasKeys,
 	stats,
+	report,
 }) => {
 	for (const rawAlias of parsedAliases || []) {
 		const normalizedName = String(rawAlias?.normalizedName || '').trim().toLowerCase();
 		const ticker = normalizeTicker(rawAlias?.ticker);
 		if (!normalizedName || !ticker) {
 			stats.aliases.skipped += 1;
+			report.aliases.skipped.push(
+				toAliasReportEntry(rawAlias, {
+					reason: 'invalid_alias_record',
+				})
+			);
 			continue;
 		}
 
 		const aliasKey = `${normalizedName}|${ticker}`;
 		if (existingAliasKeys.has(aliasKey)) {
 			stats.aliases.skipped += 1;
+			report.aliases.skipped.push(
+				toAliasReportEntry(
+					{ normalizedName, ticker, source: rawAlias?.source || 'b3' },
+					{ reason: 'duplicate_alias' }
+				)
+			);
 			continue;
 		}
 
@@ -485,6 +614,12 @@ const importAliases = async ({
 
 		existingAliasKeys.add(aliasKey);
 		stats.aliases.created += 1;
+		report.aliases.created.push(
+			toAliasReportEntry(
+				{ normalizedName, ticker, source: rawAlias?.source || 'b3' },
+				{ reason: 'created' }
+			)
+		);
 	}
 };
 
@@ -529,6 +664,22 @@ async function importParsedB3({
 			skipped: 0,
 		},
 	};
+	const report = {
+		assets: {
+			created: [],
+			updated: [],
+			skipped: [],
+		},
+		transactions: {
+			created: [],
+			skipped: [],
+			filtered: [],
+		},
+		aliases: {
+			created: [],
+			skipped: [],
+		},
+	};
 
 	await upsertImportedAssets({
 		dynamo,
@@ -540,6 +691,7 @@ async function importParsedB3({
 		importedAssetsByTicker,
 		existingAssetsByTicker,
 		stats,
+		report,
 	});
 
 	await importTransactions({
@@ -555,6 +707,7 @@ async function importParsedB3({
 		hasDetailedNegotiationTrades: existingTransactions.hasDetailedNegotiationTrades,
 		hasDetailedIncomeEvents: existingTransactions.hasDetailedIncomeEvents,
 		stats,
+		report,
 	});
 
 	await importAliases({
@@ -564,6 +717,7 @@ async function importParsedB3({
 		parsedAliases,
 		existingAliasKeys,
 		stats,
+		report,
 	});
 
 	const warnings = [];
@@ -579,6 +733,7 @@ async function importParsedB3({
 		sourceFile,
 		importedAt: now,
 		stats,
+		report,
 		warnings,
 	};
 }

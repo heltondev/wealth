@@ -973,6 +973,43 @@
       },
       "warnings": {
         "relatorio_transactions_filtered_due_to_detailed_sources": "Transações do relatório consolidado foram filtradas porque já existem fontes detalhadas (negociação/movimentação)."
+      },
+      "report": {
+        "assetsCreated": "Ativos criados ({{count}})",
+        "assetsUpdated": "Ativos atualizados ({{count}})",
+        "assetsSkipped": "Ativos ignorados/duplicados ({{count}})",
+        "transactionsCreated": "Transações criadas ({{count}})",
+        "transactionsSkipped": "Transações ignoradas/duplicadas ({{count}})",
+        "transactionsFiltered": "Transações filtradas ({{count}})",
+        "aliasesCreated": "Aliases criados ({{count}})",
+        "aliasesSkipped": "Aliases ignorados/duplicados ({{count}})",
+        "empty": "Nenhum registro nesta seção.",
+        "table": {
+          "ticker": "Ticker",
+          "name": "Nome",
+          "class": "Classe",
+          "quantity": "Quantidade",
+          "status": "Status",
+          "reason": "Motivo",
+          "type": "Tipo",
+          "date": "Data",
+          "amount": "Valor",
+          "alias": "Alias",
+          "source": "Fonte"
+        }
+      },
+      "reasons": {
+        "existing_asset_not_snapshot_source": "Ativo já existente (arquivo atual não é snapshot autoritativo).",
+        "updated_from_authoritative_snapshot": "Atualizado a partir de snapshot autoritativo.",
+        "created_from_authoritative_snapshot": "Criado a partir de snapshot autoritativo.",
+        "created_from_non_snapshot_import": "Criado a partir de importação sem snapshot.",
+        "auto_created_from_transaction": "Criado automaticamente porque só apareceu nas transações.",
+        "invalid_transaction_record": "Registro inválido (ticker/data/tipo ausente).",
+        "filtered_relatorio_duplicate_source": "Filtrado por duplicidade com fonte detalhada (negociação/movimentação).",
+        "duplicate_transaction": "Transação duplicada.",
+        "created": "Criado.",
+        "invalid_alias_record": "Alias inválido (nome normalizado ou ticker ausente).",
+        "duplicate_alias": "Alias duplicado."
       }
     },
     "type": {

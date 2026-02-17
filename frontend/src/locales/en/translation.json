@@ -973,6 +973,43 @@
       },
       "warnings": {
         "relatorio_transactions_filtered_due_to_detailed_sources": "Consolidated report transactions were filtered because detailed sources already exist (negotiation/movements)."
+      },
+      "report": {
+        "assetsCreated": "Assets created ({{count}})",
+        "assetsUpdated": "Assets updated ({{count}})",
+        "assetsSkipped": "Assets skipped/duplicates ({{count}})",
+        "transactionsCreated": "Transactions created ({{count}})",
+        "transactionsSkipped": "Transactions skipped/duplicates ({{count}})",
+        "transactionsFiltered": "Transactions filtered ({{count}})",
+        "aliasesCreated": "Aliases created ({{count}})",
+        "aliasesSkipped": "Aliases skipped/duplicates ({{count}})",
+        "empty": "No records in this section.",
+        "table": {
+          "ticker": "Ticker",
+          "name": "Name",
+          "class": "Class",
+          "quantity": "Quantity",
+          "status": "Status",
+          "reason": "Reason",
+          "type": "Type",
+          "date": "Date",
+          "amount": "Amount",
+          "alias": "Alias",
+          "source": "Source"
+        }
+      },
+      "reasons": {
+        "existing_asset_not_snapshot_source": "Asset already exists (current file is not an authoritative snapshot).",
+        "updated_from_authoritative_snapshot": "Updated from authoritative snapshot.",
+        "created_from_authoritative_snapshot": "Created from authoritative snapshot.",
+        "created_from_non_snapshot_import": "Created from non-snapshot import.",
+        "auto_created_from_transaction": "Auto-created because it appeared only in transactions.",
+        "invalid_transaction_record": "Invalid record (missing ticker/date/type).",
+        "filtered_relatorio_duplicate_source": "Filtered due to duplicate coverage from detailed source (trades/movements).",
+        "duplicate_transaction": "Duplicate transaction.",
+        "created": "Created.",
+        "invalid_alias_record": "Invalid alias (missing normalized name or ticker).",
+        "duplicate_alias": "Duplicate alias."
       }
     },
     "type": {

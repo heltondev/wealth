@@ -496,6 +496,41 @@ export interface ImportStatsByEntity {
   filtered?: number;
 }
 
+export interface ImportAssetReportEntry {
+  assetId: string | null;
+  ticker: string | null;
+  name: string | null;
+  assetClass: string | null;
+  country: string | null;
+  currency: string | null;
+  quantity: number;
+  currentPrice: number | null;
+  currentValue: number | null;
+  status: string | null;
+  reason?: string;
+}
+
+export interface ImportTransactionReportEntry {
+  transId: string | null;
+  ticker: string | null;
+  type: string | null;
+  date: string | null;
+  quantity: number;
+  price: number;
+  amount: number;
+  currency: string;
+  source: string | null;
+  dedupKey?: string;
+  reason?: string;
+}
+
+export interface ImportAliasReportEntry {
+  normalizedName: string | null;
+  ticker: string | null;
+  source: string | null;
+  reason?: string;
+}
+
 export interface ImportB3Response {
   portfolioId: string;
   parser: string;
@@ -507,6 +542,22 @@ export interface ImportB3Response {
     assets: ImportStatsByEntity;
     transactions: ImportStatsByEntity;
     aliases: ImportStatsByEntity;
+  };
+  report: {
+    assets: {
+      created: ImportAssetReportEntry[];
+      updated: ImportAssetReportEntry[];
+      skipped: ImportAssetReportEntry[];
+    };
+    transactions: {
+      created: ImportTransactionReportEntry[];
+      skipped: ImportTransactionReportEntry[];
+      filtered: ImportTransactionReportEntry[];
+    };
+    aliases: {
+      created: ImportAliasReportEntry[];
+      skipped: ImportAliasReportEntry[];
+    };
   };
   warnings: string[];
 }
