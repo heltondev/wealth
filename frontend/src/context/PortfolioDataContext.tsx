@@ -7,7 +7,13 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { api, type Asset, type Portfolio, type Transaction } from '../services/api';
+import {
+  api,
+  type Asset,
+  type Portfolio,
+  type PortfolioEventNoticesResponse,
+  type Transaction,
+} from '../services/api';
 
 interface PortfolioMetricsData {
   marketValues: Record<string, number | null>;
@@ -24,7 +30,10 @@ interface PortfolioDataContextType {
   transactions: Transaction[];
   loading: boolean;
   metrics: PortfolioMetricsData | null;
+  eventNotices: PortfolioEventNoticesResponse | null;
+  eventNoticesLoading: boolean;
   refreshMetrics: () => void;
+  refreshEventNotices: () => void;
   refreshPortfolioData: () => Promise<void>;
 }
 
@@ -144,6 +153,8 @@ export const PortfolioDataProvider = ({ children }: { children: ReactNode }) => 
   const [metrics, setMetrics] = useState<PortfolioMetricsData | null>(() =>
     readMetricsFromStorage(readSelectedFromStorage())
   );
+  const [eventNotices, setEventNotices] = useState<PortfolioEventNoticesResponse | null>(null);
+  const [eventNoticesLoading, setEventNoticesLoading] = useState(false);
 
   const fetchPortfolioData = useCallback(async (portfolioId: string) => {
     const [assetItems, transactionItems] = await Promise.all([
@@ -158,6 +169,7 @@ export const PortfolioDataProvider = ({ children }: { children: ReactNode }) => 
     writeSelectedToStorage(id);
     const cached = readMetricsFromStorage(id);
     setMetrics(cached);
+    setEventNotices(null);
   }, []);
 
   // Load portfolios on mount.
@@ -223,6 +235,46 @@ export const PortfolioDataProvider = ({ children }: { children: ReactNode }) => 
       });
   }, []);
 
+  const fetchEventNotices = useCallback((portfolioId: string, forceRefresh = false) => {
+    if (!portfolioId) return;
+    setEventNoticesLoading(true);
+    const applyNotices = (payload: PortfolioEventNoticesResponse | null) => {
+      setSelectedPortfolioRaw((current) => {
+        if (current === portfolioId) {
+          setEventNotices(payload);
+        }
+        return current;
+      });
+    };
+    const loadNotices = () =>
+      api.getPortfolioEventNotices(portfolioId, 7)
+        .then((payload) => {
+          applyNotices(payload);
+        })
+        .catch(() => {
+          applyNotices(null);
+        });
+    loadNotices()
+      .finally(() => {
+        if (!forceRefresh) {
+          setEventNoticesLoading(false);
+          return;
+        }
+
+        api.refreshCorporateEvents({ portfolioId })
+          .then(() => undefined)
+          .catch(() => {
+            // Keep first notice payload on refresh failure.
+          })
+          .finally(() => {
+            loadNotices()
+              .finally(() => {
+                setEventNoticesLoading(false);
+              });
+          });
+      });
+  }, []);
+
   useEffect(() => {
     if (!selectedPortfolio) return;
     const cached = readMetricsFromStorage(selectedPortfolio);
@@ -233,9 +285,22 @@ export const PortfolioDataProvider = ({ children }: { children: ReactNode }) => 
     fetchMetrics(selectedPortfolio);
   }, [selectedPortfolio, assets.length, transactions.length, fetchMetrics]);
 
+  useEffect(() => {
+    if (!selectedPortfolio) {
+      setEventNotices(null);
+      setEventNoticesLoading(false);
+      return;
+    }
+    fetchEventNotices(selectedPortfolio, true);
+  }, [selectedPortfolio, fetchEventNotices]);
+
   const refreshMetrics = useCallback(() => {
     if (selectedPortfolio) fetchMetrics(selectedPortfolio);
   }, [fetchMetrics, selectedPortfolio]);
+
+  const refreshEventNotices = useCallback(() => {
+    if (selectedPortfolio) fetchEventNotices(selectedPortfolio, true);
+  }, [fetchEventNotices, selectedPortfolio]);
 
   const refreshPortfolioData = useCallback(async () => {
     if (!selectedPortfolio) return;
@@ -244,13 +309,14 @@ export const PortfolioDataProvider = ({ children }: { children: ReactNode }) => 
       const { assetItems, transactionItems } = await fetchPortfolioData(selectedPortfolio);
       setAssets(assetItems);
       setTransactions(transactionItems);
+      fetchEventNotices(selectedPortfolio, false);
     } catch {
       setAssets([]);
       setTransactions([]);
     } finally {
       setLoading(false);
     }
-  }, [fetchPortfolioData, selectedPortfolio]);
+  }, [fetchPortfolioData, fetchEventNotices, selectedPortfolio]);
 
   const value = useMemo<PortfolioDataContextType>(() => ({
     portfolios,
@@ -260,7 +326,10 @@ export const PortfolioDataProvider = ({ children }: { children: ReactNode }) => 
     transactions,
     loading,
     metrics,
+    eventNotices,
+    eventNoticesLoading,
     refreshMetrics,
+    refreshEventNotices,
     refreshPortfolioData,
   }), [
     portfolios,
@@ -270,7 +339,10 @@ export const PortfolioDataProvider = ({ children }: { children: ReactNode }) => 
     transactions,
     loading,
     metrics,
+    eventNotices,
+    eventNoticesLoading,
     refreshMetrics,
+    refreshEventNotices,
     refreshPortfolioData,
   ]);
 

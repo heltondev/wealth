@@ -448,6 +448,30 @@ test('handler GET /portfolios/{id}/tax delegates to platform service', async () 
 	}
 });
 
+test('handler GET /portfolios/{id}/event-notices delegates to platform service', async () => {
+	const original = platformService.getPortfolioEventNotices;
+	platformService.getPortfolioEventNotices = async (_userId, options) => ({
+		portfolioId: options.portfolioId,
+		today_count: 2,
+		week_count: 5,
+		today_events: [],
+		week_events: [],
+	});
+
+	try {
+		const response = await handler(
+			makeEvent('GET', '/portfolios/test-portfolio/event-notices', null, null, { lookaheadDays: '7' })
+		);
+		assert.equal(response.statusCode, 200);
+		const body = JSON.parse(response.body);
+		assert.equal(body.portfolioId, 'test-portfolio');
+		assert.equal(body.today_count, 2);
+		assert.equal(body.week_count, 5);
+	} finally {
+		platformService.getPortfolioEventNotices = original;
+	}
+});
+
 test('handler POST /jobs/economic-data/refresh delegates to platform service', async () => {
 	const original = platformService.fetchEconomicIndicators;
 	platformService.fetchEconomicIndicators = async () => ({

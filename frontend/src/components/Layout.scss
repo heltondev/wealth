@@ -42,6 +42,9 @@
   &__header {
     padding: $spacing-lg;
     border-bottom: 1px solid var(--glass-border);
+    display: flex;
+    flex-direction: column;
+    gap: $spacing-sm;
   }
 
   &__logo {
@@ -94,6 +97,63 @@
   &__label {
     font-size: 0.9rem;
     font-weight: 500;
+  }
+
+  &__notice {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    border: 1px solid rgba(148, 163, 184, 0.26);
+    border-radius: 999px;
+    padding: 0.24rem 0.52rem;
+    background: rgba(15, 23, 42, 0.24);
+    width: fit-content;
+    max-width: 100%;
+  }
+
+  &__notice-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    flex-shrink: 0;
+
+    &--today {
+      background: #f97316;
+    }
+
+    &--week {
+      background: #facc15;
+    }
+
+    &--clear {
+      background: #22c55e;
+    }
+  }
+
+  &__notice-text {
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    font-weight: 700;
+    line-height: 1.1;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    overflow: hidden;
+  }
+
+  &__badge {
+    margin-left: auto;
+    min-width: 1.35rem;
+    height: 1.35rem;
+    padding: 0 0.34rem;
+    border-radius: 999px;
+    background: linear-gradient(135deg, rgba(249, 115, 22, 0.9), rgba(239, 68, 68, 0.9));
+    color: #ffffff;
+    font-size: 0.72rem;
+    font-weight: 800;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-variant-numeric: tabular-nums;
   }
 
   &__footer {

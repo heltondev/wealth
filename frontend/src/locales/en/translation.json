@@ -37,7 +37,46 @@
     "selectPortfolio": "Select portfolio",
     "noSeries": "No data available.",
     "loadError": "Failed to load dashboard data.",
-    "noData": "No portfolio data yet. Create a portfolio to get started."
+    "noData": "No portfolio data yet. Create a portfolio to get started.",
+    "eventsNotice": {
+      "title": "Event Alerts",
+      "refresh": "Refresh",
+      "loading": "Checking events in background...",
+      "today": "Today",
+      "week": "This Week",
+      "todayCount": "Today: {{count}}",
+      "weekCount": "Week: {{count}}",
+      "noneToday": "No events for today.",
+      "noneWeek": "No events for this week.",
+      "menuSummary": "{{today}} today / {{week}} week",
+      "kinds": {
+        "payment": "Payment",
+        "provisioned": "Provisioned",
+        "informe": "Filing",
+        "event": "Event"
+      },
+      "modal": {
+        "title": "Event Details",
+        "subtitle": "Selected event data",
+        "openDetails": "Open details for {{ticker}}",
+        "emptyDetails": "No additional details.",
+        "sections": {
+          "overview": "Overview",
+          "details": "Event Details"
+        },
+        "fields": {
+          "ticker": "Ticker",
+          "kind": "Category",
+          "eventDate": "Event Date",
+          "eventType": "Event Type",
+          "eventTitle": "Title",
+          "source": "Source",
+          "updatedAt": "Updated At",
+          "id": "ID",
+          "details": "Details"
+        }
+      }
+    }
   },
   "dividends": {
     "title": "Dividends",
@@ -1139,6 +1178,7 @@
   "common": {
     "loading": "Loading...",
     "error": "Something went wrong",
+    "close": "Close",
     "save": "Save",
     "cancel": "Cancel",
     "delete": "Delete",

@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   Area,
   AreaChart,
@@ -14,7 +14,14 @@ import {
   YAxis,
 } from 'recharts';
 import Layout from '../components/Layout';
-import { api, type DashboardAllocationItem, type DashboardResponse, type DropdownConfigMap } from '../services/api';
+import RecordDetailsModal, { type RecordDetailsSection } from '../components/RecordDetailsModal';
+import {
+  api,
+  type DashboardAllocationItem,
+  type DashboardResponse,
+  type DropdownConfigMap,
+  type PortfolioEventNoticeItem,
+} from '../services/api';
 import {
   DEFAULT_DROPDOWN_CONFIG,
   getDropdownOptions,
@@ -30,6 +37,7 @@ const EVOLUTION_FILL = 'rgba(34, 211, 238, 0.26)';
 const SUPPORTED_EVOLUTION_PERIODS = new Set(['1M', '3M', '6M', '1Y', '2Y', '5Y', 'MAX']);
 
 type Trend = 'positive' | 'negative' | 'neutral';
+type NoticeKind = 'payment' | 'provisioned' | 'informe' | 'event';
 
 interface AllocationChartDatum {
   key: string;
@@ -66,9 +74,39 @@ const toTitleLabel = (value: string): string => value
   .map((token) => token.charAt(0).toUpperCase() + token.slice(1))
   .join(' ');
 
+const normalizeEventTypeLabel = (value: string): string => toTitleLabel(
+  String(value || '')
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ')
+);
+
+const toFieldLabel = (value: string): string => toTitleLabel(
+  String(value || '')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[._-]+/g, ' ')
+);
+
+const normalizeNoticeKind = (value: unknown): NoticeKind => {
+  const text = String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+  if (text === 'payment') return 'payment';
+  if (text === 'provisioned') return 'provisioned';
+  if (text === 'informe') return 'informe';
+  return 'event';
+};
+
 const DashboardPage = () => {
   const { t, i18n } = useTranslation();
-  const { portfolios, selectedPortfolio, setSelectedPortfolio } = usePortfolioData();
+  const {
+    portfolios,
+    selectedPortfolio,
+    setSelectedPortfolio,
+    eventNotices,
+    eventNoticesLoading,
+    refreshEventNotices,
+  } = usePortfolioData();
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -76,6 +114,7 @@ const DashboardPage = () => {
     normalizeDropdownConfig(DEFAULT_DROPDOWN_CONFIG)
   );
   const [evolutionPeriod, setEvolutionPeriod] = useState<string>('MAX');
+  const [selectedEventNotice, setSelectedEventNotice] = useState<PortfolioEventNoticeItem | null>(null);
 
   useEffect(() => {
     api.getDropdownSettings()
@@ -167,6 +206,182 @@ const DashboardPage = () => {
       }))
       .filter((point) => point.date && Number.isFinite(point.value));
   }, [dashboard?.evolution]);
+  const todayEvents = useMemo(() => eventNotices?.today_events || [], [eventNotices?.today_events]);
+  const weekEvents = useMemo(() => eventNotices?.week_events || [], [eventNotices?.week_events]);
+  const todayCount = Number(eventNotices?.today_count || 0);
+  const weekCount = Number(eventNotices?.week_count || 0);
+
+  useEffect(() => {
+    setSelectedEventNotice(null);
+  }, [selectedPortfolio]);
+
+  useEffect(() => {
+    if (!selectedEventNotice) return;
+    const stillExists = [...todayEvents, ...weekEvents].some((event) => event.id === selectedEventNotice.id);
+    if (!stillExists) {
+      setSelectedEventNotice(null);
+    }
+  }, [selectedEventNotice, todayEvents, weekEvents]);
+
+  const formatNoticeDateTime = (value: unknown): string => {
+    const text = String(value || '').trim();
+    if (!text) return '-';
+    const parsed = new Date(text);
+    if (Number.isNaN(parsed.getTime())) return text;
+    return parsed.toLocaleString(numberLocale, {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+  };
+
+  const renderNoticeValue = (key: string, value: unknown): ReactNode => {
+    if (value === null || value === undefined || value === '') return '-';
+
+    if (typeof value === 'boolean') {
+      return value ? t('common.yes') : t('common.no');
+    }
+
+    if (typeof value === 'number') {
+      const normalizedKey = key.toLowerCase();
+      if (normalizedKey.includes('pct') || normalizedKey.includes('percent') || normalizedKey.includes('yield')) {
+        return `${value.toLocaleString(numberLocale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
+      }
+      if (normalizedKey.includes('value') || normalizedKey.includes('amount') || normalizedKey.includes('price')) {
+        return formatCurrency(value, 'BRL', numberLocale);
+      }
+      return value.toLocaleString(numberLocale);
+    }
+
+    if (typeof value === 'string') {
+      const text = value.trim();
+      if (!text) return '-';
+
+      if (/^https?:\/\//i.test(text)) {
+        return (
+          <a href={text} target="_blank" rel="noreferrer">
+            {text}
+          </a>
+        );
+      }
+
+      const normalizedKey = key.toLowerCase();
+      const looksLikeDate = /^\d{4}-\d{2}-\d{2}/.test(text);
+      if ((normalizedKey.includes('date') || normalizedKey.includes('at')) && looksLikeDate) {
+        if (text.length > 10) return formatNoticeDateTime(text);
+        return formatDate(text.slice(0, 10), numberLocale);
+      }
+
+      return text;
+    }
+
+    if (Array.isArray(value)) {
+      if (value.length === 0) return '-';
+      return value.map((item, index) => (
+        <span key={`${key}-${index}`}>
+          {renderNoticeValue(`${key}-${index}`, item)}
+          {index < value.length - 1 ? ', ' : ''}
+        </span>
+      ));
+    }
+
+    if (typeof value === 'object') {
+      return (
+        <code className="dashboard-events__json">
+          {JSON.stringify(value, null, 2)}
+        </code>
+      );
+    }
+
+    return String(value);
+  };
+
+  const eventNoticeSections = useMemo<RecordDetailsSection[]>(() => {
+    if (!selectedEventNotice) return [];
+
+    const details =
+      selectedEventNotice.details && typeof selectedEventNotice.details === 'object'
+        ? selectedEventNotice.details
+        : {};
+
+    const overviewFields = [
+      {
+        key: 'ticker',
+        label: t('dashboard.eventsNotice.modal.fields.ticker', { defaultValue: 'Ticker' }),
+        value: selectedEventNotice.ticker || '-',
+      },
+      {
+        key: 'kind',
+        label: t('dashboard.eventsNotice.modal.fields.kind', { defaultValue: 'Category' }),
+        value: t(`dashboard.eventsNotice.kinds.${normalizeNoticeKind(selectedEventNotice.notice_kind)}`, {
+          defaultValue: normalizeNoticeKind(selectedEventNotice.notice_kind),
+        }),
+      },
+      {
+        key: 'eventDate',
+        label: t('dashboard.eventsNotice.modal.fields.eventDate', { defaultValue: 'Event Date' }),
+        value: formatDate(selectedEventNotice.eventDate, numberLocale),
+      },
+      {
+        key: 'eventType',
+        label: t('dashboard.eventsNotice.modal.fields.eventType', { defaultValue: 'Event Type' }),
+        value: selectedEventNotice.eventType || '-',
+      },
+      {
+        key: 'eventTitle',
+        label: t('dashboard.eventsNotice.modal.fields.eventTitle', { defaultValue: 'Title' }),
+        value: selectedEventNotice.eventTitle || '-',
+      },
+      {
+        key: 'source',
+        label: t('dashboard.eventsNotice.modal.fields.source', { defaultValue: 'Source' }),
+        value: selectedEventNotice.data_source || '-',
+      },
+      {
+        key: 'updatedAt',
+        label: t('dashboard.eventsNotice.modal.fields.updatedAt', { defaultValue: 'Updated At' }),
+        value: selectedEventNotice.updatedAt ? formatNoticeDateTime(selectedEventNotice.updatedAt) : '-',
+      },
+      {
+        key: 'id',
+        label: t('dashboard.eventsNotice.modal.fields.id', { defaultValue: 'ID' }),
+        value: selectedEventNotice.id || '-',
+      },
+    ];
+
+    const detailEntries = Object.entries(details).map(([key, value]) => ({
+      key,
+      label: toFieldLabel(key),
+      value: renderNoticeValue(key, value),
+    }));
+
+    const detailFields = detailEntries.length > 0
+      ? detailEntries
+      : [{
+        key: 'empty',
+        label: t('dashboard.eventsNotice.modal.fields.details', { defaultValue: 'Details' }),
+        value: t('dashboard.eventsNotice.modal.emptyDetails', { defaultValue: 'No additional details.' }),
+      }];
+
+    return [
+      {
+        key: 'overview',
+        title: t('dashboard.eventsNotice.modal.sections.overview', { defaultValue: 'Overview' }),
+        fields: overviewFields,
+        columns: 2,
+      },
+      {
+        key: 'details',
+        title: t('dashboard.eventsNotice.modal.sections.details', { defaultValue: 'Event Details' }),
+        fields: detailFields,
+        columns: 2,
+        fullWidth: true,
+      },
+    ];
+  }, [selectedEventNotice, numberLocale, t]);
 
   return (
     <Layout>
@@ -188,6 +403,102 @@ const DashboardPage = () => {
             </select>
           )}
         </div>
+
+        {!!selectedPortfolio && (
+          <section className="dashboard-events">
+            <header className="dashboard-events__header">
+              <h2>{t('dashboard.eventsNotice.title')}</h2>
+              <button
+                type="button"
+                className="dashboard-events__refresh"
+                onClick={refreshEventNotices}
+                disabled={eventNoticesLoading}
+              >
+                {t('dashboard.eventsNotice.refresh')}
+              </button>
+            </header>
+            <div className="dashboard-events__kpis">
+              <span className="dashboard-events__kpi dashboard-events__kpi--today">
+                {t('dashboard.eventsNotice.todayCount', { count: todayCount })}
+              </span>
+              <span className="dashboard-events__kpi dashboard-events__kpi--week">
+                {t('dashboard.eventsNotice.weekCount', { count: weekCount })}
+              </span>
+            </div>
+            {eventNoticesLoading ? (
+              <p className="dashboard-events__loading">{t('dashboard.eventsNotice.loading')}</p>
+            ) : (
+              <div className="dashboard-events__grid">
+                <div className="dashboard-events__column">
+                  <h3>{t('dashboard.eventsNotice.today')}</h3>
+                  {todayEvents.length === 0 ? (
+                    <p className="dashboard-events__empty">{t('dashboard.eventsNotice.noneToday')}</p>
+                  ) : (
+                    <ul className="dashboard-events__list">
+                      {todayEvents.map((event) => (
+                        <li key={`today-${event.id}`}>
+                          <button
+                            type="button"
+                            className="dashboard-events__event-btn"
+                            onClick={() => setSelectedEventNotice(event)}
+                            aria-label={t('dashboard.eventsNotice.modal.openDetails', {
+                              defaultValue: 'Open details for {{ticker}}',
+                              ticker: event.ticker,
+                            })}
+                          >
+                            <strong>
+                              {event.ticker}
+                              <em className={`dashboard-events__tag dashboard-events__tag--${normalizeNoticeKind(event.notice_kind)}`}>
+                                {t(`dashboard.eventsNotice.kinds.${normalizeNoticeKind(event.notice_kind)}`, {
+                                  defaultValue: normalizeNoticeKind(event.notice_kind),
+                                })}
+                              </em>
+                            </strong>
+                            <span>{event.eventTitle || normalizeEventTypeLabel(event.eventType)}</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <div className="dashboard-events__column">
+                  <h3>{t('dashboard.eventsNotice.week')}</h3>
+                  {weekEvents.length === 0 ? (
+                    <p className="dashboard-events__empty">{t('dashboard.eventsNotice.noneWeek')}</p>
+                  ) : (
+                    <ul className="dashboard-events__list">
+                      {weekEvents.map((event) => (
+                        <li key={`week-${event.id}`}>
+                          <button
+                            type="button"
+                            className="dashboard-events__event-btn"
+                            onClick={() => setSelectedEventNotice(event)}
+                            aria-label={t('dashboard.eventsNotice.modal.openDetails', {
+                              defaultValue: 'Open details for {{ticker}}',
+                              ticker: event.ticker,
+                            })}
+                          >
+                            <strong>
+                              {event.ticker}
+                              <em className={`dashboard-events__tag dashboard-events__tag--${normalizeNoticeKind(event.notice_kind)}`}>
+                                {t(`dashboard.eventsNotice.kinds.${normalizeNoticeKind(event.notice_kind)}`, {
+                                  defaultValue: normalizeNoticeKind(event.notice_kind),
+                                })}
+                              </em>
+                            </strong>
+                            <span>
+                              {`${formatDate(event.eventDate, numberLocale)} · ${event.eventTitle || normalizeEventTypeLabel(event.eventType)}`}
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            )}
+          </section>
+        )}
 
         {loading && <p className="dashboard__loading">{t('common.loading')}</p>}
 
@@ -380,6 +691,19 @@ const DashboardPage = () => {
             </div>
           </>
         )}
+
+        <RecordDetailsModal
+          open={Boolean(selectedEventNotice)}
+          title={t('dashboard.eventsNotice.modal.title', { defaultValue: 'Event Details' })}
+          subtitle={
+            selectedEventNotice
+              ? `${selectedEventNotice.ticker} · ${formatDate(selectedEventNotice.eventDate, numberLocale)}`
+              : t('dashboard.eventsNotice.modal.subtitle', { defaultValue: 'Selected event data' })
+          }
+          closeLabel={t('common.close', { defaultValue: 'Close' })}
+          sections={eventNoticeSections}
+          onClose={() => setSelectedEventNotice(null)}
+        />
       </div>
     </Layout>
   );

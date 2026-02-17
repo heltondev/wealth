@@ -169,6 +169,33 @@ export interface DividendsResponse {
   fetched_at: string;
 }
 
+export interface PortfolioEventNoticeItem {
+  id: string;
+  ticker: string;
+  eventType: string;
+  eventTitle: string;
+  eventDate: string;
+  notice_kind?: string;
+  details?: Record<string, unknown> | null;
+  data_source?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface PortfolioEventNoticesResponse {
+  portfolioId: string;
+  today: string;
+  week_end: string;
+  lookahead_days: number;
+  tracked_tickers: number;
+  today_count: number;
+  week_count: number;
+  today_by_kind?: Record<string, number>;
+  week_by_kind?: Record<string, number>;
+  today_events: PortfolioEventNoticeItem[];
+  week_events: PortfolioEventNoticeItem[];
+  fetched_at: string;
+}
+
 export interface TaxMonthlyItem {
   month: string;
   gross_sales: Record<string, number>;
@@ -685,6 +712,10 @@ export const api = {
     const suffix = query.toString() ? `?${query.toString()}` : '';
     return request<DividendsResponse>(`/portfolios/${portfolioId}/dividends${suffix}`);
   },
+  getPortfolioEventNotices: (portfolioId: string, lookaheadDays = 7) =>
+    request<PortfolioEventNoticesResponse>(
+      `/portfolios/${encodeURIComponent(portfolioId)}/event-notices?lookaheadDays=${encodeURIComponent(String(lookaheadDays))}`
+    ),
   getTaxReport: (portfolioId: string, year: number) =>
     request<TaxReportResponse>(`/portfolios/${portfolioId}/tax?year=${encodeURIComponent(String(year))}`),
   getRebalanceTargets: (portfolioId: string) =>

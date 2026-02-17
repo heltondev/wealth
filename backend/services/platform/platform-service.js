@@ -2974,7 +2974,6 @@ class PlatformService {
 		const activeAssets = assets.filter((asset) =>
 			String(asset.status || 'active').toLowerCase() === 'active'
 		);
-		const prioritizeFiiForPortfolio = !ticker && Boolean(options.portfolioId);
 		const persistedEvents = [];
 
 		for (const asset of activeAssets) {
@@ -2982,13 +2981,22 @@ class PlatformService {
 				const isBrazilianFii =
 					String(asset.assetClass || '').toLowerCase() === 'fii'
 					&& String(asset.country || 'BR').toUpperCase() === 'BR';
-				if (prioritizeFiiForPortfolio && !isBrazilianFii) continue;
 				let normalizedEvents = [];
 
 				if (isBrazilianFii) {
 					const statusInvestEvents = await this.#fetchStatusInvestDividendEvents(asset.ticker, 'fii');
 					const fundsExplorerEvents = await this.#fetchFundsExplorerDividendEvents(asset.ticker);
-					normalizedEvents = this.#mergeDividendEvents(statusInvestEvents, fundsExplorerEvents);
+					const dividendEvents = this.#mergeDividendEvents(statusInvestEvents, fundsExplorerEvents);
+					let updateEvents = [];
+					try {
+						const updates = await this.getFiiUpdates(asset.ticker, {
+							portfolioId: asset.portfolioId,
+						});
+						updateEvents = this.#normalizeFiiUpdateEvents(asset.ticker, updates?.items);
+					} catch {
+						updateEvents = [];
+					}
+					normalizedEvents = [...dividendEvents, ...updateEvents];
 				}
 
 				if (normalizedEvents.length === 0 && !isBrazilianFii) {
@@ -3453,6 +3461,153 @@ class PlatformService {
 			evolution_period: periodKey,
 			return_absolute: absoluteReturn,
 			return_percent: percentReturn,
+			fetched_at: nowIso(),
+		};
+	}
+
+	async getPortfolioEventNotices(userId, options = {}) {
+		const portfolioId = await this.#resolvePortfolioId(userId, options.portfolioId);
+		const lookaheadDays = Math.min(
+			Math.max(Math.round(numeric(options.lookaheadDays, 7)), 1),
+			30
+		);
+		const today = nowIso().slice(0, 10);
+		const weekEnd = addDays(today, lookaheadDays - 1);
+		const classifyNoticeKind = (eventType, eventTitle, eventDate) => {
+			const text = `${String(eventType || '')} ${String(eventTitle || '')}`
+				.toLowerCase()
+				.normalize('NFD')
+				.replace(/[\u0300-\u036f]/g, ' ');
+			if (
+				text.includes('informe')
+				|| text.includes('relatorio')
+				|| text.includes('comunicado')
+				|| text.includes('fato relevante')
+				|| text.includes('assembleia')
+				|| text.includes('ata')
+				|| text.includes('resultado')
+				|| text.includes('document')
+			) {
+				return 'informe';
+			}
+			if (
+				text.includes('dividend')
+				|| text.includes('rendimento')
+				|| text.includes('provento')
+				|| text.includes('jcp')
+				|| text.includes('juros')
+				|| text.includes('amort')
+				|| text.includes('payment')
+				|| text.includes('subscr')
+				|| text.includes('subscription')
+			) {
+				return String(eventDate || '') > today ? 'provisioned' : 'payment';
+			}
+			return 'event';
+		};
+		const buildKindCounts = (events) =>
+			events.reduce(
+				(acc, event) => {
+					const kind = String(event.notice_kind || 'event');
+					acc[kind] = numeric(acc[kind], 0) + 1;
+					return acc;
+				},
+				{}
+			);
+
+		const assets = await this.#listPortfolioAssets(portfolioId);
+		const activeAssets = assets.filter((asset) =>
+			String(asset.status || 'active').toLowerCase() === 'active'
+		);
+		const trackedTickers = Array.from(
+			new Set(
+				activeAssets
+					.map((asset) => String(asset.ticker || '').toUpperCase())
+					.filter(Boolean)
+			)
+		);
+
+		const rowsByTicker = await Promise.all(
+			trackedTickers.map(async (ticker) => {
+				const rows = await this.#queryAll({
+					TableName: this.tableName,
+					KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
+					ExpressionAttributeValues: {
+						':pk': `ASSET_EVENT#${ticker}`,
+						':sk': 'DATE#',
+					},
+				});
+				return rows.map((row) => ({ ...row, ticker }));
+			})
+		);
+
+		const deduped = new Map();
+		for (const row of rowsByTicker.flat()) {
+			const details = row?.details && typeof row.details === 'object' ? { ...row.details } : null;
+			const eventDate = normalizeDate(
+				row.eventDate
+				|| row.date
+				|| details?.eventDate
+				|| details?.deliveryDate
+				|| details?.referenceDate
+				|| details?.paymentDate
+				|| details?.exDate
+				|| null
+			);
+			if (!eventDate) continue;
+			if (eventDate < today || eventDate > weekEnd) continue;
+
+			const ticker = String(row.ticker || '').toUpperCase();
+			if (!ticker) continue;
+			const eventType = String(row.eventType || 'event').trim().toLowerCase() || 'event';
+			const eventTitle =
+				String(row.eventTitle || details?.title || details?.subject || eventType).trim()
+				|| eventType;
+			const dedupeKey = `${ticker}|${eventDate}|${eventType}|${eventTitle.toLowerCase()}`;
+			const existing = deduped.get(dedupeKey);
+			const candidate = {
+				id: String(row.SK || `${ticker}:${eventDate}:${eventType}`),
+				ticker,
+				eventType,
+				eventTitle,
+				eventDate,
+				notice_kind: classifyNoticeKind(eventType, eventTitle, eventDate),
+				details: details || null,
+				data_source: String(row.data_source || '').trim() || null,
+				updatedAt: row.updatedAt || row.fetched_at || null,
+			};
+			if (!existing) {
+				deduped.set(dedupeKey, candidate);
+				continue;
+			}
+			if (String(candidate.updatedAt || '') > String(existing.updatedAt || '')) {
+				deduped.set(dedupeKey, candidate);
+			}
+		}
+
+		const weekEvents = Array.from(deduped.values())
+			.sort((left, right) =>
+				String(left.eventDate || '').localeCompare(String(right.eventDate || ''))
+				|| String(left.ticker || '').localeCompare(String(right.ticker || ''))
+				|| String(left.notice_kind || '').localeCompare(String(right.notice_kind || ''))
+				|| String(left.eventType || '').localeCompare(String(right.eventType || ''))
+			);
+		const todayEvents = weekEvents.filter((event) => event.eventDate === today);
+		const weekByKind = buildKindCounts(weekEvents);
+		const todayByKind = buildKindCounts(todayEvents);
+
+		return {
+			portfolioId,
+			today,
+			week_end: weekEnd,
+			lookahead_days: lookaheadDays,
+			tracked_tickers: trackedTickers.length,
+			today_count: todayEvents.length,
+			week_count: weekEvents.length,
+			today_by_kind: todayByKind,
+			week_by_kind: weekByKind,
+			today_events: todayEvents,
+			week_events: weekEvents,
 			fetched_at: nowIso(),
 		};
 	}
@@ -6980,6 +7135,66 @@ class PlatformService {
 		}
 
 		return merged.sort((left, right) => String(left.date || '').localeCompare(String(right.date || '')));
+	}
+
+	#normalizeFiiUpdateEvents(ticker, updates) {
+		const normalizedTicker = String(ticker || '').toUpperCase().trim();
+		if (!normalizedTicker) return [];
+		const rows = Array.isArray(updates) ? updates : [];
+		const deduped = new Map();
+
+		for (const row of rows) {
+			const referenceDate = normalizeDate(
+				row?.deliveryDate
+				|| row?.referenceDate
+				|| row?.date
+				|| null
+			);
+			if (!referenceDate) continue;
+
+			const rawTitle = String(row?.title || '').trim();
+			const rawCategory = String(row?.category || '').trim();
+			const inferredType =
+				inferFinancialDocumentType(rawTitle, rawCategory)
+				|| inferFinancialDocumentType(rawCategory, rawTitle)
+				|| 'informe';
+			const eventType = inferredType || 'informe';
+			const normalizedUrl = normalizeDocumentUrl(
+				row?.url
+				|| row?.url_viewer
+				|| row?.url_download
+				|| null
+			);
+			const source = String(row?.source || 'fii_updates').trim().toLowerCase() || 'fii_updates';
+			const title = rawTitle || `${eventType.replace(/_/g, ' ')} - ${normalizedTicker}`;
+			const dedupeKey = `${eventType}|${referenceDate}|${title.toLowerCase()}|${normalizedUrl || ''}`;
+			if (deduped.has(dedupeKey)) continue;
+
+			deduped.set(dedupeKey, {
+				eventId: hashId(
+					`${normalizedTicker}:fii-update:${eventType}:${referenceDate}:${normalizedUrl || title}`
+				),
+				title,
+				eventType,
+				date: referenceDate,
+				details: {
+					ticker: normalizedTicker,
+					category: rawCategory || null,
+					deliveryDate: normalizeDate(row?.deliveryDate || null) || referenceDate,
+					referenceDate: normalizeDate(row?.referenceDate || null) || referenceDate,
+					reportId: row?.id ? String(row.id) : null,
+					documentType: eventType,
+					url: normalizedUrl || null,
+					source,
+				},
+				data_source: source,
+				is_scraped: true,
+			});
+		}
+
+		return Array.from(deduped.values()).sort((left, right) =>
+			String(left.date || '').localeCompare(String(right.date || ''))
+		);
 	}
 
 	#extractStatusInvestDividendRows(html) {

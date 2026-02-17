@@ -37,7 +37,46 @@
     "selectPortfolio": "Selecionar portfólio",
     "noSeries": "Sem dados disponíveis.",
     "loadError": "Falha ao carregar dados do painel.",
-    "noData": "Nenhum dado de portfólio ainda. Crie um portfólio para começar."
+    "noData": "Nenhum dado de portfólio ainda. Crie um portfólio para começar.",
+    "eventsNotice": {
+      "title": "Alertas de Eventos",
+      "refresh": "Atualizar",
+      "loading": "Verificando eventos em segundo plano...",
+      "today": "Hoje",
+      "week": "Esta Semana",
+      "todayCount": "Hoje: {{count}}",
+      "weekCount": "Semana: {{count}}",
+      "noneToday": "Sem eventos para hoje.",
+      "noneWeek": "Sem eventos para esta semana.",
+      "menuSummary": "{{today}} hoje / {{week}} semana",
+      "kinds": {
+        "payment": "Pagamento",
+        "provisioned": "Provisionado",
+        "informe": "Informe",
+        "event": "Evento"
+      },
+      "modal": {
+        "title": "Detalhes do Evento",
+        "subtitle": "Dados do evento selecionado",
+        "openDetails": "Abrir detalhes de {{ticker}}",
+        "emptyDetails": "Sem detalhes adicionais.",
+        "sections": {
+          "overview": "Visão Geral",
+          "details": "Detalhes do Evento"
+        },
+        "fields": {
+          "ticker": "Ticker",
+          "kind": "Categoria",
+          "eventDate": "Data do Evento",
+          "eventType": "Tipo do Evento",
+          "eventTitle": "Título",
+          "source": "Fonte",
+          "updatedAt": "Atualizado Em",
+          "id": "ID",
+          "details": "Detalhes"
+        }
+      }
+    }
   },
   "dividends": {
     "title": "Proventos",
@@ -1139,6 +1178,7 @@
   "common": {
     "loading": "Carregando...",
     "error": "Algo deu errado",
+    "close": "Fechar",
     "save": "Salvar",
     "cancel": "Cancelar",
     "delete": "Excluir",

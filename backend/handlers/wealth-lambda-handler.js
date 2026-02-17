@@ -895,6 +895,14 @@ async function handleDividends(method, portfolioId, userId, query = {}) {
 	});
 }
 
+async function handleEventNotices(method, portfolioId, userId, query = {}) {
+	if (method !== 'GET') throw errorResponse(405, 'Method not allowed');
+	return platformService.getPortfolioEventNotices(userId, {
+		portfolioId,
+		lookaheadDays: query.lookaheadDays || query.lookahead_days || 7,
+	});
+}
+
 async function handleTax(method, portfolioId, userId, query = {}) {
 	if (method !== 'GET') throw errorResponse(405, 'Method not allowed');
 	const year = Number(query.year || new Date().getUTCFullYear());
@@ -1254,6 +1262,8 @@ exports.handler = async (event) => {
 				body = await handleDashboard(httpMethod, id, userId, queryStringParameters || {});
 			} else if (subResource === 'dividends') {
 				body = await handleDividends(httpMethod, id, userId, queryStringParameters || {});
+			} else if (subResource === 'event-notices') {
+				body = await handleEventNotices(httpMethod, id, userId, queryStringParameters || {});
 			} else if (subResource === 'tax') {
 				body = await handleTax(httpMethod, id, userId, queryStringParameters || {});
 			} else if (subResource === 'rebalance') {
