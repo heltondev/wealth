@@ -50,6 +50,8 @@ const ALIAS_SECTIONS: AliasSectionConfig[] = [
 
 const FALLBACK_PARSERS: ParserDescriptor[] = [
   { id: 'robinhood-activity', provider: 'robinhood' },
+  { id: 'computershare-espp', provider: 'computershare' },
+  { id: 'computershare-holdings-pdf', provider: 'computershare' },
 ];
 
 const ImportsPage = () => {
@@ -434,7 +436,7 @@ const ImportsPage = () => {
             <label className="documents-page__file-picker">
               <input
                 type="file"
-                accept=".xlsx,.xlsm,.xls,.csv,text/csv"
+                accept=".xlsx,.xlsm,.xls,.csv,text/csv,.pdf,application/pdf"
                 className="documents-page__file-input"
                 onChange={(event) => {
                   const file = event.target.files && event.target.files[0] ? event.target.files[0] : null;

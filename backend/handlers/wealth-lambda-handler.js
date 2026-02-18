@@ -1430,12 +1430,19 @@ async function handleImport(portfolioId, body) {
 		throw errorResponse(400, 'fileName or fileContentBase64 is required');
 	}
 
-	const { detectProvider, detectProviderFromWorkbook, getParser } = require('../parsers/index');
+	const {
+		detectProvider,
+		detectProviderFromWorkbook,
+		getParser,
+		buildPdfWorkbookFromBuffer,
+		buildPdfWorkbookFromFile,
+	} = require('../parsers/index');
 	const { importParsedB3 } = require('../services/import/b3-import-service');
 	const XLSX = require('xlsx');
 	const path = require('path');
 
 	const safeFileName = path.basename(fileName || 'b3-upload.xlsx');
+	const isPdfFile = /\.pdf$/i.test(safeFileName);
 	let parser;
 	let workbook;
 	let detectionMode = parserId ? 'manual' : 'auto';
@@ -1451,10 +1458,17 @@ async function handleImport(portfolioId, body) {
 			throw errorResponse(400, 'fileContentBase64 is empty');
 		}
 
-		try {
-			workbook = XLSX.read(fileBuffer, { type: 'buffer' });
-		} catch {
-			throw errorResponse(400, 'Invalid XLSX payload');
+		if (isPdfFile) {
+			workbook = buildPdfWorkbookFromBuffer(safeFileName, fileBuffer);
+			if (!workbook) {
+				throw errorResponse(400, 'Invalid or unsupported PDF payload');
+			}
+		} else {
+			try {
+				workbook = XLSX.read(fileBuffer, { type: 'buffer' });
+			} catch {
+				throw errorResponse(400, 'Invalid XLSX payload');
+			}
 		}
 
 		if (parserId) {
@@ -1479,7 +1493,14 @@ async function handleImport(portfolioId, body) {
 		if (parserId) {
 			parser = getParser(parserId);
 			if (!parser) throw errorResponse(400, `Unknown parser: ${parserId}`);
-			workbook = XLSX.readFile(fileName);
+			if (isPdfFile) {
+				workbook = buildPdfWorkbookFromFile(fileName);
+				if (!workbook) {
+					throw errorResponse(400, 'Invalid or unsupported PDF payload');
+				}
+			} else {
+				workbook = XLSX.readFile(fileName);
+			}
 		} else {
 			const detected = detectProvider(fileName);
 			if (!detected) {
