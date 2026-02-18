@@ -260,6 +260,48 @@
   }
 }
 
+.rebalance-thesis {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
+
+  &__stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: $spacing-sm;
+  }
+
+  &__stat {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    padding: 0.6rem 0.7rem;
+    border-radius: 12px;
+    border: 1px solid var(--glass-border);
+    background: rgba(15, 23, 42, 0.22);
+
+    span {
+      color: var(--text-secondary);
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.36px;
+      font-weight: 600;
+    }
+
+    strong {
+      color: var(--text-primary);
+      font-size: 0.94rem;
+      font-weight: 700;
+    }
+  }
+
+  &__hint {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+  }
+}
+
 .rebalance-table-wrapper {
   overflow: auto;
   border-radius: 12px;

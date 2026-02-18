@@ -341,16 +341,110 @@ export interface RebalanceSuggestionItem {
   target_value: number;
 }
 
+export interface RebalanceThesisConflict {
+  scope: 'thesisScope' | 'assetClass' | string;
+  scope_key: string;
+  type: 'below_min' | 'above_max' | string;
+  actual_pct: number;
+  min_pct?: number | null;
+  max_pct?: number | null;
+  target_pct?: number | null;
+  title?: string | null;
+  country?: string | null;
+  asset_class?: string | null;
+  related_scope_keys?: string[];
+}
+
+export interface RebalanceThesisDiagnostics {
+  active_scope_count: number;
+  scopes_with_target_count: number;
+  applied_scope_count: number;
+  applied_scope_keys: string[];
+  ignored_scope_keys: string[];
+  tracked_asset_count: number;
+  covered_asset_count: number;
+  assets_without_scope_count: number;
+  covered_value_pct: number;
+  uncovered_scope_keys: string[];
+  conflicts: RebalanceThesisConflict[];
+}
+
 export interface RebalanceSuggestionResponse {
   portfolioId: string;
   scope: 'assetClass' | 'asset' | string;
   contribution: number;
   current_total: number;
   target_total_after_contribution: number;
+  target_source?: 'manual' | 'thesis' | 'equal_weight' | string;
   targets: Record<string, number>;
+  thesis_diagnostics?: RebalanceThesisDiagnostics;
   drift?: RebalanceDriftItem[];
   suggestions: RebalanceSuggestionItem[];
   fetched_at?: string;
+}
+
+export type ThesisCountry = 'BR' | 'US' | 'CA';
+export type ThesisAssetClass =
+  | 'FII'
+  | 'TESOURO'
+  | 'ETF'
+  | 'STOCK'
+  | 'REIT'
+  | 'BOND'
+  | 'CRYPTO'
+  | 'CASH'
+  | 'RSU';
+
+export interface ThesisRecord {
+  thesisId: string | null;
+  portfolioId: string;
+  scopeKey: string;
+  country: ThesisCountry | string;
+  assetClass: ThesisAssetClass | string;
+  title: string;
+  thesisText: string;
+  targetAllocation: number | null;
+  minAllocation: number | null;
+  maxAllocation: number | null;
+  triggers: string;
+  actionPlan: string;
+  riskNotes: string;
+  status: 'active' | 'archived' | string;
+  version: number;
+  createdAt: string | null;
+  updatedAt: string | null;
+  archivedAt: string | null;
+}
+
+export interface ThesisListResponse {
+  portfolioId: string;
+  taxonomy: {
+    countries: ThesisCountry[];
+    assetClasses: ThesisAssetClass[];
+  };
+  items: ThesisRecord[];
+  history?: ThesisRecord[];
+}
+
+export interface ThesisDetailResponse {
+  portfolioId: string;
+  scopeKey: string;
+  current: ThesisRecord | null;
+  history: ThesisRecord[];
+}
+
+export interface ThesisUpsertPayload {
+  scopeKey?: string;
+  country?: ThesisCountry | string;
+  assetClass?: ThesisAssetClass | string;
+  title: string;
+  thesisText: string;
+  targetAllocation?: number | null;
+  minAllocation?: number | null;
+  maxAllocation?: number | null;
+  triggers?: string;
+  actionPlan?: string;
+  riskNotes?: string;
 }
 
 export interface RiskConcentrationItem {
@@ -892,6 +986,26 @@ export const api = {
     ),
   setRebalanceTargets: (portfolioId: string, targets: RebalanceTarget[]) =>
     request<RebalanceTargetsResponse>(`/portfolios/${portfolioId}/rebalance/targets`, { method: 'POST', body: JSON.stringify({ targets }) }),
+  getTheses: (portfolioId: string, options?: { includeHistory?: boolean }) => {
+    const query = new URLSearchParams();
+    if (options?.includeHistory) query.set('includeHistory', 'true');
+    const suffix = query.toString() ? `?${query.toString()}` : '';
+    return request<ThesisListResponse>(`/portfolios/${encodeURIComponent(portfolioId)}/theses${suffix}`);
+  },
+  getThesis: (portfolioId: string, scopeKey: string) =>
+    request<ThesisDetailResponse>(
+      `/portfolios/${encodeURIComponent(portfolioId)}/theses/${encodeURIComponent(scopeKey)}`
+    ),
+  upsertThesis: (portfolioId: string, data: ThesisUpsertPayload) =>
+    request<{ portfolioId: string; thesis: ThesisRecord; previous: ThesisRecord | null }>(
+      `/portfolios/${encodeURIComponent(portfolioId)}/theses`,
+      { method: 'POST', body: JSON.stringify(data) }
+    ),
+  archiveThesis: (portfolioId: string, scopeKey: string) =>
+    request<{ portfolioId: string; scopeKey: string; thesis: ThesisRecord }>(
+      `/portfolios/${encodeURIComponent(portfolioId)}/theses/${encodeURIComponent(scopeKey)}`,
+      { method: 'DELETE' }
+    ),
   getRisk: (portfolioId: string, params?: { concentrationThreshold?: number }) => {
     const query = new URLSearchParams();
     if (

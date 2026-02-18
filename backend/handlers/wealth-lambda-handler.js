@@ -139,6 +139,19 @@ const DEFAULT_DROPDOWN_SETTINGS = {
 	},
 };
 
+const THESIS_SUPPORTED_COUNTRIES = ['BR', 'US', 'CA'];
+const THESIS_SUPPORTED_ASSET_CLASSES = [
+	'FII',
+	'TESOURO',
+	'ETF',
+	'STOCK',
+	'REIT',
+	'BOND',
+	'CRYPTO',
+	'CASH',
+	'RSU',
+];
+
 // --- Helpers ---
 
 const generateId = () =>
@@ -173,6 +186,118 @@ const parseAssetQuantity = (value) => {
 		throw errorResponse(400, 'asset quantity must be a non-negative number');
 	}
 	return numeric;
+};
+
+const normalizeThesisCountry = (value) => {
+	const normalized = String(value || '').trim().toUpperCase();
+	if (!THESIS_SUPPORTED_COUNTRIES.includes(normalized)) {
+		throw errorResponse(
+			400,
+			`country must be one of: ${THESIS_SUPPORTED_COUNTRIES.join(', ')}`
+		);
+	}
+	return normalized;
+};
+
+const normalizeThesisAssetClass = (value) => {
+	const normalized = String(value || '').trim().toUpperCase();
+	if (!THESIS_SUPPORTED_ASSET_CLASSES.includes(normalized)) {
+		throw errorResponse(
+			400,
+			`assetClass must be one of: ${THESIS_SUPPORTED_ASSET_CLASSES.join(', ')}`
+		);
+	}
+	return normalized;
+};
+
+const buildThesisScopeKey = (country, assetClass) =>
+	`${normalizeThesisCountry(country)}:${normalizeThesisAssetClass(assetClass)}`;
+
+const parseThesisScopeKey = (scopeKey) => {
+	const normalized = String(scopeKey || '').trim().toUpperCase();
+	if (!normalized.includes(':')) {
+		throw errorResponse(400, 'scopeKey must follow COUNTRY:ASSETCLASS');
+	}
+	const [countryPart, assetClassPart, ...rest] = normalized.split(':');
+	if (rest.length > 0 || !countryPart || !assetClassPart) {
+		throw errorResponse(400, 'scopeKey must follow COUNTRY:ASSETCLASS');
+	}
+	const country = normalizeThesisCountry(countryPart);
+	const assetClass = normalizeThesisAssetClass(assetClassPart);
+	return {
+		scopeKey: `${country}:${assetClass}`,
+		country,
+		assetClass,
+	};
+};
+
+const parsePercentageValue = (value, fieldName) => {
+	if (value === undefined || value === null || value === '') return null;
+	const numeric = Number(value);
+	if (!Number.isFinite(numeric) || numeric < 0 || numeric > 100) {
+		throw errorResponse(400, `${fieldName} must be a number between 0 and 100`);
+	}
+	return Number(numeric.toFixed(4));
+};
+
+const toVersionToken = (version) => String(version).padStart(6, '0');
+
+const thesisItemToResponse = (item) => ({
+	thesisId: item?.thesisId || null,
+	portfolioId: item?.portfolioId || null,
+	scopeKey: item?.scopeKey || null,
+	country: item?.country || null,
+	assetClass: item?.assetClass || null,
+	title: item?.title || '',
+	thesisText: item?.thesisText || '',
+	targetAllocation: item?.targetAllocation ?? null,
+	minAllocation: item?.minAllocation ?? null,
+	maxAllocation: item?.maxAllocation ?? null,
+	triggers: item?.triggers || '',
+	actionPlan: item?.actionPlan || '',
+	riskNotes: item?.riskNotes || '',
+	status: item?.status || 'active',
+	version: Number(item?.version || 1),
+	createdAt: item?.createdAt || null,
+	updatedAt: item?.updatedAt || null,
+	archivedAt: item?.archivedAt || null,
+});
+
+const extractLatestThesisPerScope = (items) => {
+	const latestByScope = new Map();
+	for (const item of items || []) {
+		if (!item || String(item.entityType || '') !== 'thesis') continue;
+		const scopeKey = String(item.scopeKey || '').trim().toUpperCase();
+		if (!scopeKey) continue;
+		const version = Number(item.version || 0);
+		const existing = latestByScope.get(scopeKey);
+		if (!existing || version > Number(existing.version || 0)) {
+			latestByScope.set(scopeKey, item);
+		}
+	}
+	return Array.from(latestByScope.values()).sort((left, right) =>
+		String(left.scopeKey || '').localeCompare(String(right.scopeKey || ''))
+	);
+};
+
+const validateThesisAllocations = ({ minAllocation, targetAllocation, maxAllocation }) => {
+	if (minAllocation !== null && maxAllocation !== null && minAllocation > maxAllocation) {
+		throw errorResponse(400, 'minAllocation must be less than or equal to maxAllocation');
+	}
+	if (
+		targetAllocation !== null
+		&& minAllocation !== null
+		&& targetAllocation < minAllocation
+	) {
+		throw errorResponse(400, 'targetAllocation must be greater than or equal to minAllocation');
+	}
+	if (
+		targetAllocation !== null
+		&& maxAllocation !== null
+		&& targetAllocation > maxAllocation
+	) {
+		throw errorResponse(400, 'targetAllocation must be less than or equal to maxAllocation');
+	}
 };
 
 const resolveCorsOrigin = (event) => {
@@ -1019,6 +1144,205 @@ async function handleRebalance(method, portfolioId, userId, body, query = {}, su
 	throw errorResponse(404, 'Rebalance route not found');
 }
 
+async function listPortfolioThesisItems(portfolioId) {
+	return queryAllItems({
+		TableName: TABLE_NAME,
+		KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
+		ExpressionAttributeValues: {
+			':pk': `PORTFOLIO#${portfolioId}`,
+			':sk': 'THESIS#',
+		},
+	});
+}
+
+async function listScopeThesisVersions(portfolioId, scopeKey) {
+	return queryAllItems({
+		TableName: TABLE_NAME,
+		KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
+		ExpressionAttributeValues: {
+			':pk': `PORTFOLIO#${portfolioId}`,
+			':sk': `THESIS#${scopeKey}#V#`,
+		},
+	});
+}
+
+async function archiveThesisItem(portfolioId, item, now) {
+	if (!item) return null;
+	const key = {
+		PK: `PORTFOLIO#${portfolioId}`,
+		SK: item.SK,
+	};
+	const result = await dynamo.send(
+		new UpdateCommand({
+			TableName: TABLE_NAME,
+			Key: key,
+			UpdateExpression: 'SET #status = :status, archivedAt = :archivedAt, updatedAt = :updatedAt',
+			ExpressionAttributeNames: {
+				'#status': 'status',
+			},
+			ExpressionAttributeValues: {
+				':status': 'archived',
+				':archivedAt': now,
+				':updatedAt': now,
+			},
+			ReturnValues: 'ALL_NEW',
+		})
+	);
+	return result.Attributes || null;
+}
+
+async function handleTheses(method, portfolioId, body, query = {}, subId = null) {
+	if (method === 'GET') {
+		if (!subId) {
+			const includeHistory = String(query.includeHistory || '').toLowerCase() === 'true';
+			const items = await listPortfolioThesisItems(portfolioId);
+			const latestItems = extractLatestThesisPerScope(items);
+			const payload = {
+				portfolioId,
+				taxonomy: {
+					countries: THESIS_SUPPORTED_COUNTRIES,
+					assetClasses: THESIS_SUPPORTED_ASSET_CLASSES,
+				},
+				items: latestItems.map(thesisItemToResponse),
+			};
+			if (includeHistory) {
+				payload.history = (items || [])
+					.filter((item) => String(item.entityType || '') === 'thesis')
+					.sort((left, right) => {
+						const scopeDiff = String(left.scopeKey || '').localeCompare(
+							String(right.scopeKey || '')
+						);
+						if (scopeDiff !== 0) return scopeDiff;
+						return Number(right.version || 0) - Number(left.version || 0);
+					})
+					.map(thesisItemToResponse);
+			}
+			return payload;
+		}
+
+		const parsedScope = parseThesisScopeKey(decodeURIComponent(subId));
+		const versions = await listScopeThesisVersions(portfolioId, parsedScope.scopeKey);
+		if (!versions || versions.length === 0) {
+			throw errorResponse(404, 'Thesis scope not found');
+		}
+		const sorted = [...versions]
+			.filter((item) => String(item.entityType || '') === 'thesis')
+			.sort((left, right) => Number(right.version || 0) - Number(left.version || 0));
+		return {
+			portfolioId,
+			scopeKey: parsedScope.scopeKey,
+			current: thesisItemToResponse(sorted[0] || null),
+			history: sorted.map(thesisItemToResponse),
+		};
+	}
+
+	if (method === 'POST') {
+		const payload = parseBody(body);
+		const parsedScope = payload.scopeKey
+			? parseThesisScopeKey(payload.scopeKey)
+			: parseThesisScopeKey(
+				buildThesisScopeKey(payload.country || '', payload.assetClass || '')
+			);
+
+		const title = String(payload.title || '').trim();
+		const thesisText = String(payload.thesisText || '').trim();
+		const triggers = String(payload.triggers || '').trim();
+		const actionPlan = String(payload.actionPlan || '').trim();
+		const riskNotes = String(payload.riskNotes || '').trim();
+		const targetAllocation = parsePercentageValue(payload.targetAllocation, 'targetAllocation');
+		const minAllocation = parsePercentageValue(payload.minAllocation, 'minAllocation');
+		const maxAllocation = parsePercentageValue(payload.maxAllocation, 'maxAllocation');
+
+		if (!title) throw errorResponse(400, 'title is required');
+		if (!thesisText) throw errorResponse(400, 'thesisText is required');
+
+		validateThesisAllocations({
+			targetAllocation,
+			minAllocation,
+			maxAllocation,
+		});
+
+		const existingVersions = await listScopeThesisVersions(
+			portfolioId,
+			parsedScope.scopeKey
+		);
+		const sortedExisting = [...existingVersions]
+			.filter((item) => String(item.entityType || '') === 'thesis')
+			.sort((left, right) => Number(right.version || 0) - Number(left.version || 0));
+		const currentActive = sortedExisting.find(
+			(item) => String(item.status || '').toLowerCase() === 'active'
+		);
+		const latestVersion = sortedExisting.length > 0
+			? Math.max(...sortedExisting.map((item) => Number(item.version || 0)))
+			: 0;
+		const nextVersion = latestVersion + 1;
+		const now = new Date().toISOString();
+
+		let archivedPrevious = null;
+		if (currentActive) {
+			archivedPrevious = await archiveThesisItem(portfolioId, currentActive, now);
+		}
+
+		const thesisItem = {
+			PK: `PORTFOLIO#${portfolioId}`,
+			SK: `THESIS#${parsedScope.scopeKey}#V#${toVersionToken(nextVersion)}`,
+			entityType: 'thesis',
+			thesisId: `thesis-${parsedScope.scopeKey}-${nextVersion}`,
+			portfolioId,
+			scopeKey: parsedScope.scopeKey,
+			country: parsedScope.country,
+			assetClass: parsedScope.assetClass,
+			title,
+			thesisText,
+			targetAllocation,
+			minAllocation,
+			maxAllocation,
+			triggers,
+			actionPlan,
+			riskNotes,
+			status: 'active',
+			version: nextVersion,
+			createdAt: now,
+			updatedAt: now,
+			archivedAt: null,
+		};
+
+		await dynamo.send(
+			new PutCommand({
+				TableName: TABLE_NAME,
+				Item: thesisItem,
+			})
+		);
+
+		return {
+			portfolioId,
+			thesis: thesisItemToResponse(thesisItem),
+			previous: thesisItemToResponse(archivedPrevious),
+		};
+	}
+
+	if (method === 'DELETE') {
+		if (!subId) throw errorResponse(400, 'scopeKey is required');
+		const parsedScope = parseThesisScopeKey(decodeURIComponent(subId));
+		const versions = await listScopeThesisVersions(portfolioId, parsedScope.scopeKey);
+		const currentActive = [...versions]
+			.filter((item) => String(item.entityType || '') === 'thesis')
+			.filter((item) => String(item.status || '').toLowerCase() === 'active')
+			.sort((left, right) => Number(right.version || 0) - Number(left.version || 0))[0];
+		if (!currentActive) throw errorResponse(404, 'Active thesis not found for scope');
+
+		const now = new Date().toISOString();
+		const archived = await archiveThesisItem(portfolioId, currentActive, now);
+		return {
+			portfolioId,
+			scopeKey: parsedScope.scopeKey,
+			thesis: thesisItemToResponse(archived),
+		};
+	}
+
+	throw errorResponse(405, 'Method not allowed');
+}
+
 async function handleRisk(method, portfolioId, userId, query = {}) {
 	if (method !== 'GET') throw errorResponse(405, 'Method not allowed');
 	return platformService.getPortfolioRisk(userId, {
@@ -1387,6 +1711,14 @@ exports.handler = async (event) => {
 					queryStringParameters || {},
 					subId
 				);
+			} else if (subResource === 'theses') {
+				body = await handleTheses(
+					httpMethod,
+					id,
+					requestBody,
+					queryStringParameters || {},
+					subId || null
+				);
 			} else if (subResource === 'risk') {
 				body = await handleRisk(httpMethod, id, userId, queryStringParameters || {});
 			} else if (subResource === 'benchmarks') {
@@ -1552,6 +1884,12 @@ exports._test = {
 	queryAllItems,
 	scanAllItems,
 	normalizeDropdownSettings,
+	normalizeThesisCountry,
+	normalizeThesisAssetClass,
+	buildThesisScopeKey,
+	parseThesisScopeKey,
+	parsePercentageValue,
+	validateThesisAllocations,
 	normalizeAppRole,
 	hasAppAccess,
 	resolveAppRole,

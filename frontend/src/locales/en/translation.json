@@ -248,6 +248,33 @@
       "noAssets": "No assets available for asset-level targets.",
       "emptySuggestion": "No contribution suggestions for current filters.",
       "emptyDrift": "No drift data available for current targets."
+    },
+    "thesis": {
+      "title": "Thesis Coverage",
+      "unavailable": "No thesis diagnostics available yet.",
+      "source": "Target source",
+      "activeScopes": "Active scopes",
+      "coveredAssets": "Covered assets",
+      "coveredValue": "Covered value",
+      "uncoveredHint": "{{count}} scope(s) in portfolio have no active thesis.",
+      "noConflicts": "No thesis min/max conflicts with current manual targets.",
+      "sources": {
+        "manual": "Manual targets",
+        "thesis": "Thesis targets",
+        "equal_weight": "Equal weight fallback"
+      },
+      "table": {
+        "scope": "Scope",
+        "issue": "Issue",
+        "actual": "Actual %",
+        "min": "Min %",
+        "max": "Max %",
+        "target": "Target %"
+      },
+      "conflictTypes": {
+        "below_min": "Below minimum",
+        "above_max": "Above maximum"
+      }
     }
   },
   "risk": {
@@ -1289,6 +1316,66 @@
     "email": "Email",
     "preferredCurrency": "Preferred Currency",
     "language": "Language",
+    "theses": {
+      "title": "Theses",
+      "description": "Define one active thesis per country + asset class scope (for example BR:FII). Each save creates a new version and archives the previous active thesis in that scope.",
+      "assetClass": "Asset Class",
+      "scopeKey": "Scope Key",
+      "searchPlaceholder": "Search by scope, title, thesis text, triggers, action plan, or risk notes",
+      "empty": "No theses configured yet.",
+      "emptyPortfolio": "No portfolio available.",
+      "showHistory": "History",
+      "historyTitle": "Version history - {{scopeKey}}",
+      "historyEmpty": "No thesis history for this scope.",
+      "countries": {
+        "BR": "Brazil",
+        "US": "United States",
+        "CA": "Canada"
+      },
+      "assetClasses": {
+        "FII": "FII",
+        "TESOURO": "Treasury",
+        "ETF": "ETF",
+        "STOCK": "Stock",
+        "REIT": "REIT",
+        "BOND": "Bond",
+        "CRYPTO": "Crypto",
+        "CASH": "Cash",
+        "RSU": "RSU"
+      },
+      "fields": {
+        "title": "Title",
+        "thesisText": "Thesis",
+        "targetAllocation": "Target Allocation (%)",
+        "minAllocation": "Min Allocation (%)",
+        "maxAllocation": "Max Allocation (%)",
+        "triggers": "Triggers",
+        "actionPlan": "Action Plan",
+        "riskNotes": "Risk Notes"
+      },
+      "actions": {
+        "create": "Create Thesis",
+        "updateVersion": "Save New Version"
+      },
+      "table": {
+        "scope": "Scope",
+        "title": "Title",
+        "target": "Target",
+        "bounds": "Bounds",
+        "version": "Version",
+        "updatedAt": "Updated",
+        "actions": "Actions"
+      },
+      "messages": {
+        "selectPortfolio": "Select a portfolio first.",
+        "created": "Thesis created.",
+        "updated": "New thesis version saved.",
+        "archived": "Thesis archived.",
+        "saveError": "Failed to save thesis.",
+        "archiveError": "Failed to archive thesis.",
+        "historyError": "Failed to load thesis history."
+      }
+    },
     "dropdownsDescription": "Manage every dropdown option in one place. Add, remove, or edit values and labels.",
     "dropdownKeyPlaceholder": "Dropdown key (e.g. assets.form.currency)",
     "dropdownLabelPlaceholder": "Dropdown label",

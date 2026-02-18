@@ -104,6 +104,156 @@
   color: var(--primary-light);
 }
 
+.theses-config {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-lg;
+
+  &__description {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+  }
+
+  &__portfolio {
+    display: flex;
+    flex-direction: column;
+    gap: $spacing-xs;
+    max-width: 360px;
+
+    label {
+      @include form-label(0.8rem);
+    }
+  }
+
+  &__empty {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+  }
+}
+
+.theses-form {
+  @include glass-card;
+  padding: $spacing-md;
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-md;
+  border-radius: 12px;
+
+  &__row {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: $spacing-sm;
+  }
+
+  &__field {
+    display: flex;
+    flex-direction: column;
+    gap: $spacing-xs;
+
+    label {
+      @include form-label(0.78rem);
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+
+    input,
+    select,
+    textarea {
+      @include form-control-base(var(--bg-primary), 0.9rem);
+    }
+
+    textarea {
+      min-height: 100px;
+      resize: vertical;
+    }
+  }
+
+  &__field--scope {
+    .theses-form__scope {
+      min-height: 40px;
+      display: flex;
+      align-items: center;
+      padding: 0 $spacing-sm;
+      border-radius: 10px;
+      border: 1px solid var(--glass-border);
+      background: rgba(2, 6, 23, 0.55);
+      color: var(--text-primary);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+      font-size: 0.82rem;
+    }
+  }
+
+  &__actions {
+    display: flex;
+    gap: $spacing-sm;
+    justify-content: flex-start;
+    align-items: center;
+  }
+
+  &__save {
+    @include button-base(0.9rem, $spacing-sm, $spacing-lg);
+    @include button-primary;
+  }
+
+  &__cancel {
+    @include button-base(0.9rem, $spacing-sm, $spacing-lg);
+    @include button-secondary;
+  }
+}
+
+.thesis-table__actions {
+  display: flex;
+  align-items: center;
+  gap: $spacing-xs;
+  flex-wrap: wrap;
+
+  button {
+    @include button-base(0.75rem, 4px, 10px);
+    @include button-secondary;
+  }
+}
+
+.thesis-table__danger {
+  @include button-danger;
+}
+
+.thesis-history {
+  @include glass-card;
+  padding: $spacing-md;
+  border-radius: 12px;
+
+  h3 {
+    margin: 0 0 $spacing-sm;
+    font-size: 0.92rem;
+    color: var(--text-primary);
+  }
+
+  p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+  }
+
+  ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: $spacing-xs;
+  }
+
+  li {
+    display: flex;
+    gap: $spacing-xs;
+    flex-wrap: wrap;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+  }
+}
+
 .dropdowns-config {
   display: flex;
   flex-direction: column;
@@ -307,6 +457,24 @@
     }
 
     &__group-actions .dropdowns-config__btn {
+      width: 100%;
+    }
+  }
+}
+
+@media (max-width: $breakpoint-tablet) {
+  .theses-form {
+    &__row {
+      grid-template-columns: 1fr;
+    }
+
+    &__actions {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    &__save,
+    &__cancel {
       width: 100%;
     }
   }

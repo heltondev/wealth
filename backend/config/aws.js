@@ -4,7 +4,11 @@ const DEFAULT_TABLE_NAME = 'wealth-main';
 const isTruthy = (value) =>
 	['1', 'true', 'yes', 'on'].includes(String(value || '').toLowerCase());
 
+const isLocalAppEnv = () =>
+	String(process.env.APP_ENV || '').toLowerCase() === 'local';
+
 const isLocalRuntime = () =>
+	isLocalAppEnv() ||
 	Boolean(process.env.DYNAMODB_ENDPOINT) ||
 	Boolean(process.env.S3_ENDPOINT) ||
 	isTruthy(process.env.IS_OFFLINE) ||
@@ -23,11 +27,16 @@ const resolveS3BucketName = () =>
 const buildAwsClientConfig = (options = {}) => {
 	const service = String(options.service || '').toLowerCase();
 	const region = resolveAwsRegion();
-	const endpoint = service === 'dynamodb'
-		? process.env.DYNAMODB_ENDPOINT
-		: service === 's3'
-			? process.env.S3_ENDPOINT
-			: undefined;
+	const endpoint = (() => {
+		// Local app mode must never hit AWS endpoints for DynamoDB.
+		if (service === 'dynamodb' && isLocalAppEnv()) return 'http://localhost:8000';
+		if (service === 'dynamodb') {
+			return process.env.DYNAMODB_ENDPOINT
+				|| (isLocalRuntime() ? 'http://localhost:8000' : undefined);
+		}
+		if (service === 's3') return process.env.S3_ENDPOINT;
+		return undefined;
+	})();
 
 	const config = { region };
 	if (endpoint) config.endpoint = endpoint;

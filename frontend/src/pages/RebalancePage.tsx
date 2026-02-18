@@ -9,6 +9,7 @@ import {
   type RebalanceSuggestionItem,
   type RebalanceSuggestionResponse,
   type RebalanceTarget,
+  type RebalanceThesisConflict,
 } from '../services/api';
 import { formatCurrency } from '../utils/formatters';
 import './RebalancePage.scss';
@@ -114,6 +115,13 @@ const RebalancePage = () => {
     if (value > 0) return `+${amount}`;
     if (value < 0) return `-${amount}`;
     return amount;
+  };
+  const formatPercent = (value: number | null | undefined, fractionDigits = 2) => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return '-';
+    return `${value.toLocaleString(numberLocale, {
+      minimumFractionDigits: fractionDigits,
+      maximumFractionDigits: fractionDigits,
+    })}%`;
   };
 
   const portfolioOptions = useMemo(
@@ -377,6 +385,24 @@ const RebalancePage = () => {
     [suggestion?.suggestions]
   );
 
+  const thesisDiagnostics = suggestion?.thesis_diagnostics || null;
+  const targetSource = String(suggestion?.target_source || 'equal_weight');
+
+  const thesisConflictRows = useMemo(
+    () => [...(thesisDiagnostics?.conflicts || [])].sort(
+      (left, right) => Math.abs(toNumber(right.actual_pct)) - Math.abs(toNumber(left.actual_pct))
+    ),
+    [thesisDiagnostics?.conflicts]
+  );
+
+  const resolveThesisScopeLabel = (conflict: RebalanceThesisConflict): string => {
+    if (String(conflict.scope || '').toLowerCase() === 'assetclass') {
+      const classKey = String(conflict.scope_key || '').toLowerCase();
+      return t(`assets.classes.${classKey}`, { defaultValue: toTitleCase(classKey || '-') });
+    }
+    return String(conflict.scope_key || '-');
+  };
+
   const resolveRowLabel = (row: RebalanceDriftItem | RebalanceSuggestionItem): string => {
     const rowScope = normalizeScope((row as RebalanceDriftItem).scope);
     if (rowScope === 'asset') {
@@ -590,6 +616,75 @@ const RebalancePage = () => {
                     {t('rebalance.refreshSuggestion')}
                   </button>
                 </div>
+              </section>
+
+              <section className="rebalance-card rebalance-card--wide">
+                <header className="rebalance-card__header">
+                  <h2>{t('rebalance.thesis.title')}</h2>
+                </header>
+                {!thesisDiagnostics ? (
+                  <p className="rebalance-card__empty">{t('rebalance.thesis.unavailable')}</p>
+                ) : (
+                  <div className="rebalance-thesis">
+                    <div className="rebalance-thesis__stats">
+                      <article className="rebalance-thesis__stat">
+                        <span>{t('rebalance.thesis.source')}</span>
+                        <strong>{t(`rebalance.thesis.sources.${targetSource}`, { defaultValue: targetSource })}</strong>
+                      </article>
+                      <article className="rebalance-thesis__stat">
+                        <span>{t('rebalance.thesis.activeScopes')}</span>
+                        <strong>{toNumber(thesisDiagnostics.active_scope_count)}</strong>
+                      </article>
+                      <article className="rebalance-thesis__stat">
+                        <span>{t('rebalance.thesis.coveredAssets')}</span>
+                        <strong>
+                          {`${toNumber(thesisDiagnostics.covered_asset_count)}/${toNumber(thesisDiagnostics.tracked_asset_count)}`}
+                        </strong>
+                      </article>
+                      <article className="rebalance-thesis__stat">
+                        <span>{t('rebalance.thesis.coveredValue')}</span>
+                        <strong>{formatPercent(toNumber(thesisDiagnostics.covered_value_pct), 1)}</strong>
+                      </article>
+                    </div>
+                    {(thesisDiagnostics.uncovered_scope_keys || []).length > 0 && (
+                      <p className="rebalance-thesis__hint">
+                        {t('rebalance.thesis.uncoveredHint', {
+                          count: (thesisDiagnostics.uncovered_scope_keys || []).length,
+                        })}
+                      </p>
+                    )}
+                    {thesisConflictRows.length > 0 ? (
+                      <div className="rebalance-table-wrapper">
+                        <table className="rebalance-table">
+                          <thead>
+                            <tr>
+                              <th>{t('rebalance.thesis.table.scope')}</th>
+                              <th>{t('rebalance.thesis.table.issue')}</th>
+                              <th>{t('rebalance.thesis.table.actual')}</th>
+                              <th>{t('rebalance.thesis.table.min')}</th>
+                              <th>{t('rebalance.thesis.table.max')}</th>
+                              <th>{t('rebalance.thesis.table.target')}</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {thesisConflictRows.map((conflict, index) => (
+                              <tr key={`${conflict.scope_key}-${conflict.type}-${index}`}>
+                                <td>{resolveThesisScopeLabel(conflict)}</td>
+                                <td>{t(`rebalance.thesis.conflictTypes.${conflict.type}`, { defaultValue: conflict.type })}</td>
+                                <td>{formatPercent(conflict.actual_pct)}</td>
+                                <td>{formatPercent(conflict.min_pct)}</td>
+                                <td>{formatPercent(conflict.max_pct)}</td>
+                                <td>{formatPercent(conflict.target_pct)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <p className="rebalance-card__empty">{t('rebalance.thesis.noConflicts')}</p>
+                    )}
+                  </div>
+                )}
               </section>
 
               <section className="rebalance-card rebalance-card--wide">

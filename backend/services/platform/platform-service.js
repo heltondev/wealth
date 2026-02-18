@@ -450,6 +450,110 @@ const numeric = (value, fallback = 0) => {
 	return parsed === null ? fallback : parsed;
 };
 
+const REBALANCE_TARGET_SOURCE_MANUAL = 'manual';
+const REBALANCE_TARGET_SOURCE_THESIS = 'thesis';
+const REBALANCE_TARGET_SOURCE_EQUAL_WEIGHT = 'equal_weight';
+
+const THESIS_ACTIVE_STATUS = 'active';
+const THESIS_COUNTRY_SET = new Set(['BR', 'US', 'CA']);
+const THESIS_ASSET_CLASS_TO_PORTFOLIO_CLASS = {
+	FII: 'fii',
+	TESOURO: 'bond',
+	ETF: 'etf',
+	STOCK: 'stock',
+	REIT: 'reit',
+	BOND: 'bond',
+	CRYPTO: 'crypto',
+	CASH: 'cash',
+	RSU: 'rsu',
+};
+const PORTFOLIO_CLASS_TO_THESIS_CLASS = {
+	fii: 'FII',
+	etf: 'ETF',
+	stock: 'STOCK',
+	reit: 'REIT',
+	crypto: 'CRYPTO',
+	cash: 'CASH',
+	rsu: 'RSU',
+	bond: 'BOND',
+	tesouro: 'TESOURO',
+	treasury: 'BOND',
+	fixedincome: 'BOND',
+	fixed_income: 'BOND',
+	'renda fixa': 'BOND',
+	renda_fixa: 'BOND',
+};
+const THESIS_TESOURO_HINT = /\b(TESOURO|NTN|LFT|LTN|IPCA|SELIC|PREFIXADO)\b/i;
+
+const normalizeThesisCountryForRebalance = (country) => {
+	const normalized = String(country || '').trim().toUpperCase();
+	if (!normalized) return 'BR';
+	if (THESIS_COUNTRY_SET.has(normalized)) return normalized;
+	return null;
+};
+
+const normalizeThesisPercent = (value) => {
+	const parsed = toNumberOrNull(value);
+	if (parsed === null || !Number.isFinite(parsed)) return null;
+	if (parsed < 0 || parsed > 100) return null;
+	return parsed;
+};
+
+const compareThesisVersion = (left, right) => {
+	const leftVersion = numeric(left?.version, 0);
+	const rightVersion = numeric(right?.version, 0);
+	if (leftVersion !== rightVersion) return leftVersion - rightVersion;
+	const leftUpdated = String(left?.updatedAt || left?.createdAt || '');
+	const rightUpdated = String(right?.updatedAt || right?.createdAt || '');
+	return leftUpdated.localeCompare(rightUpdated);
+};
+
+const normalizeThesisRowForRebalance = (row = {}) => {
+	const scopeKey = String(row.scopeKey || '').trim().toUpperCase();
+	if (!scopeKey || !scopeKey.includes(':')) return null;
+	const [country, thesisAssetClass, ...rest] = scopeKey.split(':');
+	if (rest.length > 0 || !country || !thesisAssetClass) return null;
+	if (!THESIS_COUNTRY_SET.has(country)) return null;
+	const portfolioClass = THESIS_ASSET_CLASS_TO_PORTFOLIO_CLASS[thesisAssetClass] || null;
+	if (!portfolioClass) return null;
+	return {
+		scope_key: scopeKey,
+		country,
+		thesis_asset_class: thesisAssetClass,
+		portfolio_class: portfolioClass,
+		status: String(row.status || THESIS_ACTIVE_STATUS).trim().toLowerCase(),
+		title: String(row.title || '').trim() || null,
+		target_allocation_pct: normalizeThesisPercent(row.targetAllocation),
+		min_allocation_pct: normalizeThesisPercent(row.minAllocation),
+		max_allocation_pct: normalizeThesisPercent(row.maxAllocation),
+		version: numeric(row.version, 0),
+		updated_at: row.updatedAt || row.createdAt || null,
+	};
+};
+
+const resolveAssetThesisScope = (asset = {}) => {
+	const country = normalizeThesisCountryForRebalance(asset.country);
+	if (!country) return null;
+	const assetClassRaw = String(asset.assetClass || '').trim();
+	if (!assetClassRaw) return null;
+	const normalizedClass = assetClassRaw.toLowerCase();
+
+	let thesisAssetClass = PORTFOLIO_CLASS_TO_THESIS_CLASS[normalizedClass] || null;
+	if (normalizedClass === 'bond') {
+		const text = `${String(asset.ticker || '')} ${String(asset.name || '')} ${String(asset.market || '')}`;
+		thesisAssetClass = country === 'BR' && THESIS_TESOURO_HINT.test(text) ? 'TESOURO' : 'BOND';
+	}
+
+	if (!thesisAssetClass) return null;
+	const portfolioClass = THESIS_ASSET_CLASS_TO_PORTFOLIO_CLASS[thesisAssetClass] || normalizedClass;
+	return {
+		scopeKey: `${country}:${thesisAssetClass}`,
+		country,
+		thesisAssetClass,
+		portfolioClass,
+	};
+};
+
 const resolveTaxRule = (assetClass) => {
 	const normalizedClass = String(assetClass || 'stock').toLowerCase();
 	const configured = TAX_RULE_BY_CLASS[normalizedClass] || null;
@@ -5393,6 +5497,9 @@ class PlatformService {
 		const currentByClass = {};
 		const currentByAsset = {};
 		const assetByClass = {};
+		const assetsByThesisScope = {};
+		const assetThesisScopeByAssetId = {};
+		let assetsWithoutThesisScopeCount = 0;
 		for (const asset of activeAssets) {
 			const assetId = String(asset.assetId || '');
 			if (!assetId) continue;
@@ -5437,16 +5544,33 @@ class PlatformService {
 				assetId,
 				market_value_brl: marketValueBrl,
 			});
+
+			const thesisScope = resolveAssetThesisScope(asset);
+			if (!thesisScope?.scopeKey) {
+				assetThesisScopeByAssetId[assetId] = null;
+				assetsWithoutThesisScopeCount += 1;
+				continue;
+			}
+
+			assetThesisScopeByAssetId[assetId] = thesisScope.scopeKey;
+			if (!assetsByThesisScope[thesisScope.scopeKey]) assetsByThesisScope[thesisScope.scopeKey] = [];
+			assetsByThesisScope[thesisScope.scopeKey].push({
+				assetId,
+				market_value_brl: marketValueBrl,
+			});
 		}
 
-		const targets = await this.#queryAll({
-			TableName: this.tableName,
-			KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
-			ExpressionAttributeValues: {
-				':pk': `PORTFOLIO#${portfolioId}`,
-				':sk': 'TARGET_ALLOC#',
-			},
-		});
+		const [targets, thesisRows] = await Promise.all([
+			this.#queryAll({
+				TableName: this.tableName,
+				KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
+				ExpressionAttributeValues: {
+					':pk': `PORTFOLIO#${portfolioId}`,
+					':sk': 'TARGET_ALLOC#',
+				},
+			}),
+			this.#listPortfolioTheses(portfolioId),
+		]);
 
 		const targetByClass = {};
 		const targetByAsset = {};
@@ -5468,32 +5592,261 @@ class PlatformService {
 			}
 		}
 
+		const latestThesisByScope = new Map();
+		for (const row of thesisRows) {
+			if (String(row.entityType || '').toLowerCase() !== 'thesis') continue;
+			const normalizedThesis = normalizeThesisRowForRebalance(row);
+			if (!normalizedThesis) continue;
+			const existing = latestThesisByScope.get(normalizedThesis.scope_key);
+			if (!existing || compareThesisVersion(normalizedThesis, existing) > 0) {
+				latestThesisByScope.set(normalizedThesis.scope_key, normalizedThesis);
+			}
+		}
+
+		const activeTheses = Array.from(latestThesisByScope.values())
+			.filter((item) => item.status === THESIS_ACTIVE_STATUS)
+			.sort((left, right) => String(left.scope_key || '').localeCompare(String(right.scope_key || '')));
+		const thesesWithTarget = activeTheses.filter((item) => numeric(item.target_allocation_pct, 0) > 0);
+		const thesisByScope = new Map(activeTheses.map((item) => [item.scope_key, item]));
+
+		const currentPortfolioTotal = Object.values(currentByAsset).reduce((sum, value) => sum + numeric(value, 0), 0);
+		let coveredAssetCount = 0;
+		let coveredValue = 0;
+		const uncoveredScopeKeys = new Set();
+		for (const asset of activeAssets) {
+			const assetId = String(asset.assetId || '');
+			if (!assetId) continue;
+			const scopeKey = assetThesisScopeByAssetId[assetId];
+			if (!scopeKey) continue;
+			if (thesisByScope.has(scopeKey)) {
+				coveredAssetCount += 1;
+				coveredValue += numeric(currentByAsset[assetId], 0);
+			} else {
+				uncoveredScopeKeys.add(scopeKey);
+			}
+		}
+
+		const thesisConflicts = [];
+		const conflictEpsilon = 0.0001;
+		if (activeTheses.length > 0) {
+			if (suggestionScope === 'asset' && Object.keys(targetByAsset).length > 0) {
+				const manualByThesisScope = {};
+				for (const [assetId, weight] of Object.entries(targetByAsset)) {
+					const scopeKey = assetThesisScopeByAssetId[assetId] || null;
+					if (!scopeKey) continue;
+					manualByThesisScope[scopeKey] = (manualByThesisScope[scopeKey] || 0) + (numeric(weight, 0) * 100);
+				}
+
+				for (const thesis of activeTheses) {
+					const scopeKey = thesis.scope_key;
+					const hasAssets = (assetsByThesisScope[scopeKey] || []).length > 0;
+					const hasManualValue = Object.prototype.hasOwnProperty.call(manualByThesisScope, scopeKey);
+					if (!hasAssets && !hasManualValue) continue;
+					const actualPct = numeric(manualByThesisScope[scopeKey], 0);
+					if (
+						thesis.min_allocation_pct !== null
+						&& actualPct + conflictEpsilon < thesis.min_allocation_pct
+					) {
+						thesisConflicts.push({
+							scope: 'thesisScope',
+							scope_key: scopeKey,
+							type: 'below_min',
+							actual_pct: actualPct,
+							min_pct: thesis.min_allocation_pct,
+							max_pct: thesis.max_allocation_pct,
+							target_pct: thesis.target_allocation_pct,
+							title: thesis.title,
+							country: thesis.country,
+							asset_class: thesis.thesis_asset_class,
+						});
+					}
+					if (
+						thesis.max_allocation_pct !== null
+						&& actualPct - conflictEpsilon > thesis.max_allocation_pct
+					) {
+						thesisConflicts.push({
+							scope: 'thesisScope',
+							scope_key: scopeKey,
+							type: 'above_max',
+							actual_pct: actualPct,
+							min_pct: thesis.min_allocation_pct,
+							max_pct: thesis.max_allocation_pct,
+							target_pct: thesis.target_allocation_pct,
+							title: thesis.title,
+							country: thesis.country,
+							asset_class: thesis.thesis_asset_class,
+						});
+					}
+				}
+			}
+
+			if (suggestionScope === 'assetClass' && Object.keys(targetByClass).length > 0) {
+				const manualByClassPct = {};
+				for (const [assetClass, weight] of Object.entries(targetByClass)) {
+					manualByClassPct[assetClass] = numeric(weight, 0) * 100;
+				}
+
+				const thesisGuidanceByClass = {};
+				for (const thesis of activeTheses) {
+					const classKey = String(thesis.portfolio_class || '').toLowerCase();
+					if (!classKey) continue;
+					if (!thesisGuidanceByClass[classKey]) {
+						thesisGuidanceByClass[classKey] = {
+							scope_keys: [],
+							min_pct: 0,
+							max_pct: 0,
+							has_max: false,
+							has_open_max: false,
+							target_pct: 0,
+							has_target: false,
+						};
+					}
+					const guidance = thesisGuidanceByClass[classKey];
+					guidance.scope_keys.push(thesis.scope_key);
+					if (thesis.min_allocation_pct !== null) {
+						guidance.min_pct += thesis.min_allocation_pct;
+					}
+					if (thesis.max_allocation_pct !== null) {
+						guidance.max_pct += thesis.max_allocation_pct;
+						guidance.has_max = true;
+					} else {
+						guidance.has_open_max = true;
+					}
+					if (thesis.target_allocation_pct !== null) {
+						guidance.target_pct += thesis.target_allocation_pct;
+						guidance.has_target = true;
+					}
+				}
+
+				for (const [assetClass, guidance] of Object.entries(thesisGuidanceByClass)) {
+					const actualPct = numeric(manualByClassPct[assetClass], 0);
+					const minPct = guidance.min_pct > 0 ? guidance.min_pct : null;
+					const maxPct =
+						guidance.has_open_max
+							? null
+							: guidance.has_max
+								? guidance.max_pct
+								: null;
+					const targetPct = guidance.has_target ? guidance.target_pct : null;
+
+					if (minPct !== null && actualPct + conflictEpsilon < minPct) {
+						thesisConflicts.push({
+							scope: 'assetClass',
+							scope_key: assetClass,
+							type: 'below_min',
+							actual_pct: actualPct,
+							min_pct: minPct,
+							max_pct: maxPct,
+							target_pct: targetPct,
+							related_scope_keys: guidance.scope_keys,
+						});
+					}
+					if (maxPct !== null && actualPct - conflictEpsilon > maxPct) {
+						thesisConflicts.push({
+							scope: 'assetClass',
+							scope_key: assetClass,
+							type: 'above_max',
+							actual_pct: actualPct,
+							min_pct: minPct,
+							max_pct: maxPct,
+							target_pct: targetPct,
+							related_scope_keys: guidance.scope_keys,
+						});
+					}
+				}
+			}
+		}
+
 		let targetByScope = {};
 		let currentByScope = {};
+		let targetSource = REBALANCE_TARGET_SOURCE_MANUAL;
+		let thesisAppliedScopeKeys = [];
+		let thesisIgnoredScopeKeys = [];
 		if (suggestionScope === 'asset') {
 			targetByScope = { ...targetByAsset };
 			currentByScope = currentByAsset;
 			if (Object.keys(targetByScope).length === 0) {
-				const assetsWithValue = Object.entries(currentByAsset)
-					.filter(([, value]) => Math.abs(numeric(value, 0)) > Number.EPSILON)
-					.map(([assetId]) => assetId);
-				const base = assetsWithValue.length > 0
-					? assetsWithValue
-					: Object.keys(currentByAsset);
-				const equalWeight = base.length ? 1 / base.length : 0;
-				for (const assetId of base) targetByScope[assetId] = equalWeight;
+				const thesisDerivedTargets = {};
+				for (const thesis of thesesWithTarget) {
+					const scopeKey = thesis.scope_key;
+					const bucket = assetsByThesisScope[scopeKey] || [];
+					const targetWeight = numeric(thesis.target_allocation_pct, 0) / 100;
+					if (targetWeight <= 0) continue;
+					if (bucket.length === 0) {
+						thesisIgnoredScopeKeys.push(scopeKey);
+						continue;
+					}
+					thesisAppliedScopeKeys.push(scopeKey);
+					const positiveBucketTotal = bucket.reduce(
+						(sum, item) => sum + Math.max(0, numeric(item.market_value_brl, 0)),
+						0
+					);
+					if (positiveBucketTotal > Number.EPSILON) {
+						for (const item of bucket) {
+							const share = Math.max(0, numeric(item.market_value_brl, 0)) / positiveBucketTotal;
+							thesisDerivedTargets[item.assetId] =
+								(thesisDerivedTargets[item.assetId] || 0) + (targetWeight * share);
+						}
+						continue;
+					}
+					const equalShare = bucket.length ? targetWeight / bucket.length : 0;
+					for (const item of bucket) {
+						thesisDerivedTargets[item.assetId] =
+							(thesisDerivedTargets[item.assetId] || 0) + equalShare;
+					}
+				}
+
+				if (Object.keys(thesisDerivedTargets).length > 0) {
+					targetByScope = thesisDerivedTargets;
+					targetSource = REBALANCE_TARGET_SOURCE_THESIS;
+				} else {
+					targetSource = REBALANCE_TARGET_SOURCE_EQUAL_WEIGHT;
+					const assetsWithValue = Object.entries(currentByAsset)
+						.filter(([, value]) => Math.abs(numeric(value, 0)) > Number.EPSILON)
+						.map(([assetId]) => assetId);
+					const base = assetsWithValue.length > 0
+						? assetsWithValue
+						: Object.keys(currentByAsset);
+					const equalWeight = base.length ? 1 / base.length : 0;
+					for (const assetId of base) targetByScope[assetId] = equalWeight;
+				}
 			}
 		} else {
 			targetByScope = { ...targetByClass };
 			currentByScope = currentByClass;
 			if (Object.keys(targetByScope).length === 0) {
-				const classes = Object.entries(currentByClass)
-					.filter(([, value]) => Math.abs(numeric(value, 0)) > Number.EPSILON)
-					.map(([cls]) => cls);
-				const equalWeight = classes.length ? 1 / classes.length : 0;
-				for (const cls of classes) targetByScope[cls] = equalWeight;
+				const thesisDerivedTargets = {};
+				for (const thesis of thesesWithTarget) {
+					const classKey = String(thesis.portfolio_class || '').toLowerCase();
+					const targetWeight = numeric(thesis.target_allocation_pct, 0) / 100;
+					if (!classKey || targetWeight <= 0) continue;
+					thesisDerivedTargets[classKey] = (thesisDerivedTargets[classKey] || 0) + targetWeight;
+					thesisAppliedScopeKeys.push(thesis.scope_key);
+				}
+
+				if (Object.keys(thesisDerivedTargets).length > 0) {
+					targetByScope = thesisDerivedTargets;
+					targetSource = REBALANCE_TARGET_SOURCE_THESIS;
+				} else {
+					targetSource = REBALANCE_TARGET_SOURCE_EQUAL_WEIGHT;
+					const classes = Object.entries(currentByClass)
+						.filter(([, value]) => Math.abs(numeric(value, 0)) > Number.EPSILON)
+						.map(([cls]) => cls);
+					const equalWeight = classes.length ? 1 / classes.length : 0;
+					for (const cls of classes) targetByScope[cls] = equalWeight;
+				}
 			}
 		}
+		if (Object.keys(targetByScope).length > 0 && targetSource === REBALANCE_TARGET_SOURCE_MANUAL) {
+			thesisAppliedScopeKeys = [];
+			thesisIgnoredScopeKeys = [];
+		}
+		thesisAppliedScopeKeys = Array.from(new Set(thesisAppliedScopeKeys)).sort((left, right) =>
+			String(left).localeCompare(String(right))
+		);
+		thesisIgnoredScopeKeys = Array.from(new Set(thesisIgnoredScopeKeys)).sort((left, right) =>
+			String(left).localeCompare(String(right))
+		);
 
 		const currentTotal = Object.values(currentByScope).reduce((sum, value) => sum + value, 0);
 		const targetTotal = currentTotal + contribution;
@@ -5576,13 +5929,34 @@ class PlatformService {
 			});
 		}
 
+		const thesisDiagnostics = {
+			active_scope_count: activeTheses.length,
+			scopes_with_target_count: thesesWithTarget.length,
+			applied_scope_count: thesisAppliedScopeKeys.length,
+			applied_scope_keys: thesisAppliedScopeKeys,
+			ignored_scope_keys: thesisIgnoredScopeKeys,
+			tracked_asset_count: activeAssets.length,
+			covered_asset_count: coveredAssetCount,
+			assets_without_scope_count: assetsWithoutThesisScopeCount,
+			covered_value_pct:
+				currentPortfolioTotal > 0
+					? (coveredValue / currentPortfolioTotal) * 100
+					: 0,
+			uncovered_scope_keys: Array.from(uncoveredScopeKeys).sort((left, right) =>
+				String(left).localeCompare(String(right))
+			),
+			conflicts: thesisConflicts,
+		};
+
 		return {
 			portfolioId,
 			scope: suggestionScope,
 			contribution,
 			current_total: currentTotal,
 			target_total_after_contribution: targetTotal,
+			target_source: targetSource,
 			targets: targetByScope,
+			thesis_diagnostics: thesisDiagnostics,
 			drift,
 			suggestions,
 			fetched_at: nowIso(),
@@ -8933,6 +9307,17 @@ class PlatformService {
 			ExpressionAttributeValues: {
 				':pk': `PORTFOLIO#${portfolioId}`,
 				':sk': 'ASSET#',
+			},
+		});
+	}
+
+	async #listPortfolioTheses(portfolioId) {
+		return this.#queryAll({
+			TableName: this.tableName,
+			KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
+			ExpressionAttributeValues: {
+				':pk': `PORTFOLIO#${portfolioId}`,
+				':sk': 'THESIS#',
 			},
 		});
 	}

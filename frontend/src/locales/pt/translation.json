@@ -248,6 +248,33 @@
       "noAssets": "Não há ativos disponíveis para alvos por ativo.",
       "emptySuggestion": "Sem sugestões de aporte para os filtros atuais.",
       "emptyDrift": "Sem dados de desvio para os alvos atuais."
+    },
+    "thesis": {
+      "title": "Cobertura de Teses",
+      "unavailable": "Nenhum diagnóstico de tese disponível ainda.",
+      "source": "Fonte dos alvos",
+      "activeScopes": "Escopos ativos",
+      "coveredAssets": "Ativos cobertos",
+      "coveredValue": "Valor coberto",
+      "uncoveredHint": "{{count}} escopo(s) na carteira sem tese ativa.",
+      "noConflicts": "Sem conflitos de mínimo/máximo entre teses e alvos manuais.",
+      "sources": {
+        "manual": "Alvos manuais",
+        "thesis": "Alvos por tese",
+        "equal_weight": "Fallback peso igual"
+      },
+      "table": {
+        "scope": "Escopo",
+        "issue": "Problema",
+        "actual": "Atual %",
+        "min": "Mín %",
+        "max": "Máx %",
+        "target": "Alvo %"
+      },
+      "conflictTypes": {
+        "below_min": "Abaixo do mínimo",
+        "above_max": "Acima do máximo"
+      }
     }
   },
   "risk": {
@@ -1289,6 +1316,66 @@
     "email": "Email",
     "preferredCurrency": "Moeda Preferida",
     "language": "Idioma",
+    "theses": {
+      "title": "Teses",
+      "description": "Defina uma tese ativa por escopo de país + classe de ativo (exemplo BR:FII). Cada salvamento cria uma nova versão e arquiva a tese ativa anterior do mesmo escopo.",
+      "assetClass": "Classe de Ativo",
+      "scopeKey": "Chave de Escopo",
+      "searchPlaceholder": "Buscar por escopo, título, texto da tese, gatilhos, plano de ação ou riscos",
+      "empty": "Nenhuma tese configurada ainda.",
+      "emptyPortfolio": "Nenhum portfólio disponível.",
+      "showHistory": "Histórico",
+      "historyTitle": "Histórico de versões - {{scopeKey}}",
+      "historyEmpty": "Sem histórico de tese para este escopo.",
+      "countries": {
+        "BR": "Brasil",
+        "US": "Estados Unidos",
+        "CA": "Canadá"
+      },
+      "assetClasses": {
+        "FII": "FII",
+        "TESOURO": "Tesouro",
+        "ETF": "ETF",
+        "STOCK": "Ação",
+        "REIT": "REIT",
+        "BOND": "Renda Fixa",
+        "CRYPTO": "Cripto",
+        "CASH": "Caixa",
+        "RSU": "RSU"
+      },
+      "fields": {
+        "title": "Título",
+        "thesisText": "Tese",
+        "targetAllocation": "Alocação Alvo (%)",
+        "minAllocation": "Alocação Mínima (%)",
+        "maxAllocation": "Alocação Máxima (%)",
+        "triggers": "Gatilhos",
+        "actionPlan": "Plano de Ação",
+        "riskNotes": "Notas de Risco"
+      },
+      "actions": {
+        "create": "Criar Tese",
+        "updateVersion": "Salvar Nova Versão"
+      },
+      "table": {
+        "scope": "Escopo",
+        "title": "Título",
+        "target": "Alvo",
+        "bounds": "Limites",
+        "version": "Versão",
+        "updatedAt": "Atualizado",
+        "actions": "Ações"
+      },
+      "messages": {
+        "selectPortfolio": "Selecione um portfólio primeiro.",
+        "created": "Tese criada.",
+        "updated": "Nova versão da tese salva.",
+        "archived": "Tese arquivada.",
+        "saveError": "Falha ao salvar tese.",
+        "archiveError": "Falha ao arquivar tese.",
+        "historyError": "Falha ao carregar histórico da tese."
+      }
+    },
     "dropdownsDescription": "Gerencie todos os dropdowns em um lugar. Adicione, remova ou edite valores e rótulos.",
     "dropdownKeyPlaceholder": "Chave do dropdown (ex: assets.form.currency)",
     "dropdownLabelPlaceholder": "Rótulo do dropdown",

@@ -11,6 +11,12 @@ const {
 		queryAllItems,
 		scanAllItems,
 		normalizeDropdownSettings,
+		normalizeThesisCountry,
+		normalizeThesisAssetClass,
+		buildThesisScopeKey,
+		parseThesisScopeKey,
+		parsePercentageValue,
+		validateThesisAllocations,
 		normalizeAppRole,
 		hasAppAccess,
 		resolveAppRole,
@@ -137,6 +143,43 @@ test('normalizeDropdownSettings merges defaults and sanitizes custom entries', (
 	]);
 });
 
+test('thesis helpers normalize and validate scope fields', () => {
+	assert.equal(normalizeThesisCountry('br'), 'BR');
+	assert.equal(normalizeThesisAssetClass('tesouro'), 'TESOURO');
+	assert.equal(buildThesisScopeKey('us', 'etf'), 'US:ETF');
+
+	const parsed = parseThesisScopeKey('ca:stock');
+	assert.equal(parsed.scopeKey, 'CA:STOCK');
+	assert.equal(parsed.country, 'CA');
+	assert.equal(parsed.assetClass, 'STOCK');
+
+	assert.equal(parsePercentageValue('12.34567', 'targetAllocation'), 12.3457);
+	assert.equal(parsePercentageValue('', 'targetAllocation'), null);
+});
+
+test('thesis helper validation rejects invalid payloads', () => {
+	assert.throws(
+		() => normalizeThesisCountry('AR'),
+		(error) => /country must be one of/i.test(String(error?.message || ''))
+	);
+	assert.throws(
+		() => normalizeThesisAssetClass('commodities'),
+		(error) => /assetClass must be one of/i.test(String(error?.message || ''))
+	);
+	assert.throws(
+		() => parseThesisScopeKey('BRFII'),
+		(error) => /scopeKey must follow/i.test(String(error?.message || ''))
+	);
+	assert.throws(
+		() => parsePercentageValue(120, 'targetAllocation'),
+		(error) => /between 0 and 100/i.test(String(error?.message || ''))
+	);
+	assert.throws(
+		() => validateThesisAllocations({ minAllocation: 30, targetAllocation: 20, maxAllocation: 40 }),
+		(error) => /targetAllocation must be greater than or equal to minAllocation/i.test(String(error?.message || ''))
+	);
+});
+
 test('normalizeAppRole normalizes roles correctly', () => {
 	assert.equal(normalizeAppRole('ADMIN'), 'ADMIN');
 	assert.equal(normalizeAppRole('admin'), 'ADMIN');
@@ -261,6 +304,37 @@ test('handler POST /portfolios/{id}/transactions accepts quantity with 2 decimal
 		})
 	);
 	assert.notEqual(response.statusCode, 400);
+});
+
+test('handler POST /portfolios/{id}/theses validates required title and thesis text', async () => {
+	const response = await handler(
+		makeEvent('POST', '/portfolios/test-portfolio/theses', {
+			country: 'BR',
+			assetClass: 'FII',
+			title: '',
+			thesisText: '',
+		})
+	);
+	assert.equal(response.statusCode, 400);
+	const payload = JSON.parse(response.body);
+	assert.match(payload.error, /title is required/i);
+});
+
+test('handler POST /portfolios/{id}/theses validates allocation boundaries', async () => {
+	const response = await handler(
+		makeEvent('POST', '/portfolios/test-portfolio/theses', {
+			country: 'BR',
+			assetClass: 'FII',
+			title: 'Thesis',
+			thesisText: 'Text',
+			minAllocation: 60,
+			targetAllocation: 50,
+			maxAllocation: 70,
+		})
+	);
+	assert.equal(response.statusCode, 400);
+	const payload = JSON.parse(response.body);
+	assert.match(payload.error, /targetAllocation/i);
 });
 
 test('handler GET /settings/profile returns profile data', async () => {

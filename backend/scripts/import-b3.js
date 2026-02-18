@@ -6,6 +6,14 @@
  *
  * Usage: node backend/scripts/import-b3.js [--dry-run]
  */
+try {
+	const path = require('path');
+	const dotenv = require('dotenv');
+	const repoRoot = path.resolve(__dirname, '../..');
+	dotenv.config({ path: path.join(repoRoot, '.env'), override: true });
+	dotenv.config({ path: path.join(repoRoot, '.env.local'), override: true });
+} catch {}
+
 const fs = require('fs');
 const path = require('path');
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');

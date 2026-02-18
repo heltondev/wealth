@@ -4,12 +4,13 @@ try {
 	const path = require('path');
 	const dotenv = require('dotenv');
 	const repoRoot = path.resolve(__dirname, '../..');
-	dotenv.config({ path: path.join(repoRoot, '.env') });
+	// In local dev we want repository env files to win over inherited shell vars.
+	dotenv.config({ path: path.join(repoRoot, '.env'), override: true });
 	dotenv.config({ path: path.join(repoRoot, '.env.local'), override: true });
 } catch {}
 
 // Force local-safe defaults for development server if values are missing.
-process.env.APP_ENV = process.env.APP_ENV || 'local';
+process.env.APP_ENV = 'local';
 process.env.DYNAMODB_ENDPOINT =
 	process.env.DYNAMODB_ENDPOINT || 'http://localhost:8000';
 process.env.TABLE_NAME = process.env.TABLE_NAME || 'wealth-main';

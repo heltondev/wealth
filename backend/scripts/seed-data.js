@@ -1,3 +1,11 @@
+try {
+	const path = require('path');
+	const dotenv = require('dotenv');
+	const repoRoot = path.resolve(__dirname, '../..');
+	dotenv.config({ path: path.join(repoRoot, '.env'), override: true });
+	dotenv.config({ path: path.join(repoRoot, '.env.local'), override: true });
+} catch {}
+
 const { DynamoDBClient, CreateTableCommand, DescribeTableCommand } = require('@aws-sdk/client-dynamodb');
 const { DynamoDBDocumentClient, PutCommand } = require('@aws-sdk/lib-dynamodb');
 const {
