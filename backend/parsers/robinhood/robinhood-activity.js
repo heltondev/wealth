@@ -17,17 +17,19 @@ const BaseParser = require('../base-parser');
 
 const parser = new BaseParser({ id: 'robinhood-activity', provider: 'robinhood' });
 
-const REQUIRED_HEADERS = new Set([
-	'activity date',
-	'process date',
-	'settle date',
-	'instrument',
-	'description',
-	'trans code',
-	'quantity',
-	'price',
-	'amount',
-]);
+const FIELD_ALIASES = {
+	activityDate: ['activity date', 'date', 'trade date'],
+	processDate: ['process date', 'processed date', 'processing date'],
+	settleDate: ['settle date', 'settlement date'],
+	instrument: ['instrument', 'symbol', 'ticker'],
+	description: ['description', 'details', 'memo', 'notes'],
+	transCode: ['trans code', 'transaction code', 'transaction type', 'type', 'action'],
+	quantity: ['quantity', 'qty', 'shares'],
+	price: ['price', 'unit price'],
+	amount: ['amount', 'net amount', 'total amount', 'total'],
+};
+
+const DETECT_REQUIRED_FIELDS = ['activityDate', 'instrument', 'transCode', 'amount'];
 
 const EPSILON = 1e-9;
 const POSITION_QUANTITY_EPSILON = 1e-5;
@@ -67,7 +69,34 @@ const NON_NAME_DESCRIPTION_PREFIXES = [
 
 const toText = (value) => String(value || '').trim();
 
-const normalizeHeader = (value) => toText(value).toLowerCase();
+const normalizeHeader = (value) => (
+	toText(value)
+		.replace(/^\uFEFF/, '')
+		.replace(/^["']+|["']+$/g, '')
+		.replace(/\s+/g, ' ')
+		.trim()
+		.toLowerCase()
+);
+
+const normalizeHeaderRow = (rowValues) => {
+	const flattened = [];
+	for (const value of rowValues || []) {
+		const text = toText(value);
+		if (!text) continue;
+		if ((rowValues || []).length === 1 && (text.includes(';') || text.includes(','))) {
+			flattened.push(
+				...text.split(/[;,]/g).map((item) => toText(item)).filter(Boolean)
+			);
+			continue;
+		}
+		flattened.push(text);
+	}
+	return flattened.map(normalizeHeader).filter(Boolean);
+};
+
+const hasAlias = (headersSet, fieldName) => (
+	(FIELD_ALIASES[fieldName] || []).some((alias) => headersSet.has(alias))
+);
 
 const normalizeTicker = (value) => (
 	toText(value)
@@ -250,11 +279,27 @@ const buildTransactionFromRow = ({
 	return null;
 };
 
+const getRowFieldValue = (row, fieldName) => {
+	const aliases = FIELD_ALIASES[fieldName] || [];
+	const entries = Object.entries(row || {});
+	for (const [key, value] of entries) {
+		const normalizedKey = normalizeHeader(key);
+		if (aliases.includes(normalizedKey)) return value;
+	}
+	return undefined;
+};
+
 parser.detect = function (_fileName, _sheetNames, sampleRows) {
 	if (!Array.isArray(sampleRows) || sampleRows.length === 0) return false;
-	const headerRow = Array.isArray(sampleRows[0]) ? sampleRows[0] : [];
-	const headers = new Set(headerRow.map(normalizeHeader).filter(Boolean));
-	return Array.from(REQUIRED_HEADERS).every((header) => headers.has(header));
+	for (const candidate of sampleRows) {
+		if (!Array.isArray(candidate) || candidate.length === 0) continue;
+		const normalizedHeaders = normalizeHeaderRow(candidate);
+		if (normalizedHeaders.length === 0) continue;
+		const headers = new Set(normalizedHeaders);
+		const isMatch = DETECT_REQUIRED_FIELDS.every((field) => hasAlias(headers, field));
+		if (isMatch) return true;
+	}
+	return false;
 };
 
 parser.parse = function (workbook) {
@@ -269,17 +314,17 @@ parser.parse = function (workbook) {
 	const transactions = [];
 
 	for (const row of rows) {
-		const code = toText(row['Trans Code']).toUpperCase();
-		const ticker = normalizeTicker(row.Instrument);
-		const description = toText(row.Description);
+		const code = toText(getRowFieldValue(row, 'transCode')).toUpperCase();
+		const ticker = normalizeTicker(getRowFieldValue(row, 'instrument'));
+		const description = toText(getRowFieldValue(row, 'description'));
 		const date = (
-			parseDateValue(row['Activity Date'])
-			|| parseDateValue(row['Process Date'])
-			|| parseDateValue(row['Settle Date'])
+			parseDateValue(getRowFieldValue(row, 'activityDate'))
+			|| parseDateValue(getRowFieldValue(row, 'processDate'))
+			|| parseDateValue(getRowFieldValue(row, 'settleDate'))
 		);
-		const quantity = parseShareQuantity(row.Quantity);
-		const price = parseSignedNumber(row.Price);
-		const amount = parseSignedNumber(row.Amount);
+		const quantity = parseShareQuantity(getRowFieldValue(row, 'quantity'));
+		const price = parseSignedNumber(getRowFieldValue(row, 'price'));
+		const amount = parseSignedNumber(getRowFieldValue(row, 'amount'));
 
 		if (!code && !ticker && !description) continue;
 		if (!ticker) continue;

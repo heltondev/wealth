@@ -27,7 +27,7 @@ function detectProviderFromWorkbook(fileName, workbook) {
 	const firstSheet = workbook.Sheets[sheetNames[0]];
 	const sampleRows = XLSX.utils
 		.sheet_to_json(firstSheet, { header: 1, defval: '' })
-		.slice(0, 4);
+		.slice(0, 12);
 
 	for (const parser of parsers) {
 		if (parser.detect(safeFileName, sheetNames, sampleRows)) {

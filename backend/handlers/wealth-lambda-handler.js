@@ -781,9 +781,18 @@ async function handleImport(portfolioId, body) {
 			if (!parser) throw errorResponse(400, `Unknown parser: ${parserId}`);
 		} else {
 			const detected = detectProviderFromWorkbook(safeFileName, workbook);
-			if (!detected) throw errorResponse(400, 'Could not detect file format');
-			parser = detected.parser;
-			workbook = detected.workbook;
+			if (!detected) {
+				if (/\.csv$/i.test(safeFileName)) {
+					parser = getParser('robinhood-activity');
+					if (!parser) throw errorResponse(400, 'Could not detect file format');
+					detectionMode = 'auto_csv_fallback';
+				} else {
+					throw errorResponse(400, 'Could not detect file format');
+				}
+			} else {
+				parser = detected.parser;
+				workbook = detected.workbook;
+			}
 		}
 	} else {
 		if (parserId) {
@@ -792,9 +801,19 @@ async function handleImport(portfolioId, body) {
 			workbook = XLSX.readFile(fileName);
 		} else {
 			const detected = detectProvider(fileName);
-			if (!detected) throw errorResponse(400, 'Could not detect file format');
-			parser = detected.parser;
-			workbook = detected.workbook;
+			if (!detected) {
+				if (/\.csv$/i.test(safeFileName)) {
+					parser = getParser('robinhood-activity');
+					if (!parser) throw errorResponse(400, 'Could not detect file format');
+					workbook = XLSX.readFile(fileName);
+					detectionMode = 'auto_csv_fallback';
+				} else {
+					throw errorResponse(400, 'Could not detect file format');
+				}
+			} else {
+				parser = detected.parser;
+				workbook = detected.workbook;
+			}
 		}
 	}
 

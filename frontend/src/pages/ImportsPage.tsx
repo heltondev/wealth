@@ -48,6 +48,10 @@ const ALIAS_SECTIONS: AliasSectionConfig[] = [
   { key: 'skipped', labelKey: 'documents.import.report.aliasesSkipped' },
 ];
 
+const FALLBACK_PARSERS: ParserDescriptor[] = [
+  { id: 'robinhood-activity', provider: 'robinhood' },
+];
+
 const ImportsPage = () => {
   const { t, i18n } = useTranslation();
   const {
@@ -74,15 +78,24 @@ const ImportsPage = () => {
     portfolios.map((portfolio) => ({ value: portfolio.portfolioId, label: portfolio.name }))
   ), [portfolios]);
 
+  const parserCatalog = useMemo(() => {
+    const map = new Map<string, ParserDescriptor>();
+    for (const parser of [...FALLBACK_PARSERS, ...availableParsers]) {
+      if (!parser?.id) continue;
+      map.set(parser.id, parser);
+    }
+    return Array.from(map.values());
+  }, [availableParsers]);
+
   const parserOptions = useMemo(() => ([
     { value: 'auto', label: t('documents.import.autoDetect') },
-    ...availableParsers.map((parser) => ({
+    ...parserCatalog.map((parser) => ({
       value: parser.id,
       label: t(`documents.import.parsers.${parser.id}`, {
         defaultValue: `${parser.id} (${String(parser.provider || '').toUpperCase()})`,
       }),
     })),
-  ]), [availableParsers, t]);
+  ]), [parserCatalog, t]);
 
   const loadParsers = useCallback(async () => {
     try {
@@ -421,7 +434,7 @@ const ImportsPage = () => {
             <label className="documents-page__file-picker">
               <input
                 type="file"
-                accept=".xlsx,.xlsm,.xls"
+                accept=".xlsx,.xlsm,.xls,.csv,text/csv"
                 className="documents-page__file-input"
                 onChange={(event) => {
                   const file = event.target.files && event.target.files[0] ? event.target.files[0] : null;

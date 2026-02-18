@@ -84,3 +84,39 @@ test('robinhood-activity parses Excel serial dates from CSV-like sheets', () => 
 	assert.equal(result.transactions[0].type, 'buy');
 	assert.equal(result.transactions[0].amount, 1.66);
 });
+
+test('robinhood-activity detects variant headers (symbol/type/date)', () => {
+	const sampleRows = [[
+		'Date',
+		'Symbol',
+		'Description',
+		'Type',
+		'Quantity',
+		'Price',
+		'Net Amount',
+	]];
+
+	assert.equal(
+		parser.detect('robinhood.csv', ['Sheet1'], sampleRows),
+		true
+	);
+});
+
+test('robinhood-activity detects headers with UTF-8 BOM', () => {
+	const sampleRows = [[
+		'\uFEFFActivity Date',
+		'Process Date',
+		'Settle Date',
+		'Instrument',
+		'Description',
+		'Trans Code',
+		'Quantity',
+		'Price',
+		'Amount',
+	]];
+
+	assert.equal(
+		parser.detect('robinhood.csv', ['Sheet1'], sampleRows),
+		true
+	);
+});

@@ -1121,9 +1121,9 @@
     "movementCsvError": "Não há transações para exportar.",
     "exportCsv": "Exportar Extrato CSV",
     "import": {
-      "title": "Importar Planilha B3",
-      "hint": "Envie um arquivo Excel da B3 para identificar o tipo automaticamente e atualizar ativos, transações e aliases sem duplicar registros.",
-      "pickFile": "Selecionar arquivo .xlsx",
+      "title": "Importar arquivo de portfólio",
+      "hint": "Envie um arquivo Excel da B3 ou CSV de atividade da Robinhood para identificar o parser automaticamente e atualizar ativos, transações e aliases sem duplicar registros.",
+      "pickFile": "Selecionar arquivo .xlsx ou .csv",
       "selectParser": "Selecionar parser",
       "previewAction": "Pré-visualizar importação",
       "previewing": "Gerando prévia...",
