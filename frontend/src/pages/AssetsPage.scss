@@ -3,6 +3,9 @@
 
 .assets-page {
   @include page-container;
+  margin: 0;
+  width: 100%;
+  max-width: none;
 
   &__header {
     display: flex;

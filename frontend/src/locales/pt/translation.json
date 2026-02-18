@@ -14,7 +14,9 @@
     "documents": "Relatórios",
     "imports": "Ingestão de Dados",
     "settings": "Configurações",
-    "logout": "Sair"
+    "logout": "Sair",
+    "themeLight": "Modo claro",
+    "themeDark": "Modo escuro"
   },
   "login": {
     "title": "Invest",

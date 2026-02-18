@@ -93,11 +93,28 @@ const Layout = ({ children }: LayoutProps) => {
         </nav>
 
         <div className="sidebar__footer">
-          <button className="sidebar__theme-toggle" onClick={toggleTheme}>
-            {theme === 'dark' ? '☀️' : '🌙'}
-          </button>
-          <div className="sidebar__user">
-            <span className="sidebar__user-name">{user?.name}</span>
+          <div className="sidebar__account">
+            <span className="sidebar__user-name" title={user?.name}>
+              {user?.name}
+            </span>
+            <span className="sidebar__user-email" title={user?.email}>
+              {user?.email}
+            </span>
+          </div>
+          <div className="sidebar__footer-actions">
+            <button
+              className="sidebar__theme-toggle"
+              onClick={toggleTheme}
+              aria-label={theme === 'dark' ? t('nav.themeLight') : t('nav.themeDark')}
+              title={theme === 'dark' ? t('nav.themeLight') : t('nav.themeDark')}
+            >
+              <span className="sidebar__theme-toggle-icon" aria-hidden="true">
+                {theme === 'dark' ? '☀️' : '🌙'}
+              </span>
+              <span className="sidebar__theme-toggle-text">
+                {theme === 'dark' ? t('nav.themeLight') : t('nav.themeDark')}
+              </span>
+            </button>
             <button className="sidebar__logout" onClick={handleLogout}>
               {t('nav.logout')}
             </button>

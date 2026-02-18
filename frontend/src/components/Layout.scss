@@ -306,42 +306,73 @@
   }
 
   &__footer {
-    padding: $spacing-md $spacing-lg;
+    margin: $spacing-sm $spacing-md $spacing-md;
+    padding: 0.56rem;
     border-top: 1px solid rgba(203, 213, 225, 0.2);
-    display: flex;
-    flex-direction: column;
-    gap: $spacing-sm;
+    border-radius: 14px;
+    border: 1px solid rgba(203, 213, 225, 0.2);
+    background:
+      linear-gradient(150deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.03) 48%, transparent 100%),
+      var(--bg-tertiary);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    display: grid;
+    gap: 0.56rem;
+  }
+
+  &__account {
+    display: grid;
+    gap: 0.18rem;
+    padding: 0.24rem 0.32rem 0;
   }
 
   &__theme-toggle {
-    border: 1px solid rgba(203, 213, 225, 0.24);
+    @include button-base(0.76rem, 0.4rem, 0.5rem);
+    border: 1px solid rgba(148, 163, 184, 0.3);
     border-radius: 10px;
-    padding: 0.4rem 0.58rem;
-    font-size: 1.05rem;
-    background: var(--glass-bg);
+    background: rgba(30, 64, 175, 0.18);
     color: var(--text-primary);
-    width: fit-content;
+    width: 100%;
+    justify-content: center;
+    gap: 0.38rem;
+    font-weight: 680;
     transition:
       background $transition-fast,
       border-color $transition-fast,
       transform $transition-fast;
 
     &:hover {
-      background: rgba(56, 189, 248, 0.18);
-      border-color: rgba(103, 232, 249, 0.44);
+      background: rgba(37, 99, 235, 0.28);
+      border-color: rgba(96, 165, 250, 0.52);
       transform: translateY(-1px);
     }
   }
 
-  &__user {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: $spacing-sm;
+  &__theme-toggle-icon {
+    font-size: 0.92rem;
+    line-height: 1;
+  }
+
+  &__theme-toggle-text {
+    letter-spacing: 0.01em;
+  }
+
+  &__footer-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
   }
 
   &__user-name {
-    font-size: 0.83rem;
+    font-size: 0.8rem;
+    color: #dbeafe;
+    font-weight: 680;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__user-email {
+    font-size: 0.72rem;
     color: var(--text-secondary);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -349,13 +380,14 @@
   }
 
   &__logout {
+    @include button-base(0.76rem, 0.4rem, 0.5rem);
     border: 1px solid rgba(239, 68, 68, 0.34);
     border-radius: 8px;
-    padding: 0.3rem 0.56rem;
     background: rgba(239, 68, 68, 0.14);
     color: #fda4af;
-    font-size: 0.78rem;
     font-weight: 650;
+    width: 100%;
+    justify-content: center;
     transition:
       background $transition-fast,
       border-color $transition-fast;
@@ -363,6 +395,7 @@
     &:hover {
       background: rgba(239, 68, 68, 0.24);
       border-color: rgba(248, 113, 113, 0.52);
+      transform: translateY(-1px);
     }
   }
 }

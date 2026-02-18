@@ -14,7 +14,9 @@
     "documents": "Reports",
     "imports": "Data Ingestion",
     "settings": "Settings",
-    "logout": "Logout"
+    "logout": "Logout",
+    "themeLight": "Light mode",
+    "themeDark": "Dark mode"
   },
   "login": {
     "title": "Invest",
