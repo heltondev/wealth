@@ -167,9 +167,14 @@ function DataTable<Row>({
     setCurrentPage(1);
   };
 
-  const getSortIndicator = (columnKey: string) => {
-    if (sortKey !== columnKey) return '<>';
-    return sortDirection === 'asc' ? '^' : 'v';
+  const getSortIndicatorState = (columnKey: string): 'none' | TableSortDirection => {
+    if (sortKey !== columnKey) return 'none';
+    return sortDirection;
+  };
+
+  const getAriaSort = (column: DataTableColumn<Row>): 'none' | 'ascending' | 'descending' => {
+    if (!column.sortable || sortKey !== column.key) return 'none';
+    return sortDirection === 'asc' ? 'ascending' : 'descending';
   };
 
   return (
@@ -230,7 +235,11 @@ function DataTable<Row>({
               <thead>
                 <tr>
                   {columns.map((column) => (
-                    <th key={column.key} className={column.headerClassName}>
+                    <th
+                      key={column.key}
+                      className={column.headerClassName}
+                      aria-sort={column.sortable ? getAriaSort(column) : undefined}
+                    >
                       {column.sortable ? (
                         <button
                           type="button"
@@ -238,7 +247,13 @@ function DataTable<Row>({
                           onClick={() => handleSort(column)}
                         >
                           {column.label}
-                          <span>{getSortIndicator(column.key)}</span>
+                          <span
+                            className={`data-table__sort-indicator data-table__sort-indicator--${getSortIndicatorState(column.key)}`}
+                            aria-hidden="true"
+                          >
+                            <span className="data-table__sort-chevron data-table__sort-chevron--up" />
+                            <span className="data-table__sort-chevron data-table__sort-chevron--down" />
+                          </span>
                         </button>
                       ) : (
                         column.label

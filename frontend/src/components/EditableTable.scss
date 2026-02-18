@@ -13,9 +13,14 @@
       vertical-align: middle;
     }
 
-    td input,
-    td select {
+    td input {
       @include form-control-base(var(--bg-primary), 0.85rem);
+      padding: $spacing-xs $spacing-sm;
+      border-radius: 8px;
+    }
+
+    td select {
+      @include form-select-base(var(--bg-primary), 0.85rem);
       padding: $spacing-xs $spacing-sm;
       border-radius: 8px;
     }

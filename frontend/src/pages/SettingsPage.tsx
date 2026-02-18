@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Layout from '../components/Layout';
 import DataTable, { type DataTableColumn } from '../components/DataTable';
 import EditableTable, { type EditableTableColumn } from '../components/EditableTable';
@@ -286,6 +286,43 @@ const SettingsPage = () => {
   const activeLanguage = i18n.language?.startsWith('pt') ? 'pt' : 'en';
   const isSystemDropdown = (key: string) => Boolean(DEFAULT_DROPDOWN_CONFIG[key]);
 
+  const resolveTranslatedLabel = useCallback((key: string): string | null => {
+    const normalized = key.trim();
+    if (!normalized) return null;
+
+    const directKey = normalized;
+    if (i18n.exists(directKey)) {
+      const translated = t(directKey);
+      if (typeof translated === 'string' && translated.trim()) {
+        return translated;
+      }
+    }
+
+    const labelKey = `${normalized}.label`;
+    if (i18n.exists(labelKey)) {
+      const translated = t(labelKey);
+      if (typeof translated === 'string' && translated.trim()) {
+        return translated;
+      }
+    }
+
+    return null;
+  }, [i18n, t]);
+
+  const resolveDropdownLabel = useCallback((dropdownKey: string, configuredLabel?: string): string => {
+    const normalizedLabel = String(configuredLabel || '').trim();
+    const translatedConfiguredLabel = normalizedLabel
+      ? resolveTranslatedLabel(normalizedLabel)
+      : null;
+
+    if (translatedConfiguredLabel) return translatedConfiguredLabel;
+
+    const translatedFromKey = resolveTranslatedLabel(dropdownKey);
+    if (translatedFromKey) return translatedFromKey;
+
+    return normalizedLabel || dropdownKey;
+  }, [resolveTranslatedLabel]);
+
   const aliasColumns = useMemo<DataTableColumn<Alias>[]>(() => ([
     {
       key: 'normalizedName',
@@ -520,7 +557,7 @@ const SettingsPage = () => {
                   <div className="dropdowns-config__group-meta">
                     <code className="dropdowns-config__group-key">{key}</code>
                     <span className="dropdowns-config__group-count">{config.options.length}</span>
-                    <span className="dropdowns-config__group-label">{config.label || key}</span>
+                    <span className="dropdowns-config__group-label">{resolveDropdownLabel(key, config.label)}</span>
                   </div>
                   {!isSystemDropdown(key) && (
                     <button

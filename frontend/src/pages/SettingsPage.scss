@@ -5,7 +5,7 @@
   @include page-container;
 
   &__title {
-    font-size: 1.8rem;
+    @include page-title-gradient(1.8rem);
     margin-bottom: $spacing-lg;
   }
 
@@ -57,9 +57,14 @@
       margin-bottom: $spacing-xs;
     }
 
-    input, select {
+    input {
       max-width: 400px;
       @include form-control-base(var(--bg-primary), 0.9rem);
+    }
+
+    select {
+      max-width: 400px;
+      @include form-select-base(var(--bg-primary), 0.9rem);
     }
   }
 
@@ -76,8 +81,14 @@
   flex-wrap: wrap;
   margin-bottom: $spacing-lg;
 
-  input, select {
+  input {
     @include form-control-base(var(--bg-primary), 0.9rem);
+    flex: 1 1 220px;
+    max-width: 320px;
+  }
+
+  select {
+    @include form-select-base(var(--bg-primary), 0.9rem);
     flex: 1 1 220px;
     max-width: 320px;
   }
