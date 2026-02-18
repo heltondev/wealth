@@ -210,6 +210,7 @@
     "targetEditorTitle": "Target Allocation",
     "driftTitle": "Current vs Target Drift",
     "suggestionTitle": "Contribution Simulation",
+    "beforeAfterTitle": "Before vs After Recommended Contribution",
     "amount": "Contribution Amount",
     "amountBrl": "BRL contribution (to BR assets)",
     "amountUsd": "USD contribution (to US assets)",
@@ -241,6 +242,10 @@
       "actions": "Actions",
       "currentValue": "Current Value",
       "targetValue": "Target Value",
+      "beforeContribution": "Before Contribution",
+      "beforePercent": "Before %",
+      "afterContribution": "After Contribution",
+      "afterPercent": "After %",
       "diffValue": "Difference",
       "driftPct": "Drift %",
       "recommendedContribution": "Recommended Contribution"
@@ -255,7 +260,10 @@
     },
     "thesis": {
       "title": "Thesis Coverage",
+      "activeListTitle": "Active Theses Used in Rebalance",
       "unavailable": "No thesis diagnostics available yet.",
+      "loadError": "Failed to load theses.",
+      "noTheses": "No active theses found.",
       "source": "Target source",
       "activeScopes": "Active scopes",
       "coveredAssets": "Covered assets",
@@ -269,11 +277,31 @@
       },
       "table": {
         "scope": "Scope",
+        "title": "Title",
         "issue": "Issue",
         "actual": "Actual %",
         "min": "Min %",
         "max": "Max %",
-        "target": "Target %"
+        "target": "Target %",
+        "coverage": "Coverage",
+        "details": "Details"
+      },
+      "actions": {
+        "viewDetails": "View details"
+      },
+      "modal": {
+        "subtitle": "Detailed thesis data for this scope",
+        "scope": "Scope",
+        "version": "Version",
+        "updatedAt": "Updated at",
+        "target": "Target %",
+        "min": "Min %",
+        "max": "Max %",
+        "empty": "Not provided."
+      },
+      "coverageStatus": {
+        "covered": "Covered",
+        "uncovered": "Uncovered"
       },
       "conflictTypes": {
         "below_min": "Below minimum",

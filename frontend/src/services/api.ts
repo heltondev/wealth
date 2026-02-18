@@ -352,6 +352,8 @@ export interface RebalanceDriftItem {
   assetClass?: string;
   assetId?: string;
   ticker?: string | null;
+  display_currency?: string | null;
+  fx_rate_to_brl?: number | null;
   current_value: number;
   target_value: number;
   target_weight_pct: number;
@@ -365,6 +367,8 @@ export interface RebalanceSuggestionItem {
   assetClass?: string;
   assetId?: string | null;
   ticker?: string | null;
+  display_currency?: string | null;
+  fx_rate_to_brl?: number | null;
   recommended_amount: number;
   current_value: number;
   target_value: number;

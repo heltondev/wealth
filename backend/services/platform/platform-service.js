@@ -5535,7 +5535,10 @@ class PlatformService {
 		const currentByAsset = {};
 		const assetByClass = {};
 		const assetCountryByAssetId = {};
+		const assetCurrencyByAssetId = {};
+		const assetFxRateByAssetId = {};
 		const countrySetByClass = {};
+		const currencySetByClass = {};
 		const assetsByThesisScope = {};
 		const assetThesisScopeByAssetId = {};
 		let assetsWithoutThesisScopeCount = 0;
@@ -5579,6 +5582,8 @@ class PlatformService {
 				currentByClass[assetClass] = (currentByClass[assetClass] || 0) + marketValueBrl;
 				currentByAsset[assetId] = marketValueBrl;
 				assetCountryByAssetId[assetId] = normalizedCountry;
+				assetCurrencyByAssetId[assetId] = currency;
+				assetFxRateByAssetId[assetId] = fxRate;
 				if (!assetByClass[assetClass]) assetByClass[assetClass] = [];
 				assetByClass[assetClass].push({
 					asset,
@@ -5588,6 +5593,8 @@ class PlatformService {
 				});
 				if (!countrySetByClass[assetClass]) countrySetByClass[assetClass] = new Set();
 				countrySetByClass[assetClass].add(normalizedCountry);
+				if (!currencySetByClass[assetClass]) currencySetByClass[assetClass] = new Set();
+				currencySetByClass[assetClass].add(currency);
 
 			const thesisScope = resolveAssetThesisScope(asset);
 			if (!thesisScope?.scopeKey) {
@@ -5892,11 +5899,47 @@ class PlatformService {
 			String(left).localeCompare(String(right))
 		);
 
-		const currentTotal = Object.values(currentByScope).reduce((sum, value) => sum + value, 0);
-		const targetTotal = currentTotal + contribution;
-		const deficits = {};
-		const drift = [];
-		let positiveDeficitSum = 0;
+			const currentTotal = Object.values(currentByScope).reduce((sum, value) => sum + value, 0);
+			const targetTotal = currentTotal + contribution;
+			const deficits = {};
+			const drift = [];
+			const resolveDisplayMetaForScope = (scopeKey, scopeType) => {
+				if (scopeType === 'asset') {
+					const assetCurrency = String(assetCurrencyByAssetId[scopeKey] || 'BRL').toUpperCase();
+					const fxRate = numeric(assetFxRateByAssetId[scopeKey], assetCurrency === 'BRL' ? 1 : 0);
+					if (assetCurrency !== 'BRL' && fxRate > 0) {
+						return {
+							display_currency: assetCurrency,
+							fx_rate_to_brl: fxRate,
+						};
+					}
+					return {
+						display_currency: 'BRL',
+						fx_rate_to_brl: 1,
+					};
+				}
+
+				const classCurrencies = currencySetByClass[scopeKey];
+				if (classCurrencies instanceof Set && classCurrencies.size === 1) {
+					const [classCurrency] = Array.from(classCurrencies.values());
+					const normalizedCurrency = String(classCurrency || 'BRL').toUpperCase();
+					if (normalizedCurrency !== 'BRL') {
+						const fxRate = numeric(fxRates[`${normalizedCurrency}/BRL`], 0);
+						if (fxRate > 0) {
+							return {
+								display_currency: normalizedCurrency,
+								fx_rate_to_brl: fxRate,
+							};
+						}
+					}
+				}
+
+				return {
+					display_currency: 'BRL',
+					fx_rate_to_brl: 1,
+				};
+			};
+			let positiveDeficitSum = 0;
 		for (const [key, weight] of Object.entries(targetByScope)) {
 			const desired = targetTotal * weight;
 			const current = numeric(currentByScope[key], 0);
@@ -5908,69 +5951,81 @@ class PlatformService {
 			const driftPct = (currentWeight - targetWeight) * 100;
 			const driftValue = current - desired;
 
-			if (suggestionScope === 'asset') {
-				const asset = assetById.get(key) || {};
-				drift.push({
-					scope: 'asset',
-					scope_key: key,
-					assetId: key,
-					ticker: asset.ticker || null,
-					assetClass: String(asset.assetClass || 'unknown').toLowerCase(),
-					current_value: current,
-					target_value: desired,
-					target_weight_pct: targetWeight * 100,
-					current_weight_pct: currentWeight * 100,
-					drift_value: driftValue,
-					drift_pct: driftPct,
-				});
-			} else {
-				drift.push({
-					scope: 'assetClass',
-					scope_key: key,
-					assetClass: key,
-					current_value: current,
-					target_value: desired,
-					target_weight_pct: targetWeight * 100,
-					current_weight_pct: currentWeight * 100,
-					drift_value: driftValue,
-					drift_pct: driftPct,
-				});
+				if (suggestionScope === 'asset') {
+					const asset = assetById.get(key) || {};
+					const displayMeta = resolveDisplayMetaForScope(key, 'asset');
+					drift.push({
+						scope: 'asset',
+						scope_key: key,
+						assetId: key,
+						ticker: asset.ticker || null,
+						assetClass: String(asset.assetClass || 'unknown').toLowerCase(),
+						current_value: current,
+						target_value: desired,
+						target_weight_pct: targetWeight * 100,
+						current_weight_pct: currentWeight * 100,
+						drift_value: driftValue,
+						drift_pct: driftPct,
+						display_currency: displayMeta.display_currency,
+						fx_rate_to_brl: displayMeta.fx_rate_to_brl,
+					});
+				} else {
+					const displayMeta = resolveDisplayMetaForScope(key, 'assetClass');
+					drift.push({
+						scope: 'assetClass',
+						scope_key: key,
+						assetClass: key,
+						current_value: current,
+						target_value: desired,
+						target_weight_pct: targetWeight * 100,
+						current_weight_pct: currentWeight * 100,
+						drift_value: driftValue,
+						drift_pct: driftPct,
+						display_currency: displayMeta.display_currency,
+						fx_rate_to_brl: displayMeta.fx_rate_to_brl,
+					});
+				}
 			}
-		}
 
-		const suggestions = [];
-		let contributionBreakdown = null;
+			const suggestions = [];
+			let contributionBreakdown = null;
 
-		const pushSuggestionRow = (key, allocation) => {
-			if (allocation <= 0) return;
-			if (suggestionScope === 'asset') {
-				const asset = assetById.get(key) || {};
+			const pushSuggestionRow = (key, allocation) => {
+				if (allocation <= 0) return;
+				if (suggestionScope === 'asset') {
+					const asset = assetById.get(key) || {};
+					const displayMeta = resolveDisplayMetaForScope(key, 'asset');
+					suggestions.push({
+						scope: 'asset',
+						assetId: key,
+						ticker: asset.ticker || null,
+						assetClass: String(asset.assetClass || 'unknown').toLowerCase(),
+						recommended_amount: allocation,
+						current_value: numeric(currentByScope[key], 0),
+						target_value: targetTotal * numeric(targetByScope[key], 0),
+						display_currency: displayMeta.display_currency,
+						fx_rate_to_brl: displayMeta.fx_rate_to_brl,
+					});
+					return;
+				}
+
+				const cls = key;
+				const bucket = assetByClass[cls] || [];
+				const selected = bucket
+					.sort((left, right) => numeric(right.market_value_brl, 0) - numeric(left.market_value_brl, 0))[0];
+				const displayMeta = resolveDisplayMetaForScope(cls, 'assetClass');
 				suggestions.push({
-					scope: 'asset',
-					assetId: key,
-					ticker: asset.ticker || null,
-					assetClass: String(asset.assetClass || 'unknown').toLowerCase(),
+					scope: 'assetClass',
+					assetClass: cls,
 					recommended_amount: allocation,
-					current_value: numeric(currentByScope[key], 0),
-					target_value: targetTotal * numeric(targetByScope[key], 0),
+					assetId: selected?.asset?.assetId || null,
+					ticker: selected?.asset?.ticker || null,
+					current_value: numeric(currentByScope[cls], 0),
+					target_value: targetTotal * numeric(targetByScope[cls], 0),
+					display_currency: displayMeta.display_currency,
+					fx_rate_to_brl: displayMeta.fx_rate_to_brl,
 				});
-				return;
-			}
-
-			const cls = key;
-			const bucket = assetByClass[cls] || [];
-			const selected = bucket
-				.sort((left, right) => numeric(right.market_value_brl, 0) - numeric(left.market_value_brl, 0))[0];
-			suggestions.push({
-				scope: 'assetClass',
-				assetClass: cls,
-				recommended_amount: allocation,
-				assetId: selected?.asset?.assetId || null,
-				ticker: selected?.asset?.ticker || null,
-				current_value: numeric(currentByScope[cls], 0),
-				target_value: targetTotal * numeric(targetByScope[cls], 0),
-			});
-		};
+			};
 
 		if (contributionMode === REBALANCE_CONTRIBUTION_MODE_BY_CURRENCY) {
 			const suggestedAmountByScope = {};

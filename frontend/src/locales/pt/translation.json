@@ -210,6 +210,7 @@
     "targetEditorTitle": "Alocação Alvo",
     "driftTitle": "Desvio Atual vs Alvo",
     "suggestionTitle": "Simulação de Aporte",
+    "beforeAfterTitle": "Antes vs Depois do Aporte Recomendado",
     "amount": "Valor do Aporte",
     "amountBrl": "Aporte em BRL (para ativos BR)",
     "amountUsd": "Aporte em USD (para ativos US)",
@@ -241,6 +242,10 @@
       "actions": "Ações",
       "currentValue": "Valor Atual",
       "targetValue": "Valor Alvo",
+      "beforeContribution": "Antes do Aporte",
+      "beforePercent": "Antes %",
+      "afterContribution": "Depois do Aporte",
+      "afterPercent": "Depois %",
       "diffValue": "Diferença",
       "driftPct": "Desvio %",
       "recommendedContribution": "Aporte Recomendado"
@@ -255,7 +260,10 @@
     },
     "thesis": {
       "title": "Cobertura de Teses",
+      "activeListTitle": "Teses Ativas Usadas no Rebalanceamento",
       "unavailable": "Nenhum diagnóstico de tese disponível ainda.",
+      "loadError": "Falha ao carregar teses.",
+      "noTheses": "Nenhuma tese ativa encontrada.",
       "source": "Fonte dos alvos",
       "activeScopes": "Escopos ativos",
       "coveredAssets": "Ativos cobertos",
@@ -269,11 +277,31 @@
       },
       "table": {
         "scope": "Escopo",
+        "title": "Título",
         "issue": "Problema",
         "actual": "Atual %",
         "min": "Mín %",
         "max": "Máx %",
-        "target": "Alvo %"
+        "target": "Alvo %",
+        "coverage": "Cobertura",
+        "details": "Detalhes"
+      },
+      "actions": {
+        "viewDetails": "Ver detalhes"
+      },
+      "modal": {
+        "subtitle": "Dados detalhados da tese para este escopo",
+        "scope": "Escopo",
+        "version": "Versão",
+        "updatedAt": "Atualizado em",
+        "target": "Alvo %",
+        "min": "Mín %",
+        "max": "Máx %",
+        "empty": "Não informado."
+      },
+      "coverageStatus": {
+        "covered": "Coberta",
+        "uncovered": "Sem cobertura"
       },
       "conflictTypes": {
         "below_min": "Abaixo do mínimo",

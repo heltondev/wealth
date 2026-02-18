@@ -10,6 +10,7 @@ import {
   type RebalanceSuggestionResponse,
   type RebalanceTarget,
   type RebalanceThesisConflict,
+  type ThesisRecord,
 } from '../services/api';
 import { formatCurrency } from '../utils/formatters';
 import './RebalancePage.scss';
@@ -24,8 +25,24 @@ interface EditableTargetRow {
   percent: string;
 }
 
+type RebalanceRowWithCurrencyMeta = {
+  display_currency?: string | null;
+  fx_rate_to_brl?: number | null;
+};
+
 const DEFAULT_CONTRIBUTION_BRL = '1000';
 const DEFAULT_CONTRIBUTION_USD = '0';
+const THESIS_CLASS_TO_PORTFOLIO_CLASS: Record<string, string> = {
+  FII: 'fii',
+  TESOURO: 'bond',
+  ETF: 'etf',
+  STOCK: 'stock',
+  REIT: 'reit',
+  BOND: 'bond',
+  CRYPTO: 'crypto',
+  CASH: 'cash',
+  RSU: 'rsu',
+};
 
 const normalizeScope = (value: unknown): RebalanceScope => {
   const normalized = String(value || '').trim().toLowerCase();
@@ -109,6 +126,10 @@ const RebalancePage = () => {
   const [savingTargets, setSavingTargets] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [thesisItems, setThesisItems] = useState<ThesisRecord[]>([]);
+  const [loadingTheses, setLoadingTheses] = useState(false);
+  const [thesesError, setThesesError] = useState<string | null>(null);
+  const [selectedThesis, setSelectedThesis] = useState<ThesisRecord | null>(null);
 
   const numberLocale = i18n.language?.startsWith('pt') ? 'pt-BR' : 'en-US';
   const formatBrl = (value: number) => formatCurrency(value, 'BRL', numberLocale);
@@ -118,12 +139,50 @@ const RebalancePage = () => {
     if (value < 0) return `-${amount}`;
     return amount;
   };
+  const resolveCurrencyMeta = (row: RebalanceRowWithCurrencyMeta) => {
+    const currency = String(row.display_currency || 'BRL').toUpperCase();
+    const fxRate = toNumber(row.fx_rate_to_brl);
+    if (currency !== 'BRL' && fxRate > 0) {
+      return { currency, fxRate };
+    }
+    return { currency: 'BRL', fxRate: 1 };
+  };
+  const formatRowAmount = (
+    value: number,
+    row: RebalanceRowWithCurrencyMeta
+  ) => {
+    const { currency, fxRate } = resolveCurrencyMeta(row);
+    if (currency === 'BRL') return formatBrl(value);
+    const nativeAmount = value / fxRate;
+    return `${formatCurrency(nativeAmount, currency, numberLocale)} (${formatBrl(value)})`;
+  };
+  const formatRowSignedAmount = (
+    value: number,
+    row: RebalanceRowWithCurrencyMeta
+  ) => {
+    const { currency, fxRate } = resolveCurrencyMeta(row);
+    if (currency === 'BRL') return formatSignedBrl(value);
+    const sign = value > 0 ? '+' : value < 0 ? '-' : '';
+    const nativeAmount = Math.abs(value / fxRate);
+    return `${sign}${formatCurrency(nativeAmount, currency, numberLocale)} (${formatSignedBrl(value)})`;
+  };
   const formatPercent = (value: number | null | undefined, fractionDigits = 2) => {
     if (typeof value !== 'number' || !Number.isFinite(value)) return '-';
     return `${value.toLocaleString(numberLocale, {
       minimumFractionDigits: fractionDigits,
       maximumFractionDigits: fractionDigits,
     })}%`;
+  };
+  const formatThesisDate = (value: string | null | undefined) => {
+    if (!value) return '-';
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return '-';
+    return parsed.toLocaleString(numberLocale);
+  };
+  const formatThesisText = (value: string | null | undefined) => {
+    const normalized = String(value || '').trim();
+    if (!normalized) return t('rebalance.thesis.modal.empty');
+    return normalized;
   };
 
   const portfolioOptions = useMemo(
@@ -198,10 +257,14 @@ const RebalancePage = () => {
       .finally(() => setLoadingTargets(false));
   }, []);
 
-  const runSuggestion = useCallback(() => {
-    if (!selectedPortfolio) return;
-    const amountBrl = Math.max(0, toNumber(contributionAmountBrl));
-    const amountUsd = Math.max(0, toNumber(contributionAmountUsd));
+  const requestSuggestion = useCallback((
+    portfolioId: string,
+    scopeValue: RebalanceScope,
+    amountBrlRaw: string,
+    amountUsdRaw: string
+  ) => {
+    const amountBrl = Math.max(0, toNumber(amountBrlRaw));
+    const amountUsd = Math.max(0, toNumber(amountUsdRaw));
     if (amountBrl <= 0 && amountUsd <= 0) {
       setError(t('rebalance.messages.invalidAmount'));
       return;
@@ -211,12 +274,29 @@ const RebalancePage = () => {
     setLoadingSuggestion(true);
     setError(null);
 
-    api.getRebalanceSuggestion(selectedPortfolio, totalAmount, scope, {
+    api.getRebalanceSuggestion(portfolioId, totalAmount, scopeValue, {
       amountBrl,
       amountUsd,
     })
       .then((response) => {
         setSuggestion(response);
+        // If manual targets are empty, prefill the editor from thesis-derived targets
+        // so users can review and persist them with one click.
+        if (String(response.target_source || '') === 'thesis') {
+          const fallbackRows = Object.entries(response.targets || {})
+            .map(([value, weight]) => createEditableRow(scopeValue, value, toPercentText(toNumber(weight) * 100)))
+            .filter((row) => row.value && toNumber(row.percent) > 0)
+            .sort((left, right) => left.value.localeCompare(right.value));
+          if (fallbackRows.length > 0) {
+            setTargetsByScope((previous) => {
+              if ((previous[scopeValue] || []).length > 0) return previous;
+              return {
+                ...previous,
+                [scopeValue]: fallbackRows,
+              };
+            });
+          }
+        }
       })
       .catch((reason: unknown) => {
         const message = reason instanceof Error ? reason.message : 'Failed to load suggestion';
@@ -224,7 +304,12 @@ const RebalancePage = () => {
         setSuggestion(null);
       })
       .finally(() => setLoadingSuggestion(false));
-  }, [contributionAmountBrl, contributionAmountUsd, scope, selectedPortfolio, t]);
+  }, [t]);
+
+  const runSuggestion = useCallback(() => {
+    if (!selectedPortfolio) return;
+    requestSuggestion(selectedPortfolio, scope, contributionAmountBrl, contributionAmountUsd);
+  }, [contributionAmountBrl, contributionAmountUsd, requestSuggestion, scope, selectedPortfolio]);
 
   useEffect(() => {
     if (!selectedPortfolio) {
@@ -237,15 +322,61 @@ const RebalancePage = () => {
     setNotice(null);
 
     loadTargets(selectedPortfolio)
+      .then(() => {
+        requestSuggestion(selectedPortfolio, scope, contributionAmountBrl, contributionAmountUsd);
+      })
       .catch(() => {
         // Error state already handled above.
       });
-  }, [loadTargets, selectedPortfolio]);
+  }, [loadTargets, requestSuggestion, scope, selectedPortfolio]);
 
   useEffect(() => {
     setNotice(null);
-    setSuggestion(null);
   }, [scope, selectedPortfolio]);
+
+  useEffect(() => {
+    if (!selectedThesis) return undefined;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setSelectedThesis(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedThesis]);
+
+  useEffect(() => {
+    if (!selectedPortfolio) {
+      setThesisItems([]);
+      setThesesError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingTheses(true);
+    setThesesError(null);
+
+    api.getTheses(selectedPortfolio)
+      .then((response) => {
+        if (cancelled) return;
+        const activeItems = (response.items || [])
+          .filter((item) => String(item.status || '').toLowerCase() === 'active')
+          .sort((left, right) => String(left.scopeKey || '').localeCompare(String(right.scopeKey || '')));
+        setThesisItems(activeItems);
+      })
+      .catch((reason: unknown) => {
+        if (cancelled) return;
+        setThesisItems([]);
+        const message = reason instanceof Error ? reason.message : 'Failed to load theses';
+        setThesesError(message);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setLoadingTheses(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [selectedPortfolio]);
 
   const currentRows = targetsByScope[scope];
   const currentOptions = targetOptionsByScope[scope];
@@ -385,6 +516,25 @@ const RebalancePage = () => {
     ),
     [suggestion?.suggestions]
   );
+  const suggestionProjectionRows = useMemo(
+    () =>
+      suggestionRows.map((row) => {
+        const beforeValue = toNumber(row.current_value);
+        const contributionValue = toNumber(row.recommended_amount);
+        const beforeTotal = toNumber(suggestion?.current_total);
+        const afterTotal = toNumber(suggestion?.target_total_after_contribution);
+        const afterValue = beforeValue + contributionValue;
+        return {
+          row,
+          beforeValue,
+          contributionValue,
+          afterValue,
+          beforePercent: beforeTotal > 0 ? (beforeValue / beforeTotal) * 100 : null,
+          afterPercent: afterTotal > 0 ? (afterValue / afterTotal) * 100 : null,
+        };
+      }),
+    [suggestion?.current_total, suggestion?.target_total_after_contribution, suggestionRows]
+  );
 
   const thesisDiagnostics = suggestion?.thesis_diagnostics || null;
   const targetSource = String(suggestion?.target_source || 'equal_weight');
@@ -394,6 +544,20 @@ const RebalancePage = () => {
       (left, right) => Math.abs(toNumber(right.actual_pct)) - Math.abs(toNumber(left.actual_pct))
     ),
     [thesisDiagnostics?.conflicts]
+  );
+  const classActualWeightPctByClass = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const row of suggestion?.drift || []) {
+      if (normalizeScope(row.scope) !== 'assetClass') continue;
+      const classKey = String(row.assetClass || row.scope_key || '').toLowerCase();
+      if (!classKey) continue;
+      map[classKey] = toNumber(row.current_weight_pct);
+    }
+    return map;
+  }, [suggestion?.drift]);
+  const uncoveredThesisScopeSet = useMemo(
+    () => new Set((thesisDiagnostics?.uncovered_scope_keys || []).map((scopeKey) => String(scopeKey || '').toUpperCase())),
+    [thesisDiagnostics?.uncovered_scope_keys]
   );
 
   const resolveThesisScopeLabel = (conflict: RebalanceThesisConflict): string => {
@@ -707,6 +871,7 @@ const RebalancePage = () => {
                     ) : (
                       <p className="rebalance-card__empty">{t('rebalance.thesis.noConflicts')}</p>
                     )}
+
                   </div>
                 )}
               </section>
@@ -733,10 +898,10 @@ const RebalancePage = () => {
                         {driftRows.map((row) => (
                           <tr key={`${row.scope}-${row.scope_key}`}>
                             <td>{resolveRowLabel(row)}</td>
-                            <td>{formatBrl(toNumber(row.current_value))}</td>
-                            <td>{formatBrl(toNumber(row.target_value))}</td>
+                            <td>{formatRowAmount(toNumber(row.current_value), row)}</td>
+                            <td>{formatRowAmount(toNumber(row.target_value), row)}</td>
                             <td className={toNumber(row.drift_value) < 0 ? 'rebalance-table__value rebalance-table__value--negative' : toNumber(row.drift_value) > 0 ? 'rebalance-table__value rebalance-table__value--positive' : 'rebalance-table__value'}>
-                              {formatSignedBrl(toNumber(row.drift_value))}
+                              {formatRowSignedAmount(toNumber(row.drift_value), row)}
                             </td>
                             <td className={toNumber(row.drift_pct) < 0 ? 'rebalance-table__value rebalance-table__value--negative' : toNumber(row.drift_pct) > 0 ? 'rebalance-table__value rebalance-table__value--positive' : 'rebalance-table__value'}>
                               {`${toNumber(row.drift_pct).toLocaleString(numberLocale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`}
@@ -756,27 +921,123 @@ const RebalancePage = () => {
                 {suggestionRows.length === 0 ? (
                   <p className="rebalance-card__empty">{t('rebalance.messages.emptySuggestion')}</p>
                 ) : (
+                  <>
+                    <div className="rebalance-table-wrapper">
+                      <table className="rebalance-table">
+                        <thead>
+                          <tr>
+                            <th>{scope === 'assetClass' ? t('rebalance.table.class') : t('rebalance.table.asset')}</th>
+                            <th>{t('rebalance.table.currentValue')}</th>
+                            <th>{t('rebalance.table.targetValue')}</th>
+                            <th>{t('rebalance.table.recommendedContribution')}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {suggestionRows.map((row, index) => (
+                            <tr key={`${String(row.assetId || row.assetClass || index)}-${index}`}>
+                              <td>{resolveRowLabel(row)}</td>
+                              <td>{formatRowAmount(toNumber(row.current_value), row)}</td>
+                              <td>{formatRowAmount(toNumber(row.target_value), row)}</td>
+                              <td className="rebalance-table__value rebalance-table__value--positive">
+                                {formatRowAmount(toNumber(row.recommended_amount), row)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <h3 className="rebalance-card__subheading">{t('rebalance.beforeAfterTitle')}</h3>
+                    <div className="rebalance-table-wrapper">
+                      <table className="rebalance-table">
+                        <thead>
+                          <tr>
+                            <th>{scope === 'assetClass' ? t('rebalance.table.class') : t('rebalance.table.asset')}</th>
+                            <th>{t('rebalance.table.beforeContribution')}</th>
+                            <th>{t('rebalance.table.beforePercent')}</th>
+                            <th>{t('rebalance.table.recommendedContribution')}</th>
+                            <th>{t('rebalance.table.afterContribution')}</th>
+                            <th>{t('rebalance.table.afterPercent')}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {suggestionProjectionRows.map((projection, index) => (
+                            <tr key={`projection-${String(projection.row.assetId || projection.row.assetClass || index)}-${index}`}>
+                              <td>{resolveRowLabel(projection.row)}</td>
+                              <td>{formatRowAmount(projection.beforeValue, projection.row)}</td>
+                              <td>{formatPercent(projection.beforePercent)}</td>
+                              <td className="rebalance-table__value rebalance-table__value--positive">
+                                {formatRowAmount(projection.contributionValue, projection.row)}
+                              </td>
+                              <td>{formatRowAmount(projection.afterValue, projection.row)}</td>
+                              <td>{formatPercent(projection.afterPercent)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                )}
+              </section>
+
+              <section className="rebalance-card rebalance-card--wide">
+                <header className="rebalance-card__header">
+                  <h2>{t('rebalance.thesis.activeListTitle')}</h2>
+                </header>
+                {loadingTheses ? (
+                  <p className="rebalance-card__empty">{t('common.loading')}</p>
+                ) : thesesError ? (
+                  <p className="rebalance-card__empty">{t('rebalance.thesis.loadError')}</p>
+                ) : thesisItems.length === 0 ? (
+                  <p className="rebalance-card__empty">{t('rebalance.thesis.noTheses')}</p>
+                ) : (
                   <div className="rebalance-table-wrapper">
                     <table className="rebalance-table">
                       <thead>
                         <tr>
-                          <th>{scope === 'assetClass' ? t('rebalance.table.class') : t('rebalance.table.asset')}</th>
-                          <th>{t('rebalance.table.currentValue')}</th>
-                          <th>{t('rebalance.table.targetValue')}</th>
-                          <th>{t('rebalance.table.recommendedContribution')}</th>
+                          <th>{t('rebalance.thesis.table.scope')}</th>
+                          <th>{t('rebalance.thesis.table.title')}</th>
+                          <th>{t('rebalance.thesis.table.actual')}</th>
+                          <th>{t('rebalance.thesis.table.min')}</th>
+                          <th>{t('rebalance.thesis.table.target')}</th>
+                          <th>{t('rebalance.thesis.table.max')}</th>
+                          <th>{t('rebalance.thesis.table.coverage')}</th>
+                          <th>{t('rebalance.thesis.table.details')}</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {suggestionRows.map((row, index) => (
-                          <tr key={`${String(row.assetId || row.assetClass || index)}-${index}`}>
-                            <td>{resolveRowLabel(row)}</td>
-                            <td>{formatBrl(toNumber(row.current_value))}</td>
-                            <td>{formatBrl(toNumber(row.target_value))}</td>
-                            <td className="rebalance-table__value rebalance-table__value--positive">
-                              {formatBrl(toNumber(row.recommended_amount))}
-                            </td>
-                          </tr>
-                        ))}
+                        {thesisItems.map((item) => {
+                          const scopeKey = String(item.scopeKey || '').toUpperCase();
+                          const classKey = THESIS_CLASS_TO_PORTFOLIO_CLASS[String(item.assetClass || '').toUpperCase()] || '';
+                          const actualClassPct = classKey ? classActualWeightPctByClass[classKey] : null;
+                          const isUncovered = uncoveredThesisScopeSet.has(scopeKey);
+                          return (
+                            <tr key={scopeKey}>
+                              <td>{scopeKey}</td>
+                              <td>{item.title}</td>
+                              <td>{formatPercent(actualClassPct)}</td>
+                              <td>{formatPercent(item.minAllocation)}</td>
+                              <td>{formatPercent(item.targetAllocation)}</td>
+                              <td>{formatPercent(item.maxAllocation)}</td>
+                              <td>
+                                <span className={`rebalance-badge ${isUncovered ? 'rebalance-badge--danger' : 'rebalance-badge--success'}`}>
+                                  {isUncovered
+                                    ? t('rebalance.thesis.coverageStatus.uncovered')
+                                    : t('rebalance.thesis.coverageStatus.covered')}
+                                </span>
+                              </td>
+                              <td>
+                                <button
+                                  type="button"
+                                  className="rebalance-page__button rebalance-page__button--secondary"
+                                  onClick={() => setSelectedThesis(item)}
+                                >
+                                  {t('rebalance.thesis.actions.viewDetails')}
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -786,6 +1047,79 @@ const RebalancePage = () => {
           </>
         )}
       </div>
+
+      {selectedThesis ? (
+        <div
+          className="rebalance-thesis-modal__overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="rebalance-thesis-modal-title"
+          onClick={() => setSelectedThesis(null)}
+        >
+          <div className="rebalance-thesis-modal" onClick={(event) => event.stopPropagation()}>
+            <header className="rebalance-thesis-modal__header">
+              <div>
+                <h2 id="rebalance-thesis-modal-title">{selectedThesis.title}</h2>
+                <p>{t('rebalance.thesis.modal.subtitle')}</p>
+              </div>
+              <button
+                type="button"
+                className="rebalance-thesis-modal__close"
+                onClick={() => setSelectedThesis(null)}
+              >
+                {t('common.close')}
+              </button>
+            </header>
+
+            <section className="rebalance-thesis-modal__meta">
+              <article>
+                <span>{t('rebalance.thesis.modal.scope')}</span>
+                <strong>{selectedThesis.scopeKey}</strong>
+              </article>
+              <article>
+                <span>{t('rebalance.thesis.modal.version')}</span>
+                <strong>{`v${toNumber(selectedThesis.version)}`}</strong>
+              </article>
+              <article>
+                <span>{t('rebalance.thesis.modal.updatedAt')}</span>
+                <strong>{formatThesisDate(selectedThesis.updatedAt)}</strong>
+              </article>
+              <article>
+                <span>{t('rebalance.thesis.modal.target')}</span>
+                <strong>{formatPercent(selectedThesis.targetAllocation)}</strong>
+              </article>
+              <article>
+                <span>{t('rebalance.thesis.modal.min')}</span>
+                <strong>{formatPercent(selectedThesis.minAllocation)}</strong>
+              </article>
+              <article>
+                <span>{t('rebalance.thesis.modal.max')}</span>
+                <strong>{formatPercent(selectedThesis.maxAllocation)}</strong>
+              </article>
+            </section>
+
+            <section className="rebalance-thesis-modal__section">
+              <h3>{t('settings.theses.fields.thesisText')}</h3>
+              <p>{formatThesisText(selectedThesis.thesisText)}</p>
+            </section>
+
+            <section className="rebalance-thesis-modal__section">
+              <h3>{t('settings.theses.fields.triggers')}</h3>
+              <p>{formatThesisText(selectedThesis.triggers)}</p>
+            </section>
+
+            <section className="rebalance-thesis-modal__section">
+              <h3>{t('settings.theses.fields.actionPlan')}</h3>
+              <p>{formatThesisText(selectedThesis.actionPlan)}</p>
+            </section>
+
+            <section className="rebalance-thesis-modal__section">
+              <h3>{t('settings.theses.fields.riskNotes')}</h3>
+              <p>{formatThesisText(selectedThesis.riskNotes)}</p>
+            </section>
+          </div>
+        </div>
+      ) : null}
     </Layout>
   );
 };
