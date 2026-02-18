@@ -55,7 +55,7 @@ interface AllocationChartDatum {
 
 interface DashboardSummaryTile {
   key: string;
-  label: string;
+  label: ReactNode;
   amount: number;
   currency: string;
 }
@@ -262,18 +262,35 @@ const DashboardPage = () => {
       currency: tile.currency,
     }));
 
-    const cryptoAllocation = classAllocation.find((item) => String(item.key || '').toLowerCase() === 'crypto');
-    if (cryptoAllocation && Number.isFinite(cryptoAllocation.value) && cryptoAllocation.value > EPSILON) {
+    const cryptoUsdTotal = assets
+      .filter((asset) => (
+        String(asset.status || 'active').toLowerCase() === 'active'
+        && String(asset.assetClass || '').toLowerCase() === 'crypto'
+        && String(asset.currency || 'USD').trim().toUpperCase() === 'USD'
+      ))
+      .reduce((total, asset) => {
+        const currentValue = toFiniteNumber(asset.currentValue);
+        const fallbackValue = toFiniteNumber(asset.currentPrice) * toFiniteNumber(asset.quantity);
+        const nativeValue = Math.abs(currentValue) > EPSILON ? currentValue : fallbackValue;
+        return Math.abs(nativeValue) > EPSILON ? total + nativeValue : total;
+      }, 0);
+
+    if (cryptoUsdTotal > EPSILON) {
       tiles.push({
         key: 'asset-class-crypto',
-        label: `🪙 ${t('dashboard.cryptoTile', { defaultValue: 'Crypto' })}`,
-        amount: Number(cryptoAllocation.value),
-        currency: 'BRL',
+        label: (
+          <>
+            <span className="dashboard__crypto-icon" aria-hidden="true">₿</span>
+            <span>{t('dashboard.cryptoTile', { defaultValue: 'Crypto' })}</span>
+          </>
+        ),
+        amount: cryptoUsdTotal,
+        currency: 'USD',
       });
     }
 
     return tiles;
-  }, [classAllocation, currencyBalanceTiles, t]);
+  }, [assets, currencyBalanceTiles, t]);
 
   const evolutionData = useMemo(() => {
     if (!Array.isArray(dashboard?.evolution)) return [];
