@@ -4225,9 +4225,20 @@ class PlatformService {
 			method: options.method || 'fifo',
 			includeBenchmarkComparison: false,
 		});
-		const fxRates = await this.#getLatestFxMap();
 		const assetById = new Map(activeAssets.map((asset) => [asset.assetId, asset]));
 		const activeMetrics = metrics.assets.filter((metric) => assetById.has(metric.assetId));
+		const fxCurrencies = Array.from(
+			new Set(
+				activeAssets
+					.map((asset) => String(asset.currency || 'BRL').toUpperCase())
+					.concat(
+						activeMetrics.map((metric) =>
+							String(metric.currency || assetById.get(metric.assetId)?.currency || 'BRL').toUpperCase()
+						)
+					)
+			)
+		);
+		const fxRates = await this.#getLatestFxMapForCurrencies(fxCurrencies);
 		const periodKey = String(options.period || 'MAX').toUpperCase();
 		const evolutionDays = Object.prototype.hasOwnProperty.call(PERIOD_TO_DAYS, periodKey)
 			? PERIOD_TO_DAYS[periodKey]
@@ -4251,7 +4262,7 @@ class PlatformService {
 
 		for (const metric of activeMetrics) {
 			const asset = assetById.get(metric.assetId) || {};
-			const currency = metric.currency || asset.currency || 'BRL';
+			const currency = String(metric.currency || asset.currency || 'BRL').toUpperCase();
 			const fxKey = `${currency}/BRL`;
 			const fxRate = currency === 'BRL' ? 1 : numeric(fxRates[fxKey], 0);
 			const metricMarketValue = toNumberOrNull(metric.market_value);
@@ -4272,13 +4283,13 @@ class PlatformService {
 					? fallbackPrice * metricQuantity
 					: null;
 			const marketValue =
-				usableMetricMarketValue ??
 				assetSnapshotCurrentValue ??
+				usableMetricMarketValue ??
 				derivedMarketValue ??
 				0;
 			const costTotal = toNumberOrNull(metric.cost_total) ?? 0;
-			const marketValueBrl = fxRate > 0 ? marketValue * fxRate : 0;
-			const costTotalBrl = fxRate > 0 ? costTotal * fxRate : 0;
+			const marketValueBrl = fxRate > 0 ? marketValue * fxRate : marketValue;
+			const costTotalBrl = fxRate > 0 ? costTotal * fxRate : costTotal;
 			totalBrl += marketValueBrl;
 			totalCostBrl += costTotalBrl;
 			fxRateByAssetId[metric.assetId] = fxRate > 0 ? fxRate : 1;
@@ -8384,6 +8395,69 @@ class PlatformService {
 			const latest = Array.isArray(result.Items) && result.Items.length ? result.Items[0] : null;
 			if (latest) map[`${currency}/BRL`] = numeric(latest.rate, 0);
 		}
+		map['BRL/BRL'] = 1;
+		return map;
+	}
+
+	async #getLatestFxMapForCurrencies(currencies = []) {
+		const map = await this.#getLatestFxMap();
+		const normalizedCurrencies = Array.from(
+			new Set(
+				(Array.isArray(currencies) ? currencies : [])
+					.map((currency) => String(currency || '').toUpperCase())
+					.filter(Boolean)
+			)
+		);
+
+		for (const currency of normalizedCurrencies) {
+			if (currency === 'BRL') {
+				map['BRL/BRL'] = 1;
+				continue;
+			}
+
+			const fxKey = `${currency}/BRL`;
+			if (numeric(map[fxKey], 0) > 0) continue;
+
+			try {
+				const latest = await this.#fetchPtaxRate(currency);
+				const rate = numeric(latest?.rate, 0);
+				const date = normalizeDate(latest?.date) || nowIso().slice(0, 10);
+				if (rate > 0) {
+					map[fxKey] = rate;
+					await this.dynamo.send(
+						new PutCommand({
+							TableName: this.tableName,
+							Item: {
+								PK: `FX#${currency}#BRL`,
+								SK: `RATE#${date}`,
+								entityType: 'FX_RATE',
+								base: currency,
+								quote: 'BRL',
+								date,
+								rate,
+								data_source: latest?.source || 'runtime_ptax',
+								fetched_at: nowIso(),
+								is_scraped: false,
+								updatedAt: nowIso(),
+							},
+						})
+					);
+					continue;
+				}
+			} catch {
+				// fallback below
+			}
+
+			const envFallbackRate = numeric(
+				process.env[`FX_${currency}_BRL`]
+				|| process.env[`FX_${currency}_BRL_FALLBACK`],
+				0
+			);
+			if (envFallbackRate > 0) {
+				map[fxKey] = envFallbackRate;
+			}
+		}
+
 		map['BRL/BRL'] = 1;
 		return map;
 	}

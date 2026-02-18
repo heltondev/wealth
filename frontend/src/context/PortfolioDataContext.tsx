@@ -295,7 +295,7 @@ export const PortfolioDataProvider = ({ children }: { children: ReactNode }) => 
       return;
     }
     fetchMetrics(selectedPortfolio);
-  }, [selectedPortfolio, assets.length, transactions.length, fetchMetrics]);
+  }, [selectedPortfolio, fetchMetrics]);
 
   useEffect(() => {
     if (!selectedPortfolio) {
@@ -305,7 +305,7 @@ export const PortfolioDataProvider = ({ children }: { children: ReactNode }) => 
     }
     void fetchEventNotices(selectedPortfolio, {
       sync: true,
-      refreshSources: true,
+      refreshSources: false,
       silent: false,
       status: 'all',
     });
@@ -317,7 +317,7 @@ export const PortfolioDataProvider = ({ children }: { children: ReactNode }) => 
       if (document.visibilityState === 'hidden') return;
       void fetchEventNotices(selectedPortfolio, {
         sync: true,
-        refreshSources: true,
+        refreshSources: false,
         silent: true,
         status: 'all',
       });
