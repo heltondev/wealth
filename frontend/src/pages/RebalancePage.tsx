@@ -233,24 +233,18 @@ const RebalancePage = () => {
       return;
     }
 
-    let cancelled = false;
     setError(null);
     setNotice(null);
 
     loadTargets(selectedPortfolio)
-      .then(() => {
-        if (cancelled) return;
-        runSuggestion();
-      })
       .catch(() => {
         // Error state already handled above.
       });
-
-    return () => { cancelled = true; };
-  }, [loadTargets, runSuggestion, selectedPortfolio]);
+  }, [loadTargets, selectedPortfolio]);
 
   useEffect(() => {
     setNotice(null);
+    setSuggestion(null);
   }, [scope, selectedPortfolio]);
 
   const currentRows = targetsByScope[scope];
