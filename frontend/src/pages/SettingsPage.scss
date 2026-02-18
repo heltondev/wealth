@@ -104,6 +104,70 @@
   color: var(--primary-light);
 }
 
+.backup-config {
+  display: grid;
+  gap: $spacing-md;
+
+  &__description {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+  }
+
+  &__panel {
+    @include glass-card;
+    border-radius: 12px;
+    padding: $spacing-md;
+    display: grid;
+    gap: $spacing-sm;
+
+    h3 {
+      margin: 0;
+      font-size: 0.95rem;
+      color: var(--text-primary);
+    }
+
+    p {
+      margin: 0;
+      color: var(--text-secondary);
+      font-size: 0.85rem;
+      line-height: 1.45;
+    }
+
+    input[type='file'] {
+      @include form-control-base(var(--bg-primary), 0.85rem);
+      max-width: 520px;
+    }
+  }
+
+  &__file {
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+  }
+
+  &__mode {
+    display: grid;
+    gap: $spacing-xs;
+    max-width: 320px;
+
+    span {
+      @include form-label(0.78rem);
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+
+    select {
+      @include form-select-base(var(--bg-primary), 0.85rem);
+    }
+  }
+
+  &__primary {
+    @include button-base(0.86rem, $spacing-sm, $spacing-lg);
+    @include button-primary;
+    justify-self: flex-start;
+  }
+}
+
 .theses-config {
   display: flex;
   flex-direction: column;

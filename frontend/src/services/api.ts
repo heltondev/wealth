@@ -124,6 +124,35 @@ export interface DropdownSettings {
   updatedAt?: string | null;
 }
 
+export interface BackupSnapshot {
+  schemaVersion: number;
+  exportedAt: string;
+  exportedBy?: string;
+  data: {
+    userItems: Record<string, unknown>[];
+    portfolioItems: Record<string, unknown>[];
+    aliases: Record<string, unknown>[];
+  };
+  stats?: {
+    userItems: number;
+    portfolios?: number;
+    portfolioItems: number;
+    aliases: number;
+    totalItems: number;
+  };
+}
+
+export interface BackupImportResponse {
+  mode: 'replace' | 'merge' | string;
+  importedAt: string;
+  stats: {
+    userItems: number;
+    portfolioItems: number;
+    aliases: number;
+    totalItems: number;
+  };
+}
+
 export interface DashboardAllocationItem {
   key: string;
   value: number;
@@ -865,6 +894,18 @@ export const api = {
   getDropdownSettings: () => request<DropdownSettings>('/settings/dropdowns'),
   updateDropdownSettings: (data: DropdownSettings) =>
     request<DropdownSettings>('/settings/dropdowns', { method: 'PUT', body: JSON.stringify(data) }),
+  exportBackup: () => request<BackupSnapshot>('/settings/backup'),
+  importBackup: (
+    backup: BackupSnapshot | Record<string, unknown>,
+    mode: 'replace' | 'merge' = 'replace'
+  ) =>
+    request<BackupImportResponse>('/settings/backup', {
+      method: 'POST',
+      body: JSON.stringify({
+        mode,
+        backup,
+      }),
+    }),
 
   // Aliases
   getAliases: () => request<Alias[]>('/settings/aliases'),

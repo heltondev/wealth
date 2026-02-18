@@ -7,6 +7,7 @@ import SharedDropdown from '../components/SharedDropdown';
 import { usePortfolioData } from '../context/PortfolioDataContext';
 import {
   api,
+  type BackupSnapshot,
   type UserSettings,
   type Alias,
   type DropdownConfigMap,
@@ -24,7 +25,7 @@ import {
 import { useToast } from '../context/ToastContext';
 import './SettingsPage.scss';
 
-type SettingsTab = 'profile' | 'aliases' | 'preferences' | 'dropdowns' | 'theses';
+type SettingsTab = 'profile' | 'aliases' | 'preferences' | 'dropdowns' | 'theses' | 'backup';
 const DEFAULT_ITEMS_PER_PAGE = 10;
 
 const THESIS_COUNTRIES: ThesisCountry[] = ['BR', 'US', 'CA'];
@@ -119,6 +120,10 @@ const SettingsPage = () => {
   const [thesisHistory, setThesisHistory] = useState<ThesisRecord[]>([]);
   const [thesisHistoryScopeKey, setThesisHistoryScopeKey] = useState<string | null>(null);
   const [loadingThesisHistory, setLoadingThesisHistory] = useState(false);
+  const [backupFile, setBackupFile] = useState<File | null>(null);
+  const [backupMode, setBackupMode] = useState<'replace' | 'merge'>('replace');
+  const [exportingBackup, setExportingBackup] = useState(false);
+  const [importingBackup, setImportingBackup] = useState(false);
 
   useEffect(() => {
     api.getDropdownSettings()
@@ -455,6 +460,61 @@ const SettingsPage = () => {
     }));
   };
 
+  const handleExportBackup = useCallback(async () => {
+    setExportingBackup(true);
+    try {
+      const backup = await api.exportBackup();
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const filename = `invest-backup-${timestamp}.json`;
+      const blob = new Blob([JSON.stringify(backup, null, 2)], {
+        type: 'application/json',
+      });
+      const href = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = href;
+      anchor.download = filename;
+      anchor.click();
+      URL.revokeObjectURL(href);
+      showToast(t('settings.backup.messages.exportSuccess'), 'success');
+    } catch (reason) {
+      showToast(
+        reason instanceof Error ? reason.message : t('settings.backup.messages.exportError'),
+        'error'
+      );
+    } finally {
+      setExportingBackup(false);
+    }
+  }, [showToast, t]);
+
+  const handleImportBackup = useCallback(async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!backupFile) {
+      showToast(t('settings.backup.messages.selectFile'), 'error');
+      return;
+    }
+
+    setImportingBackup(true);
+    try {
+      const fileContent = await backupFile.text();
+      const parsedBackup = JSON.parse(fileContent) as BackupSnapshot;
+      const result = await api.importBackup(parsedBackup, backupMode);
+      showToast(
+        t('settings.backup.messages.importSuccess', {
+          total: result.stats.totalItems,
+        }),
+        'success'
+      );
+      setBackupFile(null);
+    } catch (reason) {
+      showToast(
+        reason instanceof Error ? reason.message : t('settings.backup.messages.importError'),
+        'error'
+      );
+    } finally {
+      setImportingBackup(false);
+    }
+  }, [backupFile, backupMode, showToast, t]);
+
   const portfolioOptions = useMemo(
     () => portfolios.map((portfolio) => ({ value: portfolio.portfolioId, label: portfolio.name })),
     [portfolios]
@@ -490,6 +550,7 @@ const SettingsPage = () => {
     { key: 'preferences' as const, label: t('settings.preferences') },
     { key: 'dropdowns' as const, label: t('settings.dropdowns') },
     { key: 'theses' as const, label: t('settings.theses.title') },
+    { key: 'backup' as const, label: t('settings.backup.tab') },
   ];
 
   const dropdownEntries = useMemo(() =>
@@ -819,6 +880,59 @@ const SettingsPage = () => {
                 ))}
               </select>
             </div>
+          </div>
+        )}
+
+        {!loading && activeTab === 'backup' && (
+          <div className="settings-section backup-config">
+            <p className="backup-config__description">{t('settings.backup.description')}</p>
+
+            <section className="backup-config__panel">
+              <h3>{t('settings.backup.exportTitle')}</h3>
+              <p>{t('settings.backup.exportHint')}</p>
+              <button
+                type="button"
+                className="backup-config__primary"
+                onClick={() => void handleExportBackup()}
+                disabled={exportingBackup || importingBackup}
+              >
+                {exportingBackup ? t('common.loading') : t('settings.backup.actions.download')}
+              </button>
+            </section>
+
+            <form className="backup-config__panel" onSubmit={handleImportBackup}>
+              <h3>{t('settings.backup.importTitle')}</h3>
+              <p>{t('settings.backup.importHint')}</p>
+              <input
+                type="file"
+                accept="application/json,.json"
+                onChange={(event) => setBackupFile(event.target.files?.[0] || null)}
+              />
+              {backupFile ? (
+                <p className="backup-config__file">
+                  {t('settings.backup.fileSelected', { file: backupFile.name })}
+                </p>
+              ) : null}
+
+              <label className="backup-config__mode">
+                <span>{t('settings.backup.mode.label')}</span>
+                <select
+                  value={backupMode}
+                  onChange={(event) => setBackupMode(event.target.value as 'replace' | 'merge')}
+                >
+                  <option value="replace">{t('settings.backup.mode.replace')}</option>
+                  <option value="merge">{t('settings.backup.mode.merge')}</option>
+                </select>
+              </label>
+
+              <button
+                type="submit"
+                className="backup-config__primary"
+                disabled={!backupFile || importingBackup || exportingBackup}
+              >
+                {importingBackup ? t('common.loading') : t('settings.backup.actions.upload')}
+              </button>
+            </form>
           </div>
         )}
 

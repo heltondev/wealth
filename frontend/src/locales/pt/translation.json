@@ -1318,6 +1318,31 @@
     "email": "Email",
     "preferredCurrency": "Moeda Preferida",
     "language": "Idioma",
+    "backup": {
+      "tab": "Backup",
+      "description": "Baixe um backup completo dos seus dados e restaure depois com um único arquivo.",
+      "exportTitle": "Baixar Backup",
+      "exportHint": "Inclui portfólios, ativos, transações, teses, alertas, metas, aliases e configurações.",
+      "importTitle": "Enviar Backup",
+      "importHint": "Selecione um arquivo JSON de backup que você já baixou.",
+      "fileSelected": "Arquivo selecionado: {{file}}",
+      "actions": {
+        "download": "Baixar backup",
+        "upload": "Enviar backup"
+      },
+      "mode": {
+        "label": "Modo de importação",
+        "replace": "Substituir dados existentes",
+        "merge": "Mesclar com dados existentes"
+      },
+      "messages": {
+        "selectFile": "Selecione primeiro um arquivo de backup.",
+        "exportSuccess": "Backup baixado.",
+        "exportError": "Falha ao baixar backup.",
+        "importSuccess": "Backup restaurado ({{total}} itens).",
+        "importError": "Falha ao restaurar backup."
+      }
+    },
     "theses": {
       "title": "Teses",
       "description": "Defina uma tese ativa por escopo de país + classe de ativo (exemplo BR:FII). Cada salvamento cria uma nova versão e arquiva a tese ativa anterior do mesmo escopo.",

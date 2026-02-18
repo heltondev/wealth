@@ -138,6 +138,7 @@ const DEFAULT_DROPDOWN_SETTINGS = {
 		],
 	},
 };
+const BACKUP_SCHEMA_VERSION = 1;
 
 const THESIS_SUPPORTED_COUNTRIES = ['BR', 'US', 'CA'];
 const THESIS_SUPPORTED_ASSET_CLASSES = [
@@ -337,6 +338,137 @@ const sanitizeDropdownConfig = (key, config, fallbackConfig) => {
 	}
 
 	return { label, options };
+};
+
+const isPlainObject = (value) =>
+	Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+const dedupeItemsByPrimaryKey = (items = []) => {
+	const byKey = new Map();
+	for (const item of items) {
+		if (!isPlainObject(item)) continue;
+		const pk = String(item.PK || '').trim();
+		const sk = String(item.SK || '').trim();
+		if (!pk || !sk) continue;
+		byKey.set(`${pk}||${sk}`, {
+			...item,
+			PK: pk,
+			SK: sk,
+		});
+	}
+	return Array.from(byKey.values());
+};
+
+const derivePortfolioId = (item) => {
+	if (!isPlainObject(item)) return null;
+	const direct = String(item.portfolioId || '').trim();
+	if (direct) return direct;
+	const pk = String(item.PK || '').trim();
+	if (pk.startsWith('PORTFOLIO#')) {
+		const fromPk = pk.slice('PORTFOLIO#'.length).trim();
+		if (fromPk) return fromPk;
+	}
+	const sk = String(item.SK || '').trim();
+	if (sk.startsWith('PORTFOLIO#')) {
+		const fromSk = sk.slice('PORTFOLIO#'.length).trim();
+		if (fromSk) return fromSk;
+	}
+	return null;
+};
+
+const normalizeAliasItem = (item, now) => {
+	if (!isPlainObject(item)) return null;
+	const fromPk = String(item.PK || '').startsWith('ALIAS#')
+		? String(item.PK).slice('ALIAS#'.length)
+		: '';
+	const fromSk = String(item.SK || '').startsWith('TICKER#')
+		? String(item.SK).slice('TICKER#'.length)
+		: '';
+	const normalizedName = String(item.normalizedName || fromPk || '')
+		.trim()
+		.toLowerCase();
+	const ticker = String(item.ticker || fromSk || '')
+		.trim()
+		.toUpperCase();
+	if (!normalizedName || !ticker) return null;
+	return {
+		...item,
+		PK: `ALIAS#${normalizedName}`,
+		SK: `TICKER#${ticker}`,
+		normalizedName,
+		ticker,
+		source: String(item.source || 'manual'),
+		createdAt: item.createdAt || now,
+	};
+};
+
+const normalizeUserItem = (item, userId) => {
+	if (!isPlainObject(item)) return null;
+	const sk = String(item.SK || '').trim();
+	if (!sk) return null;
+	const normalized = {
+		...item,
+		PK: `USER#${userId}`,
+		SK: sk,
+	};
+	const portfolioId = derivePortfolioId(item);
+	if (sk.startsWith('PORTFOLIO#')) {
+		const fromSk = sk.slice('PORTFOLIO#'.length).trim();
+		normalized.portfolioId = fromSk || portfolioId;
+	}
+	if (Object.prototype.hasOwnProperty.call(normalized, 'userId')) {
+		normalized.userId = userId;
+	}
+	return normalized;
+};
+
+const normalizePortfolioItem = (item, userId) => {
+	if (!isPlainObject(item)) return null;
+	const portfolioId = derivePortfolioId(item);
+	const sk = String(item.SK || '').trim();
+	if (!portfolioId || !sk) return null;
+	const normalized = {
+		...item,
+		PK: `PORTFOLIO#${portfolioId}`,
+		SK: sk,
+		portfolioId,
+	};
+	if (Object.prototype.hasOwnProperty.call(normalized, 'userId')) {
+		normalized.userId = userId;
+	}
+	return normalized;
+};
+
+const deleteItemsByPrimaryKey = async (items = []) => {
+	for (const item of items) {
+		const pk = String(item.PK || '').trim();
+		const sk = String(item.SK || '').trim();
+		if (!pk || !sk) continue;
+		await dynamo.send(
+			new DeleteCommand({
+				TableName: TABLE_NAME,
+				Key: { PK: pk, SK: sk },
+			})
+		);
+	}
+};
+
+const putItemsByPrimaryKey = async (items = []) => {
+	for (const item of items) {
+		const pk = String(item.PK || '').trim();
+		const sk = String(item.SK || '').trim();
+		if (!pk || !sk) continue;
+		await dynamo.send(
+			new PutCommand({
+				TableName: TABLE_NAME,
+				Item: {
+					...item,
+					PK: pk,
+					SK: sk,
+				},
+			})
+		);
+	}
 };
 
 const normalizeDropdownSettings = (settings = {}) => {
@@ -803,6 +935,201 @@ async function handleSettingsDropdowns(method, userId, body) {
 		};
 		await dynamo.send(new PutCommand({ TableName: TABLE_NAME, Item: item }));
 		return item;
+	}
+
+	throw errorResponse(405, 'Method not allowed');
+}
+
+async function handleSettingsBackup(method, userId, body) {
+	if (method === 'GET') {
+		const userItems = await queryAllItems({
+			TableName: TABLE_NAME,
+			KeyConditionExpression: 'PK = :pk',
+			ExpressionAttributeValues: {
+				':pk': `USER#${userId}`,
+			},
+		});
+
+		const portfolioIds = Array.from(
+			new Set(
+				(userItems || [])
+					.map((item) => derivePortfolioId(item))
+					.filter(Boolean)
+			)
+		);
+
+		const portfolioGroups = await Promise.all(
+			portfolioIds.map((portfolioId) =>
+				queryAllItems({
+					TableName: TABLE_NAME,
+					KeyConditionExpression: 'PK = :pk',
+					ExpressionAttributeValues: {
+						':pk': `PORTFOLIO#${portfolioId}`,
+					},
+				})
+			)
+		);
+		const portfolioItems = portfolioGroups.flat();
+
+		const aliases = await scanAllItems({
+			TableName: TABLE_NAME,
+			FilterExpression: 'begins_with(PK, :prefix)',
+			ExpressionAttributeValues: {
+				':prefix': 'ALIAS#',
+			},
+		});
+
+		const exportedAt = new Date().toISOString();
+		return {
+			schemaVersion: BACKUP_SCHEMA_VERSION,
+			exportedAt,
+			exportedBy: userId,
+			data: {
+				userItems,
+				portfolioItems,
+				aliases,
+			},
+			stats: {
+				userItems: userItems.length,
+				portfolios: portfolioIds.length,
+				portfolioItems: portfolioItems.length,
+				aliases: aliases.length,
+				totalItems: userItems.length + portfolioItems.length + aliases.length,
+			},
+		};
+	}
+
+	if (method === 'POST') {
+		const payload = parseBody(body);
+		const mode = String(payload.mode || '').toLowerCase() === 'merge'
+			? 'merge'
+			: 'replace';
+		const backupEnvelope = isPlainObject(payload.backup)
+			? payload.backup
+			: isPlainObject(payload.payload)
+				? payload.payload
+				: payload;
+		const backupData = isPlainObject(backupEnvelope.data)
+			? backupEnvelope.data
+			: backupEnvelope;
+
+		const rawUserItems = Array.isArray(backupData.userItems) ? backupData.userItems : [];
+		const rawPortfolioItems = Array.isArray(backupData.portfolioItems)
+			? backupData.portfolioItems
+			: [];
+		const rawAliases = Array.isArray(backupData.aliases) ? backupData.aliases : [];
+
+		if (rawUserItems.length === 0 && rawPortfolioItems.length === 0 && rawAliases.length === 0) {
+			throw errorResponse(
+				400,
+				'Backup payload is empty. Expected data.userItems, data.portfolioItems, or data.aliases.'
+			);
+		}
+
+		const now = new Date().toISOString();
+		const normalizedUserItems = dedupeItemsByPrimaryKey(
+			rawUserItems
+				.map((item) => normalizeUserItem(item, userId))
+				.filter(Boolean)
+		);
+		const normalizedPortfolioItems = dedupeItemsByPrimaryKey(
+			rawPortfolioItems
+				.map((item) => normalizePortfolioItem(item, userId))
+				.filter(Boolean)
+		);
+		const normalizedAliases = dedupeItemsByPrimaryKey(
+			rawAliases
+				.map((item) => normalizeAliasItem(item, now))
+				.filter(Boolean)
+		);
+
+		const portfolioIdsInItems = new Set(
+			normalizedPortfolioItems
+				.map((item) => derivePortfolioId(item))
+				.filter(Boolean)
+		);
+		const userPortfolioRecordIds = new Set(
+			normalizedUserItems
+				.filter((item) => String(item.SK || '').startsWith('PORTFOLIO#'))
+				.map((item) => derivePortfolioId(item))
+				.filter(Boolean)
+		);
+
+		for (const portfolioId of portfolioIdsInItems) {
+			if (userPortfolioRecordIds.has(portfolioId)) continue;
+			normalizedUserItems.push({
+				PK: `USER#${userId}`,
+				SK: `PORTFOLIO#${portfolioId}`,
+				portfolioId,
+				name: portfolioId,
+				description: '',
+				baseCurrency: 'BRL',
+				createdAt: now,
+				updatedAt: now,
+			});
+		}
+
+		const dedupedUserItems = dedupeItemsByPrimaryKey(normalizedUserItems);
+		const allItemsToWrite = [
+			...dedupedUserItems,
+			...normalizedPortfolioItems,
+			...normalizedAliases,
+		];
+
+		if (mode === 'replace') {
+			const existingUserItems = await queryAllItems({
+				TableName: TABLE_NAME,
+				KeyConditionExpression: 'PK = :pk',
+				ExpressionAttributeValues: {
+					':pk': `USER#${userId}`,
+				},
+			});
+			const existingPortfolioIds = Array.from(
+				new Set(
+					(existingUserItems || [])
+						.map((item) => derivePortfolioId(item))
+						.filter(Boolean)
+				)
+			);
+			const existingPortfolioGroups = await Promise.all(
+				existingPortfolioIds.map((portfolioId) =>
+					queryAllItems({
+						TableName: TABLE_NAME,
+						KeyConditionExpression: 'PK = :pk',
+						ExpressionAttributeValues: {
+							':pk': `PORTFOLIO#${portfolioId}`,
+						},
+					})
+				)
+			);
+			const existingPortfolioItems = existingPortfolioGroups.flat();
+			const existingAliases = await scanAllItems({
+				TableName: TABLE_NAME,
+				FilterExpression: 'begins_with(PK, :prefix)',
+				ExpressionAttributeValues: {
+					':prefix': 'ALIAS#',
+				},
+			});
+
+			await deleteItemsByPrimaryKey([
+				...existingPortfolioItems,
+				...existingUserItems,
+				...existingAliases,
+			]);
+		}
+
+		await putItemsByPrimaryKey(allItemsToWrite);
+
+		return {
+			mode,
+			importedAt: now,
+			stats: {
+				userItems: dedupedUserItems.length,
+				portfolioItems: normalizedPortfolioItems.length,
+				aliases: normalizedAliases.length,
+				totalItems: allItemsToWrite.length,
+			},
+		};
 	}
 
 	throw errorResponse(405, 'Method not allowed');
@@ -1843,15 +2170,17 @@ exports.handler = async (event) => {
 					userId,
 					requestBody
 				);
-			} else if (section === 'aliases') {
-				body = await handleAliasesList(httpMethod);
-				if (httpMethod === 'POST' || httpMethod === 'PUT') {
-					body = await handleAliases(httpMethod, requestBody);
+				} else if (section === 'aliases') {
+					body = await handleAliasesList(httpMethod);
+					if (httpMethod === 'POST' || httpMethod === 'PUT') {
+						body = await handleAliases(httpMethod, requestBody);
+					}
+				} else if (section === 'backup') {
+					body = await handleSettingsBackup(httpMethod, userId, requestBody);
+				} else {
+					throw errorResponse(404, 'Settings route not found');
 				}
 			} else {
-				throw errorResponse(404, 'Settings route not found');
-			}
-		} else {
 			throw errorResponse(404, 'Route not found');
 		}
 	} catch (err) {

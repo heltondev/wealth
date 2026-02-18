@@ -1318,6 +1318,31 @@
     "email": "Email",
     "preferredCurrency": "Preferred Currency",
     "language": "Language",
+    "backup": {
+      "tab": "Backup",
+      "description": "Download a full backup of your data and restore it later with one file.",
+      "exportTitle": "Download Backup",
+      "exportHint": "Includes portfolios, assets, transactions, theses, alerts, goals, aliases, and settings.",
+      "importTitle": "Upload Backup",
+      "importHint": "Select a previously downloaded backup JSON file.",
+      "fileSelected": "Selected file: {{file}}",
+      "actions": {
+        "download": "Download backup",
+        "upload": "Upload backup"
+      },
+      "mode": {
+        "label": "Import mode",
+        "replace": "Replace existing data",
+        "merge": "Merge with existing data"
+      },
+      "messages": {
+        "selectFile": "Select a backup file first.",
+        "exportSuccess": "Backup downloaded.",
+        "exportError": "Failed to download backup.",
+        "importSuccess": "Backup restored ({{total}} items).",
+        "importError": "Failed to restore backup."
+      }
+    },
     "theses": {
       "title": "Theses",
       "description": "Define one active thesis per country + asset class scope (for example BR:FII). Each save creates a new version and archives the previous active thesis in that scope.",
