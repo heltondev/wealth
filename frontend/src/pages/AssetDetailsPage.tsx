@@ -205,6 +205,7 @@ type AssetNewsItem = {
   ticker: string | null;
   title: string;
   description: string | null;
+  imageUrl: string | null;
   link: string;
   publishedAt: string | null;
   dataSource: string | null;
@@ -1048,6 +1049,98 @@ const toNewsPublishedDateKey = (value: string | null): string => {
   return fallback || 'undated';
 };
 
+const normalizeNewsImageUrl = (value: unknown): string | null => {
+  const raw = String(value || '')
+    .replace(/&amp;/gi, '&')
+    .trim();
+  if (!raw) return null;
+  if (raw.startsWith('//')) return `https:${raw}`;
+  if (/^https?:\/\//i.test(raw)) return raw;
+  return null;
+};
+
+const extractImageFromHtmlSnippet = (value: string | null): string | null => {
+  const html = String(value || '');
+  if (!html) return null;
+
+  const imgMatch = html.match(/<img[^>]+src=["']([^"']+)["'][^>]*>/i);
+  if (imgMatch?.[1]) {
+    const direct = normalizeNewsImageUrl(imgMatch[1]);
+    if (direct) return direct;
+  }
+
+  const imageUrlMatch = html.match(/https?:\/\/[^\s"'<>]+\.(?:avif|webp|png|jpe?g|gif)(?:\?[^\s"'<>]*)?/i);
+  if (imageUrlMatch?.[0]) {
+    const direct = normalizeNewsImageUrl(imageUrlMatch[0]);
+    if (direct) return direct;
+  }
+
+  return null;
+};
+
+const extractImageFromUnknownValue = (value: unknown): string | null => {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string') return normalizeNewsImageUrl(value);
+
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const found = extractImageFromUnknownValue(entry);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  if (typeof value !== 'object') return null;
+  const record = toObjectRecord(value);
+  const direct = normalizeNewsImageUrl(
+    record.url
+    ?? record.src
+    ?? record.href
+    ?? record.image
+    ?? record.imageUrl
+    ?? record.image_url
+    ?? record.thumbnail
+    ?? record.thumbnailUrl
+    ?? record.thumbnail_url
+  );
+  if (direct) return direct;
+
+  for (const key of ['enclosure', 'thumbnails', 'images', 'media', 'media_content', 'media_thumbnail']) {
+    const nested = extractImageFromUnknownValue(record[key]);
+    if (nested) return nested;
+  }
+
+  return null;
+};
+
+const extractNewsImageFromEntry = (
+  entry: Record<string, unknown>,
+  descriptionRaw: string | null,
+): string | null => {
+  const priorityCandidates: unknown[] = [
+    entry.image,
+    entry.imageUrl,
+    entry.image_url,
+    entry.thumbnail,
+    entry.thumbnailUrl,
+    entry.thumbnail_url,
+    entry.media,
+    entry.media_content,
+    entry['media:content'],
+    entry.media_thumbnail,
+    entry['media:thumbnail'],
+    entry.enclosure,
+    entry.content,
+  ];
+
+  for (const candidate of priorityCandidates) {
+    const found = extractImageFromUnknownValue(candidate);
+    if (found) return found;
+  }
+
+  return extractImageFromHtmlSnippet(descriptionRaw);
+};
+
 const tokenizeNewsText = (value: unknown): string[] => {
   const normalized = normalizeNewsText(value);
   return normalized ? normalized.split(' ') : [];
@@ -1092,6 +1185,7 @@ const parseAssetNewsPayload = (payload: unknown): AssetNewsItem[] => {
 
       const descriptionRaw = toNonEmptyString(entry.description ?? entry.summary ?? entry.snippet);
       const description = descriptionRaw ? stripSummaryMarkup(descriptionRaw) : null;
+      const imageUrl = extractNewsImageFromEntry(entry, descriptionRaw);
       const publishedAt = toNonEmptyString(entry.publishedAt ?? entry.published_at ?? entry.pubDate);
       const dataSource = toNonEmptyString(entry.data_source ?? entry.source);
       const ticker = toNonEmptyString(entry.ticker);
@@ -1118,6 +1212,7 @@ const parseAssetNewsPayload = (payload: unknown): AssetNewsItem[] => {
         ticker,
         title,
         description,
+        imageUrl,
         link,
         publishedAt,
         dataSource,
@@ -5356,11 +5451,24 @@ const AssetDetailsPage = () => {
                   className="asset-details-page__news-list"
                   style={newsGridStyle}
                 >
-                  {relevantAssetNews.map((item, index) => (
+                  {relevantAssetNews.map((item, index) => {
+                    const newsCardStyle: CSSProperties = {
+                      '--asset-news-stagger': `${Math.min(index, 9) * 38}ms`,
+                    } as CSSProperties;
+                    if (item.imageUrl) {
+                      newsCardStyle.backgroundImage = [
+                        'linear-gradient(180deg, rgba(2, 6, 23, 0.18) 0%, rgba(2, 6, 23, 0.72) 54%, rgba(2, 6, 23, 0.92) 100%)',
+                        `url("${item.imageUrl.replace(/"/g, '\\"')}")`,
+                      ].join(', ');
+                      newsCardStyle.backgroundSize = 'cover';
+                      newsCardStyle.backgroundPosition = 'center';
+                    }
+
+                    return (
                     <article
                       key={item.id}
-                      className="asset-details-page__news-item"
-                      style={{ '--asset-news-stagger': `${Math.min(index, 9) * 38}ms` } as CSSProperties}
+                      className={`asset-details-page__news-item ${item.imageUrl ? 'asset-details-page__news-item--with-image' : ''}`}
+                      style={newsCardStyle}
                     >
                       <div className="asset-details-page__news-item-head">
                         <a
@@ -5393,7 +5501,8 @@ const AssetDetailsPage = () => {
                         </span>
                       </div>
                     </article>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : null}
             </section>
