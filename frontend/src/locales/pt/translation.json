@@ -741,6 +741,19 @@
         "changePct": "Variação %",
         "lastClose": "Último fechamento"
       },
+      "news": {
+        "title": "Notícias Relevantes",
+        "subtitle": "Manchetes recentes e relevantes sobre {{ticker}}.",
+        "count_one": "{{count}} notícia relevante",
+        "count_other": "{{count}} notícias relevantes",
+        "loadError": "Falha ao carregar notícias deste ativo.",
+        "empty": "Nenhuma notícia relevante encontrada para este ativo agora.",
+        "publishedAt": "Publicado em",
+        "source": "Fonte",
+        "relevance": "Relevância",
+        "tilesPerLine": "Cards por linha",
+        "tilesPerLineAria": "Selecionar quantidade de cards por linha"
+      },
       "portfolio": {
         "title": "Portfólio do {{ticker}}",
         "items_one": "{{count}} item",
@@ -954,7 +967,16 @@
       "title": "Detalhes do Ativo",
       "subtitle": "Visualizacao completa do ativo selecionado",
       "backToAssets": "Voltar para ativos",
-      "notFound": "Ativo nao encontrado para o portfolio selecionado."
+      "notFound": "Ativo nao encontrado para o portfolio selecionado.",
+      "tabs": {
+        "ariaLabel": "Seções de detalhes do ativo",
+        "overview": "Resumo",
+        "portfolio": "Portfólio",
+        "emissions": "Emissões",
+        "financials": "Financeiro",
+        "history": "Histórico",
+        "news": "Notícias"
+      }
     },
     "form": {
       "ticker": "Símbolo do Ticker",

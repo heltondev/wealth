@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import {
   CartesianGrid,
@@ -60,7 +60,7 @@ type AssetSplitEvent = {
 type ChartPeriodPreset = 'MAX' | '5A' | '2A' | '1A' | '6M' | '3M' | '1M' | 'CUSTOM';
 type FinancialStatementKind = 'income' | 'balance' | 'cashflow';
 type FinancialFrequency = 'annual' | 'quarterly';
-type AssetDetailsTab = 'overview' | 'portfolio' | 'emissions' | 'financials' | 'history';
+type AssetDetailsTab = 'overview' | 'portfolio' | 'emissions' | 'financials' | 'history' | 'news';
 type AssetInsightsSnapshot = {
   status: 'loading' | 'ready' | 'error';
   source: string | null;
@@ -198,6 +198,23 @@ type FiiEmissionRow = {
   publicStart: string;
   publicEnd: string;
   publicStatus: string;
+};
+
+type AssetNewsItem = {
+  id: string;
+  ticker: string | null;
+  title: string;
+  description: string | null;
+  link: string;
+  publishedAt: string | null;
+  dataSource: string | null;
+};
+
+type AssetNewsScoredItem = AssetNewsItem & {
+  relevanceScore: number;
+  publishedAtTs: number;
+  hasTickerMatch: boolean;
+  sourceLabel: string;
 };
 
 type ParsedFinancialRow = {
@@ -361,6 +378,59 @@ const CHART_PERIOD_DAYS: Partial<Record<ChartPeriodPreset, number>> = {
   '5A': 1825,
 };
 const SPLIT_EVENT_DEDUP_WINDOW_DAYS = 7;
+const NEWS_MAX_ITEMS = 24;
+const NEWS_RELEVANCE_MIN_SCORE = 6;
+const NEWS_RELEVANCE_MIN_SCORE_RELAXED = 4;
+const NEWS_TILES_MIN = 1;
+const NEWS_TILES_MAX = 4;
+const NEWS_TILES_DEFAULT = 3;
+const NEWS_TILES_STORAGE_KEY = 'asset-details:news-tiles-per-row';
+const NEWS_NAME_STOPWORDS = new Set([
+  'a',
+  'acao',
+  'acoes',
+  'asset',
+  'assets',
+  'corp',
+  'corporation',
+  'de',
+  'do',
+  'dos',
+  'da',
+  'das',
+  'e',
+  'em',
+  'etf',
+  'fii',
+  'fundo',
+  'fundos',
+  'fund',
+  'funds',
+  'imobiliario',
+  'imobiliarios',
+  'inc',
+  'investment',
+  'investments',
+  'investimento',
+  'investimentos',
+  'ltda',
+  'na',
+  'no',
+  'ordinarias',
+  'on',
+  'ou',
+  'para',
+  'plc',
+  'pn',
+  'preferenciais',
+  'reit',
+  'sa',
+  'stock',
+  'stocks',
+  'trust',
+  'unit',
+  'units',
+]);
 
 const FINANCIAL_STATEMENT_KEY_MAP: Record<
 FinancialStatementKind,
@@ -891,6 +961,221 @@ const summarizeSourceValue = (value: unknown): string | null => {
   if (normalized.includes('ITAU')) return 'ITAU';
   if (normalized.includes('B3')) return 'B3';
   return null;
+};
+
+const normalizeNewsText = (value: unknown): string => (
+  String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+);
+
+const NEWS_TRACKING_QUERY_PARAMS = new Set([
+  'utm_source',
+  'utm_medium',
+  'utm_campaign',
+  'utm_term',
+  'utm_content',
+  'gclid',
+  'fbclid',
+  'mc_cid',
+  'mc_eid',
+  'igshid',
+  'mkt_tok',
+  'spm',
+  'ref',
+  'ref_src',
+  'source',
+  'si',
+]);
+
+const clampNewsTilesPerRow = (value: unknown): number => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return NEWS_TILES_DEFAULT;
+  const rounded = Math.round(parsed);
+  return Math.max(NEWS_TILES_MIN, Math.min(NEWS_TILES_MAX, rounded));
+};
+
+const canonicalizeNewsUrlForDedupe = (value: string): string => {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+
+  try {
+    const url = new URL(raw);
+    if (url.hostname.includes('news.google.') && url.searchParams.has('url')) {
+      const nestedUrl = url.searchParams.get('url');
+      if (nestedUrl) return canonicalizeNewsUrlForDedupe(nestedUrl);
+    }
+
+    const params = [...url.searchParams.entries()]
+      .filter(([key]) => {
+        const normalizedKey = key.toLowerCase();
+        return !normalizedKey.startsWith('utm_') && !NEWS_TRACKING_QUERY_PARAMS.has(normalizedKey);
+      })
+      .sort(([left], [right]) => left.localeCompare(right));
+    const nextSearch = new URLSearchParams();
+    for (const [key, val] of params) {
+      nextSearch.append(key, val);
+    }
+    const pathname = url.pathname.replace(/\/+$/, '') || '/';
+    const query = nextSearch.toString();
+    return `${url.origin}${pathname}${query ? `?${query}` : ''}`;
+  } catch {
+    return raw.replace(/#.*$/, '');
+  }
+};
+
+const normalizeNewsTitleForDedupe = (value: unknown): string => {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const withoutSourceSuffix = text
+    .replace(/\s+[|•]\s+[^|•]+$/, '')
+    .replace(/\s+[-–—]\s+[^-–—]+$/, '')
+    .trim();
+  return normalizeNewsText(withoutSourceSuffix);
+};
+
+const toNewsPublishedDateKey = (value: string | null): string => {
+  if (!value) return 'undated';
+  const parsed = Date.parse(value);
+  if (Number.isFinite(parsed)) {
+    return new Date(parsed).toISOString().slice(0, 10);
+  }
+  const fallback = toIsoDate(String(value).slice(0, 10));
+  return fallback || 'undated';
+};
+
+const tokenizeNewsText = (value: unknown): string[] => {
+  const normalized = normalizeNewsText(value);
+  return normalized ? normalized.split(' ') : [];
+};
+
+const buildTickerRelevanceTokens = (ticker: string | null): string[] => {
+  const normalizedTicker = String(ticker || '')
+    .toLowerCase()
+    .replace(/\.sa$/i, '')
+    .replace(/[^a-z0-9]/g, '');
+  if (!normalizedTicker) return [];
+
+  const tickerRoot = normalizedTicker.replace(/[0-9]+$/, '');
+  const tokens = [normalizedTicker];
+  if (tickerRoot && tickerRoot !== normalizedTicker) tokens.push(tickerRoot);
+  return Array.from(new Set(tokens.filter((token) => token.length >= 2)));
+};
+
+const buildAssetNameRelevanceTokens = (assetName: string | null): string[] => (
+  Array.from(
+    new Set(
+      tokenizeNewsText(assetName)
+        .filter((token) => token.length >= 4)
+        .filter((token) => !NEWS_NAME_STOPWORDS.has(token))
+    )
+  ).slice(0, 10)
+);
+
+const parseAssetNewsPayload = (payload: unknown): AssetNewsItem[] => {
+  const payloadRecord = toObjectRecord(payload);
+  const rawItems = Array.isArray(payloadRecord.items) ? payloadRecord.items : [];
+  const dedupeByCanonicalLink = new Set<string>();
+  const dedupeByTitleAndDate = new Set<string>();
+  const dedupeByTitleSummaryAndDate = new Set<string>();
+
+  const parsedItems = rawItems
+    .map((rawItem, index) => {
+      const entry = toObjectRecord(rawItem);
+      const title = toNonEmptyString(entry.title);
+      const link = toNonEmptyString(entry.link ?? entry.url);
+      if (!title || !link) return null;
+
+      const descriptionRaw = toNonEmptyString(entry.description ?? entry.summary ?? entry.snippet);
+      const description = descriptionRaw ? stripSummaryMarkup(descriptionRaw) : null;
+      const publishedAt = toNonEmptyString(entry.publishedAt ?? entry.published_at ?? entry.pubDate);
+      const dataSource = toNonEmptyString(entry.data_source ?? entry.source);
+      const ticker = toNonEmptyString(entry.ticker);
+      const id = toNonEmptyString(entry.id ?? entry.newsId ?? entry.SK ?? entry.sk) || `${link}|${title}|${index}`;
+      const canonicalLink = canonicalizeNewsUrlForDedupe(link);
+      const titleKey = normalizeNewsTitleForDedupe(title);
+      const publishedDateKey = toNewsPublishedDateKey(publishedAt);
+      const descriptionKey = tokenizeNewsText(description || '')
+        .slice(0, 16)
+        .join(' ');
+      const titleAndDateKey = `${titleKey}|${publishedDateKey}`;
+      const titleSummaryAndDateKey = `${titleKey}|${descriptionKey}|${publishedDateKey}`;
+
+      if (canonicalLink && dedupeByCanonicalLink.has(canonicalLink)) return null;
+      if (titleKey && dedupeByTitleAndDate.has(titleAndDateKey)) return null;
+      if (titleKey && descriptionKey && dedupeByTitleSummaryAndDate.has(titleSummaryAndDateKey)) return null;
+
+      if (canonicalLink) dedupeByCanonicalLink.add(canonicalLink);
+      if (titleKey) dedupeByTitleAndDate.add(titleAndDateKey);
+      if (titleKey && descriptionKey) dedupeByTitleSummaryAndDate.add(titleSummaryAndDateKey);
+
+      return {
+        id,
+        ticker,
+        title,
+        description,
+        link,
+        publishedAt,
+        dataSource,
+      } satisfies AssetNewsItem;
+    })
+    .filter((entry): entry is AssetNewsItem => Boolean(entry));
+
+  return parsedItems
+    .sort((left, right) => {
+      const leftTs = left.publishedAt ? Date.parse(left.publishedAt) : 0;
+      const rightTs = right.publishedAt ? Date.parse(right.publishedAt) : 0;
+      return rightTs - leftTs;
+    })
+    .slice(0, NEWS_MAX_ITEMS);
+};
+
+const scoreAssetNewsItem = (
+  item: AssetNewsItem,
+  tickerTokens: string[],
+  assetNameTokens: string[],
+): AssetNewsScoredItem => {
+  const titleTokenSet = new Set(tokenizeNewsText(item.title));
+  const descriptionTokenSet = new Set(tokenizeNewsText(item.description || ''));
+  const linkTokens = tokenizeNewsText(item.link);
+  const linkText = normalizeNewsText(linkTokens.join(' '));
+  const tickerInTitle = tickerTokens.filter((token) => titleTokenSet.has(token)).length;
+  const tickerInDescription = tickerTokens.filter((token) => descriptionTokenSet.has(token)).length;
+  const tickerInLink = tickerTokens.filter((token) => linkText.includes(token)).length;
+  const assetNameInTitle = assetNameTokens.filter((token) => titleTokenSet.has(token)).length;
+  const assetNameInDescription = assetNameTokens.filter((token) => descriptionTokenSet.has(token)).length;
+  const hasTickerMatch = tickerInTitle > 0 || tickerInDescription > 0 || tickerInLink > 0;
+
+  let relevanceScore = 0;
+  if (tickerInTitle > 0) relevanceScore += 8;
+  if (tickerInDescription > 0) relevanceScore += 5;
+  if (tickerInLink > 0) relevanceScore += 3;
+  relevanceScore += Math.min(assetNameInTitle * 2, 6);
+  relevanceScore += Math.min(assetNameInDescription, 3);
+  if (!hasTickerMatch && tickerTokens.length > 0) relevanceScore -= 2;
+  if (!hasTickerMatch && assetNameInTitle === 0 && assetNameInDescription === 0) relevanceScore -= 4;
+
+  const parsedPublishedAt = item.publishedAt ? Date.parse(item.publishedAt) : Number.NaN;
+  const publishedAtTs = Number.isFinite(parsedPublishedAt) ? parsedPublishedAt : 0;
+  if (publishedAtTs > 0) {
+    const ageDays = Math.max(0, (Date.now() - publishedAtTs) / (1000 * 60 * 60 * 24));
+    if (ageDays <= 1) relevanceScore += 3;
+    else if (ageDays <= 3) relevanceScore += 2;
+    else if (ageDays <= 7) relevanceScore += 1;
+    else if (ageDays > 30) relevanceScore -= 1;
+  }
+
+  return {
+    ...item,
+    relevanceScore,
+    publishedAtTs,
+    hasTickerMatch,
+    sourceLabel: item.dataSource ? toDisplayLabel(item.dataSource) : '-',
+  };
 };
 
 const normalizeFinancialKey = (value: string): string => (
@@ -1487,6 +1772,19 @@ const AssetDetailsPage = () => {
   const [selectedFinancialMetric, setSelectedFinancialMetric] = useState('');
   const [selectedDocumentCategory, setSelectedDocumentCategory] = useState('all');
   const [selectedDocumentType, setSelectedDocumentType] = useState('all');
+  const [newsTilesPerRow, setNewsTilesPerRow] = useState<number>(() => {
+    if (typeof window === 'undefined') return NEWS_TILES_DEFAULT;
+    try {
+      const stored = window.localStorage.getItem(NEWS_TILES_STORAGE_KEY);
+      return clampNewsTilesPerRow(stored);
+    } catch {
+      return NEWS_TILES_DEFAULT;
+    }
+  });
+  const [newsLayoutTransitionKey, setNewsLayoutTransitionKey] = useState(0);
+  const [assetNews, setAssetNews] = useState<AssetNewsItem[]>([]);
+  const [assetNewsLoading, setAssetNewsLoading] = useState(false);
+  const [assetNewsError, setAssetNewsError] = useState<string | null>(null);
   const [fiiUpdates, setFiiUpdates] = useState<Array<{
     id: number;
     category: string | null;
@@ -1509,8 +1807,26 @@ const AssetDetailsPage = () => {
   const portfolioLeafletMapRef = useRef<LeafletMap | null>(null);
   const portfolioLeafletLayerRef = useRef<LeafletLayerGroup | null>(null);
   const portfolioLeafletScaleControlRef = useRef<LeafletScaleControl | null>(null);
+  const newsLayoutInitializedRef = useRef(false);
 
   const numberLocale = i18n.language?.startsWith('pt') ? 'pt-BR' : 'en-US';
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(NEWS_TILES_STORAGE_KEY, String(newsTilesPerRow));
+    } catch {
+      // Ignore storage failures (private browsing / blocked storage).
+    }
+  }, [newsTilesPerRow]);
+
+  useEffect(() => {
+    if (!newsLayoutInitializedRef.current) {
+      newsLayoutInitializedRef.current = true;
+      return;
+    }
+    setNewsLayoutTransitionKey((previous) => previous + 1);
+  }, [newsTilesPerRow]);
 
   const formatDetailValue = useCallback((value: unknown) => {
     if (value === undefined || value === null || value === '') return t('assets.modal.noValue');
@@ -1581,6 +1897,19 @@ const AssetDetailsPage = () => {
 
   const formatCountryDetail = useCallback((country: string) =>
     `${COUNTRY_FLAG_MAP[country] || '🏳️'} ${COUNTRY_NAME_MAP[country] || country}`, []);
+
+  const formatNewsPublishedAt = useCallback((value: string | null) => {
+    if (!value) return formatDetailValue(null);
+    const parsed = new Date(value);
+    if (!Number.isFinite(parsed.getTime())) return value;
+    return parsed.toLocaleString(numberLocale, {
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  }, [formatDetailValue, numberLocale]);
 
   // Sync portfolio selection from URL query if present.
   useEffect(() => {
@@ -1935,6 +2264,8 @@ const AssetDetailsPage = () => {
     setSelectedFinancialMetric('');
     setSelectedDocumentCategory('all');
     setSelectedDocumentType('all');
+    setAssetNews([]);
+    setAssetNewsError(null);
     if (selectedAsset && isStockAssetClass(selectedAsset.assetClass)) {
       setAssetInsights(createEmptyInsightsSnapshot('loading', selectedAsset.ticker, selectedAsset.assetClass));
     } else {
@@ -2009,6 +2340,32 @@ const AssetDetailsPage = () => {
       .finally(() => {
         if (cancelled) return;
         setAssetFinancialsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [portfolioId, selectedAsset]);
+
+  useEffect(() => {
+    if (!selectedAsset || !portfolioId) return;
+    let cancelled = false;
+    setAssetNewsLoading(true);
+    setAssetNewsError(null);
+
+    api.getAssetNews(selectedAsset.ticker, portfolioId)
+      .then((payload) => {
+        if (cancelled) return;
+        setAssetNews(parseAssetNewsPayload(payload));
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setAssetNews([]);
+        setAssetNewsError(error instanceof Error ? error.message : null);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setAssetNewsLoading(false);
       });
 
     return () => {
@@ -2589,7 +2946,6 @@ const AssetDetailsPage = () => {
     if (!selectedAsset) return [];
 
     return [
-      { key: 'ticker', label: t('assets.modal.fields.ticker'), value: formatDetailValue(selectedAsset.ticker) },
       {
         key: 'name',
         label: t('assets.modal.fields.name'),
@@ -2604,6 +2960,7 @@ const AssetDetailsPage = () => {
           )
           : formatDetailValue(selectedAsset.name),
       },
+      { key: 'ticker', label: t('assets.modal.fields.ticker'), value: formatDetailValue(selectedAsset.ticker) },
       { key: 'quantity', label: t('assets.modal.fields.quantity'), value: formatAssetQuantity(selectedAsset.quantity) },
       {
         key: 'investedAmount',
@@ -3376,11 +3733,63 @@ const AssetDetailsPage = () => {
     return isStockAssetClass(selectedAsset.assetClass);
   }, [selectedAsset]);
 
+  const newsTickerTokens = useMemo(() => (
+    buildTickerRelevanceTokens(selectedAsset?.ticker || null)
+  ), [selectedAsset?.ticker]);
+
+  const newsAssetNameTokens = useMemo(() => (
+    buildAssetNameRelevanceTokens(selectedAsset?.name || null)
+  ), [selectedAsset?.name]);
+
+  const scoredAssetNews = useMemo<AssetNewsScoredItem[]>(() => (
+    assetNews.map((item) => scoreAssetNewsItem(item, newsTickerTokens, newsAssetNameTokens))
+  ), [assetNews, newsAssetNameTokens, newsTickerTokens]);
+
+  const relevantAssetNews = useMemo<AssetNewsScoredItem[]>(() => {
+    const strictMatches = scoredAssetNews.filter((item) => item.relevanceScore >= NEWS_RELEVANCE_MIN_SCORE);
+    if (strictMatches.length > 0) {
+      return [...strictMatches].sort((left, right) => {
+        if (right.publishedAtTs !== left.publishedAtTs) return right.publishedAtTs - left.publishedAtTs;
+        return right.relevanceScore - left.relevanceScore;
+      });
+    }
+
+    const relaxedTickerMatches = scoredAssetNews.filter((item) => (
+      item.hasTickerMatch
+      && item.relevanceScore >= NEWS_RELEVANCE_MIN_SCORE_RELAXED
+    ));
+    if (relaxedTickerMatches.length > 0) {
+      return [...relaxedTickerMatches].sort((left, right) => {
+        if (right.publishedAtTs !== left.publishedAtTs) return right.publishedAtTs - left.publishedAtTs;
+        return right.relevanceScore - left.relevanceScore;
+      });
+    }
+
+    return scoredAssetNews
+      .filter((item) => item.hasTickerMatch)
+      .sort((left, right) => {
+        if (right.publishedAtTs !== left.publishedAtTs) return right.publishedAtTs - left.publishedAtTs;
+        return right.relevanceScore - left.relevanceScore;
+      })
+      .slice(0, 8);
+  }, [scoredAssetNews]);
+
+  const newsTilesPerRowOptions = useMemo(() => [1, 2, 3, 4], []);
+
+  const newsGridStyle = useMemo<CSSProperties>(() => (
+    { '--asset-news-columns': String(newsTilesPerRow) } as CSSProperties
+  ), [newsTilesPerRow]);
+
+  const handleNewsTilesPerRowChange = useCallback((value: number) => {
+    setNewsTilesPerRow(clampNewsTilesPerRow(value));
+  }, []);
+
   const tabOptions = useMemo(() => {
     const tabs: Array<{ value: AssetDetailsTab; label: string }> = [
       { value: 'overview', label: t('assets.detail.tabs.overview', { defaultValue: 'Overview' }) },
       { value: 'financials', label: t('assets.detail.tabs.financials', { defaultValue: 'Financials' }) },
       { value: 'history', label: t('assets.detail.tabs.history', { defaultValue: 'History' }) },
+      { value: 'news', label: t('assets.detail.tabs.news', { defaultValue: 'News' }) },
     ];
     if (shouldRenderFundPortfolio) {
       tabs.splice(1, 0, { value: 'portfolio', label: t('assets.detail.tabs.portfolio', { defaultValue: 'Portfolio' }) });
@@ -3799,7 +4208,8 @@ const AssetDetailsPage = () => {
                   (tab.value === 'portfolio' && assetFinancialsLoading) ||
                   (tab.value === 'emissions' && fiiEmissionsLoading) ||
                   (tab.value === 'financials' && assetFinancialsLoading) ||
-                  (tab.value === 'history' && marketSeriesLoading);
+                  (tab.value === 'history' && marketSeriesLoading) ||
+                  (tab.value === 'news' && assetNewsLoading);
                 return (
                   <button
                     key={tab.value}
@@ -4873,6 +5283,119 @@ const AssetDetailsPage = () => {
                   defaultValue: 'Derived from stock split factors in historical price data.',
                 })}
               </p>
+            </section>
+            </>)}
+
+            {activeTab === 'news' && (<>
+            <section className="asset-details-page__card asset-details-page__card--full asset-details-page__card--news">
+              <div className="asset-details-page__news-header">
+                <h2>{t('assets.modal.news.title', { defaultValue: 'Relevant News' })}</h2>
+                <div className="asset-details-page__news-header-right">
+                  <div
+                    className="asset-details-page__news-layout-control"
+                    role="group"
+                    aria-label={t('assets.modal.news.tilesPerLineAria', { defaultValue: 'Select news tiles per line' })}
+                  >
+                    <span className="asset-details-page__news-layout-label">
+                      {t('assets.modal.news.tilesPerLine', { defaultValue: 'Tiles per line' })}
+                    </span>
+                    <div className="asset-details-page__news-layout-options">
+                      {newsTilesPerRowOptions.map((option) => (
+                        <button
+                          key={`news-tiles-${option}`}
+                          type="button"
+                          className={`asset-details-page__news-layout-option ${
+                            newsTilesPerRow === option ? 'asset-details-page__news-layout-option--active' : ''
+                          }`}
+                          onClick={() => handleNewsTilesPerRowChange(option)}
+                          aria-pressed={newsTilesPerRow === option}
+                        >
+                          {option}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {!assetNewsLoading ? (
+                    <span className="asset-details-page__news-count">
+                      {t('assets.modal.news.count', {
+                        count: relevantAssetNews.length,
+                        defaultValue: '{{count}} relevant articles',
+                      })}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+
+              <p className="asset-details-page__news-subtitle">
+                {t('assets.modal.news.subtitle', {
+                  ticker: selectedAsset.ticker,
+                  defaultValue: 'Recent, high-signal headlines related to {{ticker}}.',
+                })}
+              </p>
+
+              {assetNewsLoading ? (
+                <p className="asset-details-page__financials-state">{t('common.loading')}</p>
+              ) : null}
+
+              {!assetNewsLoading && assetNewsError ? (
+                <div className="asset-details-page__financials-state asset-details-page__financials-state--error">
+                  <p>{t('assets.modal.news.loadError', { defaultValue: 'Failed to load news for this asset.' })}</p>
+                  <code>{assetNewsError}</code>
+                </div>
+              ) : null}
+
+              {!assetNewsLoading && !assetNewsError && relevantAssetNews.length === 0 ? (
+                <p className="asset-details-page__financials-state">
+                  {t('assets.modal.news.empty', { defaultValue: 'No relevant news found for this asset right now.' })}
+                </p>
+              ) : null}
+
+              {!assetNewsLoading && !assetNewsError && relevantAssetNews.length > 0 ? (
+                <div
+                  key={`news-layout-${newsLayoutTransitionKey}`}
+                  className="asset-details-page__news-list"
+                  style={newsGridStyle}
+                >
+                  {relevantAssetNews.map((item, index) => (
+                    <article
+                      key={item.id}
+                      className="asset-details-page__news-item"
+                      style={{ '--asset-news-stagger': `${Math.min(index, 9) * 38}ms` } as CSSProperties}
+                    >
+                      <div className="asset-details-page__news-item-head">
+                        <a
+                          href={item.link}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="asset-details-page__news-title-link"
+                        >
+                          {item.title}
+                        </a>
+                        <span className="asset-details-page__news-score">
+                          {t('assets.modal.news.relevance', { defaultValue: 'Relevance' })}: {item.relevanceScore}
+                        </span>
+                      </div>
+
+                      {item.description ? (
+                        <p className="asset-details-page__news-description">{item.description}</p>
+                      ) : (
+                        <p className="asset-details-page__news-description asset-details-page__news-description--empty">
+                          {formatDetailValue(null)}
+                        </p>
+                      )}
+
+                      <div className="asset-details-page__news-meta">
+                        <span>
+                          {t('assets.modal.news.publishedAt', { defaultValue: 'Published' })}: <strong>{formatNewsPublishedAt(item.publishedAt)}</strong>
+                        </span>
+                        <span>
+                          {t('assets.modal.news.source', { defaultValue: 'Source' })}: <strong>{item.sourceLabel}</strong>
+                        </span>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : null}
             </section>
             </>)}
 

@@ -741,6 +741,19 @@
         "changePct": "Change %",
         "lastClose": "Last close"
       },
+      "news": {
+        "title": "Relevant News",
+        "subtitle": "Recent, high-signal headlines related to {{ticker}}.",
+        "count_one": "{{count}} relevant article",
+        "count_other": "{{count}} relevant articles",
+        "loadError": "Failed to load news for this asset.",
+        "empty": "No relevant news found for this asset right now.",
+        "publishedAt": "Published",
+        "source": "Source",
+        "relevance": "Relevance",
+        "tilesPerLine": "Tiles per line",
+        "tilesPerLineAria": "Select news tiles per line"
+      },
       "portfolio": {
         "title": "Portfolio do {{ticker}}",
         "items_one": "{{count}} item",
@@ -954,7 +967,16 @@
       "title": "Asset Details",
       "subtitle": "Complete detail view for the selected asset",
       "backToAssets": "Back to assets",
-      "notFound": "Asset not found for the selected portfolio."
+      "notFound": "Asset not found for the selected portfolio.",
+      "tabs": {
+        "ariaLabel": "Asset detail sections",
+        "overview": "Overview",
+        "portfolio": "Portfolio",
+        "emissions": "Emissions",
+        "financials": "Financials",
+        "history": "History",
+        "news": "News"
+      }
     },
     "form": {
       "ticker": "Ticker Symbol",
