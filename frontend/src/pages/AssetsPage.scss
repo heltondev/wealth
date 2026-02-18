@@ -4,8 +4,7 @@
 .assets-page {
   @include page-container;
   margin: 0;
-  width: 100%;
-  max-width: none;
+  min-width: 0;
 
   &__header {
     display: flex;
