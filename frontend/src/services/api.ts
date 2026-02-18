@@ -3,32 +3,131 @@ import { isAmplifyAuthConfigured } from '../aws-exports';
 import { logger } from '../utils/logger';
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
+const API_GET_CACHE_TTL_MS = Number(import.meta.env.VITE_API_GET_CACHE_TTL_MS || 15_000);
+const API_GET_CACHE_MAX_ENTRIES = Number(import.meta.env.VITE_API_GET_CACHE_MAX_ENTRIES || 300);
+
+type ApiGetCacheEntry = {
+  data: unknown;
+  expiresAt: number;
+};
+
+const apiGetCacheStore = new Map<string, ApiGetCacheEntry>();
+const apiGetInFlightRequests = new Map<string, Promise<unknown>>();
+
+const normalizeMethod = (method?: string): string => String(method || 'GET').trim().toUpperCase();
+
+const normalizeGetCacheKey = (path: string): string => String(path || '').trim();
+
+const pruneExpiredGetCacheEntries = (at = Date.now()) => {
+  for (const [key, entry] of apiGetCacheStore.entries()) {
+    if (entry.expiresAt <= at) {
+      apiGetCacheStore.delete(key);
+    }
+  }
+};
+
+const pruneOverflowGetCacheEntries = () => {
+  const overflow = apiGetCacheStore.size - API_GET_CACHE_MAX_ENTRIES;
+  if (overflow <= 0) return;
+
+  const oldest = Array.from(apiGetCacheStore.entries())
+    .sort((left, right) => left[1].expiresAt - right[1].expiresAt)
+    .slice(0, overflow);
+
+  for (const [key] of oldest) {
+    apiGetCacheStore.delete(key);
+  }
+};
+
+const shouldCacheGetRequest = (path: string): boolean => {
+  const normalizedPath = String(path || '').toLowerCase();
+  if (!normalizedPath) return false;
+  if (normalizedPath.includes('/health/')) return false;
+  if (normalizedPath.startsWith('/settings/backup')) return false;
+  if (normalizedPath.startsWith('/settings/cache')) return false;
+  if (normalizedPath.startsWith('/reports/') && normalizedPath.includes('action=content')) return false;
+  return true;
+};
+
+const clearApiGetCache = () => {
+  apiGetCacheStore.clear();
+  apiGetInFlightRequests.clear();
+};
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const headers = new Headers(options.headers);
-  headers.set('Content-Type', 'application/json');
+  const method = normalizeMethod(options.method);
+  const cacheKey = normalizeGetCacheKey(path);
+  const useGetCache = method === 'GET' && shouldCacheGetRequest(path);
 
-  if (isAmplifyAuthConfigured) {
-    try {
-      const session = await fetchAuthSession();
-      const idToken = session.tokens?.idToken?.toString();
-      headers.set('Authorization', idToken || '');
-    } catch (error) {
-      logger.warn('Unable to resolve auth session', error);
+  if (useGetCache) {
+    const cached = apiGetCacheStore.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.data as T;
+    }
+    if (cached && cached.expiresAt <= Date.now()) {
+      apiGetCacheStore.delete(cacheKey);
+    }
+
+    const inFlight = apiGetInFlightRequests.get(cacheKey);
+    if (inFlight) {
+      return inFlight as Promise<T>;
     }
   }
 
-  const response = await fetch(`${API_URL}${path}`, {
-    ...options,
-    headers,
-  });
+  const executeRequest = async (): Promise<T> => {
+    const headers = new Headers(options.headers);
+    headers.set('Content-Type', 'application/json');
 
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.error || `API error: ${response.statusText}`);
+    if (isAmplifyAuthConfigured) {
+      try {
+        const session = await fetchAuthSession();
+        const idToken = session.tokens?.idToken?.toString();
+        headers.set('Authorization', idToken || '');
+      } catch (error) {
+        logger.warn('Unable to resolve auth session', error);
+      }
+    }
+
+    const response = await fetch(`${API_URL}${path}`, {
+      ...options,
+      method,
+      headers,
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `API error: ${response.statusText}`);
+    }
+
+    const parsed = await response.json();
+
+    if (useGetCache) {
+      const ttlMs = Number.isFinite(API_GET_CACHE_TTL_MS) && API_GET_CACHE_TTL_MS > 0
+        ? API_GET_CACHE_TTL_MS
+        : 15_000;
+      apiGetCacheStore.set(cacheKey, {
+        data: parsed,
+        expiresAt: Date.now() + ttlMs,
+      });
+      pruneExpiredGetCacheEntries();
+      pruneOverflowGetCacheEntries();
+    } else if (method !== 'GET') {
+      clearApiGetCache();
+    }
+
+    return parsed as T;
+  };
+
+  if (!useGetCache) {
+    return executeRequest();
   }
 
-  return response.json();
+  const pending = executeRequest()
+    .finally(() => {
+      apiGetInFlightRequests.delete(cacheKey);
+    });
+  apiGetInFlightRequests.set(cacheKey, pending as Promise<unknown>);
+  return pending;
 }
 
 const fileToBase64 = (file: File): Promise<string> =>
@@ -150,6 +249,29 @@ export interface BackupImportResponse {
     portfolioItems: number;
     aliases: number;
     totalItems: number;
+  };
+}
+
+export interface CacheLayerDiagnostics {
+  entries: number;
+  defaultTtlMs: number;
+  hitCount: number;
+  missCount: number;
+  requests: number;
+  hitRatePct: number;
+  [key: string]: unknown;
+}
+
+export interface CacheDiagnosticsResponse {
+  responseCache: CacheLayerDiagnostics;
+  scraperCache: CacheLayerDiagnostics;
+  fetchedAt: string;
+}
+
+export interface CacheClearResponse extends CacheDiagnosticsResponse {
+  cleared: {
+    responseCache: boolean;
+    scraperCache: boolean;
   };
 }
 
@@ -936,6 +1058,15 @@ export const api = {
       body: JSON.stringify({
         mode,
         backup,
+      }),
+    }),
+  getCacheDiagnostics: () => request<CacheDiagnosticsResponse>('/settings/cache'),
+  clearCaches: (scope: 'all' | 'response' | 'scraper' = 'all') =>
+    request<CacheClearResponse>('/settings/cache', {
+      method: 'POST',
+      body: JSON.stringify({
+        action: 'clear',
+        scope,
       }),
     }),
 

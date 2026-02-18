@@ -1376,6 +1376,46 @@
         "importError": "Failed to restore backup."
       }
     },
+    "cache": {
+      "tab": "Cache",
+      "description": "Inspect and clear backend cache layers used for API responses and market-data scrapers.",
+      "empty": "No cache diagnostics available.",
+      "actions": {
+        "refresh": "Refresh diagnostics",
+        "clearAll": "Clear all caches",
+        "clearResponse": "Clear response cache",
+        "clearScraper": "Clear scraper cache"
+      },
+      "response": {
+        "title": "API Response Cache"
+      },
+      "scraper": {
+        "title": "Market Data Scraper Cache"
+      },
+      "metrics": {
+        "entries": "Entries: {{value}}",
+        "maxEntries": "Max entries: {{value}}",
+        "ttl": "Default TTL (ms): {{value}}",
+        "requests": "Requests: {{value}}",
+        "hitRate": "Hit rate: {{value}}%",
+        "hitCount": "Hits: {{value}}",
+        "missCount": "Misses: {{value}}",
+        "stored": "Stores: {{value}}",
+        "storeSkipped": "Store skipped: {{value}}",
+        "invalidations": "Invalidations: {{value}}",
+        "invalidatedEntries": "Entries removed: {{value}}"
+      },
+      "messages": {
+        "refreshed": "Cache diagnostics refreshed.",
+        "loadError": "Failed to load cache diagnostics.",
+        "clearError": "Failed to clear cache.",
+        "cleared": {
+          "all": "All caches cleared.",
+          "response": "Response cache cleared.",
+          "scraper": "Scraper cache cleared."
+        }
+      }
+    },
     "theses": {
       "title": "Theses",
       "description": "Define one active thesis per country + asset class scope (for example BR:FII). Each save creates a new version and archives the previous active thesis in that scope.",

@@ -8,6 +8,7 @@ import { usePortfolioData } from '../context/PortfolioDataContext';
 import {
   api,
   type BackupSnapshot,
+  type CacheDiagnosticsResponse,
   type UserSettings,
   type Alias,
   type DropdownConfigMap,
@@ -25,7 +26,7 @@ import {
 import { useToast } from '../context/ToastContext';
 import './SettingsPage.scss';
 
-type SettingsTab = 'profile' | 'aliases' | 'preferences' | 'dropdowns' | 'theses' | 'backup';
+type SettingsTab = 'profile' | 'aliases' | 'preferences' | 'dropdowns' | 'theses' | 'backup' | 'cache';
 const DEFAULT_ITEMS_PER_PAGE = 10;
 
 const THESIS_COUNTRIES: ThesisCountry[] = ['BR', 'US', 'CA'];
@@ -124,6 +125,9 @@ const SettingsPage = () => {
   const [backupMode, setBackupMode] = useState<'replace' | 'merge'>('replace');
   const [exportingBackup, setExportingBackup] = useState(false);
   const [importingBackup, setImportingBackup] = useState(false);
+  const [cacheDiagnostics, setCacheDiagnostics] = useState<CacheDiagnosticsResponse | null>(null);
+  const [refreshingCacheDiagnostics, setRefreshingCacheDiagnostics] = useState(false);
+  const [clearingCacheScope, setClearingCacheScope] = useState<'all' | 'response' | 'scraper' | null>(null);
 
   useEffect(() => {
     api.getDropdownSettings()
@@ -168,6 +172,15 @@ const SettingsPage = () => {
       setLoading(true);
       loadTheses(selectedPortfolio)
         .catch(() => setTheses([]))
+        .finally(() => setLoading(false));
+      return;
+    }
+
+    if (activeTab === 'cache') {
+      setLoading(true);
+      api.getCacheDiagnostics()
+        .then((payload) => setCacheDiagnostics(payload))
+        .catch(() => setCacheDiagnostics(null))
         .finally(() => setLoading(false));
       return;
     }
@@ -515,6 +528,41 @@ const SettingsPage = () => {
     }
   }, [backupFile, backupMode, showToast, t]);
 
+  const handleRefreshCacheDiagnostics = useCallback(async () => {
+    setRefreshingCacheDiagnostics(true);
+    try {
+      const payload = await api.getCacheDiagnostics();
+      setCacheDiagnostics(payload);
+      showToast(t('settings.cache.messages.refreshed'), 'success');
+    } catch (reason) {
+      showToast(
+        reason instanceof Error ? reason.message : t('settings.cache.messages.loadError'),
+        'error'
+      );
+    } finally {
+      setRefreshingCacheDiagnostics(false);
+    }
+  }, [showToast, t]);
+
+  const handleClearCache = useCallback(async (scope: 'all' | 'response' | 'scraper') => {
+    setClearingCacheScope(scope);
+    try {
+      const payload = await api.clearCaches(scope);
+      setCacheDiagnostics(payload);
+      showToast(
+        t(`settings.cache.messages.cleared.${scope}`),
+        'success'
+      );
+    } catch (reason) {
+      showToast(
+        reason instanceof Error ? reason.message : t('settings.cache.messages.clearError'),
+        'error'
+      );
+    } finally {
+      setClearingCacheScope(null);
+    }
+  }, [showToast, t]);
+
   const portfolioOptions = useMemo(
     () => portfolios.map((portfolio) => ({ value: portfolio.portfolioId, label: portfolio.name })),
     [portfolios]
@@ -551,6 +599,7 @@ const SettingsPage = () => {
     { key: 'dropdowns' as const, label: t('settings.dropdowns') },
     { key: 'theses' as const, label: t('settings.theses.title') },
     { key: 'backup' as const, label: t('settings.backup.tab') },
+    { key: 'cache' as const, label: t('settings.cache.tab') },
   ];
 
   const dropdownEntries = useMemo(() =>
@@ -942,6 +991,88 @@ const SettingsPage = () => {
                 </div>
               ) : null}
             </form>
+          </div>
+        )}
+
+        {!loading && activeTab === 'cache' && (
+          <div className="settings-section cache-config">
+            <p className="cache-config__description">{t('settings.cache.description')}</p>
+
+            <div className="cache-config__actions">
+              <button
+                type="button"
+                className="cache-config__btn cache-config__btn--secondary"
+                onClick={() => void handleRefreshCacheDiagnostics()}
+                disabled={refreshingCacheDiagnostics || clearingCacheScope !== null}
+              >
+                {refreshingCacheDiagnostics ? t('common.loading') : t('settings.cache.actions.refresh')}
+              </button>
+              <button
+                type="button"
+                className="cache-config__btn cache-config__btn--danger"
+                onClick={() => void handleClearCache('all')}
+                disabled={refreshingCacheDiagnostics || clearingCacheScope !== null}
+              >
+                {clearingCacheScope === 'all' ? t('common.loading') : t('settings.cache.actions.clearAll')}
+              </button>
+              <button
+                type="button"
+                className="cache-config__btn cache-config__btn--danger"
+                onClick={() => void handleClearCache('response')}
+                disabled={refreshingCacheDiagnostics || clearingCacheScope !== null}
+              >
+                {clearingCacheScope === 'response'
+                  ? t('common.loading')
+                  : t('settings.cache.actions.clearResponse')}
+              </button>
+              <button
+                type="button"
+                className="cache-config__btn cache-config__btn--danger"
+                onClick={() => void handleClearCache('scraper')}
+                disabled={refreshingCacheDiagnostics || clearingCacheScope !== null}
+              >
+                {clearingCacheScope === 'scraper'
+                  ? t('common.loading')
+                  : t('settings.cache.actions.clearScraper')}
+              </button>
+            </div>
+
+            {cacheDiagnostics ? (
+              <div className="cache-config__grid">
+                <section className="cache-config__panel">
+                  <h3>{t('settings.cache.response.title')}</h3>
+                  <ul>
+                    <li>{t('settings.cache.metrics.entries', { value: cacheDiagnostics.responseCache.entries })}</li>
+                    <li>{t('settings.cache.metrics.maxEntries', { value: cacheDiagnostics.responseCache.maxEntries as number })}</li>
+                    <li>{t('settings.cache.metrics.ttl', { value: cacheDiagnostics.responseCache.defaultTtlMs })}</li>
+                    <li>{t('settings.cache.metrics.requests', { value: cacheDiagnostics.responseCache.requests })}</li>
+                    <li>{t('settings.cache.metrics.hitRate', { value: cacheDiagnostics.responseCache.hitRatePct })}</li>
+                    <li>{t('settings.cache.metrics.hitCount', { value: cacheDiagnostics.responseCache.hitCount })}</li>
+                    <li>{t('settings.cache.metrics.missCount', { value: cacheDiagnostics.responseCache.missCount })}</li>
+                    <li>{t('settings.cache.metrics.stored', { value: cacheDiagnostics.responseCache.storeCount as number })}</li>
+                    <li>{t('settings.cache.metrics.storeSkipped', { value: cacheDiagnostics.responseCache.storeSkipCount as number })}</li>
+                    <li>{t('settings.cache.metrics.invalidations', { value: cacheDiagnostics.responseCache.invalidateCount as number })}</li>
+                    <li>{t('settings.cache.metrics.invalidatedEntries', { value: cacheDiagnostics.responseCache.invalidatedEntriesCount as number })}</li>
+                  </ul>
+                </section>
+
+                <section className="cache-config__panel">
+                  <h3>{t('settings.cache.scraper.title')}</h3>
+                  <ul>
+                    <li>{t('settings.cache.metrics.entries', { value: cacheDiagnostics.scraperCache.entries })}</li>
+                    <li>{t('settings.cache.metrics.ttl', { value: cacheDiagnostics.scraperCache.defaultTtlMs })}</li>
+                    <li>{t('settings.cache.metrics.requests', { value: cacheDiagnostics.scraperCache.requests })}</li>
+                    <li>{t('settings.cache.metrics.hitRate', { value: cacheDiagnostics.scraperCache.hitRatePct })}</li>
+                    <li>{t('settings.cache.metrics.hitCount', { value: cacheDiagnostics.scraperCache.hitCount })}</li>
+                    <li>{t('settings.cache.metrics.missCount', { value: cacheDiagnostics.scraperCache.missCount })}</li>
+                    <li>{t('settings.cache.metrics.stored', { value: cacheDiagnostics.scraperCache.setCount as number })}</li>
+                    <li>{t('settings.cache.metrics.invalidatedEntries', { value: cacheDiagnostics.scraperCache.deleteCount as number })}</li>
+                  </ul>
+                </section>
+              </div>
+            ) : (
+              <p className="cache-config__empty">{t('settings.cache.empty')}</p>
+            )}
           </div>
         )}
 

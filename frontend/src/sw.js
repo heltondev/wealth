@@ -1,19 +1,24 @@
 import { precacheAndRoute } from 'workbox-precaching';
 import { registerRoute } from 'workbox-routing';
+import { StaleWhileRevalidate } from 'workbox-strategies';
+import { CacheableResponsePlugin } from 'workbox-cacheable-response';
+import { ExpirationPlugin } from 'workbox-expiration';
 
 precacheAndRoute(self.__WB_MANIFEST);
 
-// Cache API responses
+// Cache GET API responses for quick reload/navigation while still refreshing in background.
 registerRoute(
-  ({ url }) => url.pathname.startsWith('/api/'),
-  async ({ request }) => {
-    try {
-      return await fetch(request);
-    } catch {
-      return new Response(JSON.stringify({ error: 'Offline' }), {
-        status: 503,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-  }
+  ({ request, url }) => request.method === 'GET' && url.pathname.startsWith('/api/'),
+  new StaleWhileRevalidate({
+    cacheName: 'invest-api-cache-v1',
+    plugins: [
+      new CacheableResponsePlugin({
+        statuses: [0, 200],
+      }),
+      new ExpirationPlugin({
+        maxEntries: 200,
+        maxAgeSeconds: 60,
+      }),
+    ],
+  }),
 );

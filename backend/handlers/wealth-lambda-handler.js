@@ -10,8 +10,10 @@ const {
 	ScanCommand,
 } = require('@aws-sdk/lib-dynamodb');
 const { AssetMarketDataService } = require('../services/market-data');
+const { MemoryCache } = require('../services/market-data/cache');
 const { PortfolioPriceHistoryService } = require('../services/price-history');
 const { PlatformService } = require('../services/platform');
+const { ApiResponseCache } = require('../services/cache/api-response-cache');
 const {
 	buildAwsClientConfig,
 	resolveTableName,
@@ -22,10 +24,15 @@ const ddbClient = new DynamoDBClient(
 	buildAwsClientConfig({ service: 'dynamodb' })
 );
 const dynamo = DynamoDBDocumentClient.from(ddbClient);
+const scraperCache = new MemoryCache(
+	Number(process.env.MARKET_DATA_SCRAPER_CACHE_TTL_MS || 15 * 60 * 1000)
+);
 const marketDataService = new AssetMarketDataService({
 	dynamo,
 	tableName: TABLE_NAME,
 	logger: console,
+	cache: scraperCache,
+	cacheTtlMs: Number(process.env.MARKET_DATA_SCRAPER_CACHE_TTL_MS || 15 * 60 * 1000),
 });
 const priceHistoryService = new PortfolioPriceHistoryService({
 	dynamo,
@@ -140,6 +147,21 @@ const DEFAULT_DROPDOWN_SETTINGS = {
 	},
 };
 const BACKUP_SCHEMA_VERSION = 1;
+const MUTATION_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+const RESPONSE_CACHE_DEFAULT_TTL_MS = Number(
+	process.env.API_RESPONSE_CACHE_TTL_MS || 30 * 1000
+);
+const RESPONSE_CACHE_MAX_ENTRIES = Number(
+	process.env.API_RESPONSE_CACHE_MAX_ENTRIES || 800
+);
+const RESPONSE_CACHE_MAX_BODY_BYTES = Number(
+	process.env.API_RESPONSE_CACHE_MAX_BODY_BYTES || 1024 * 1024
+);
+const responseCache = new ApiResponseCache({
+	defaultTtlMs: RESPONSE_CACHE_DEFAULT_TTL_MS,
+	maxEntries: RESPONSE_CACHE_MAX_ENTRIES,
+	maxBodyBytes: RESPONSE_CACHE_MAX_BODY_BYTES,
+});
 
 const THESIS_SUPPORTED_COUNTRIES = ['BR', 'US', 'CA'];
 const THESIS_SUPPORTED_ASSET_CLASSES = [
@@ -313,6 +335,117 @@ const errorResponse = (statusCode, message) => ({
 	statusCode,
 	message,
 });
+
+const normalizeQueryEntries = (query = {}) =>
+	Object.entries(query || {})
+		.filter(([rawKey, rawValue]) => {
+			if (!rawKey) return false;
+			return rawValue !== undefined && rawValue !== null && rawValue !== '';
+		})
+		.map(([rawKey, rawValue]) => [String(rawKey).trim(), String(rawValue).trim()])
+		.filter(([key, value]) => Boolean(key) && value !== '')
+		.sort((left, right) => left[0].localeCompare(right[0]));
+
+const buildResponseCacheKey = ({ userId, appRole, method, path, query }) => {
+	const normalizedQuery = normalizeQueryEntries(query)
+		.map(([key, value]) =>
+			`${encodeURIComponent(key)}=${encodeURIComponent(value)}`
+		)
+		.join('&');
+	return [
+		`u:${String(userId || 'anonymous')}`,
+		`r:${String(appRole || 'VIEWER')}`,
+		`m:${String(method || 'GET').toUpperCase()}`,
+		`p:${String(path || '/')}`,
+		`q:${normalizedQuery}`,
+	].join('|');
+};
+
+const isTruthyValue = (value) => {
+	const normalized = String(value || '').trim().toLowerCase();
+	return ['1', 'true', 'yes', 'on'].includes(normalized);
+};
+
+const shouldBypassResponseCache = (query = {}) =>
+	isTruthyValue(query.noCache)
+	|| isTruthyValue(query.nocache)
+	|| isTruthyValue(query.bypassCache)
+	|| isTruthyValue(query.bypasscache);
+
+const isCacheableGetRoute = (
+	resourceBase,
+	id,
+	subResource,
+	subId,
+	query = {}
+) => {
+	if (resourceBase === 'health') return false;
+	if (resourceBase === 'parsers') return false;
+	if (resourceBase === 'jobs') return false;
+	if (resourceBase === 'settings' && id === 'backup') return false;
+	if (resourceBase === 'settings' && id === 'cache') return false;
+	if (resourceBase === 'reports' && String(query.action || '').toLowerCase() === 'content') {
+		return false;
+	}
+	if (resourceBase === 'portfolios' && subResource === 'event-inbox' && subId === 'sync') {
+		return false;
+	}
+	return true;
+};
+
+const resolveRouteResponseCacheTtlMs = (
+	resourceBase,
+	id,
+	subResource
+) => {
+	if (resourceBase === 'settings' && id === 'dropdowns') return 10 * 60 * 1000;
+	if (resourceBase === 'settings' && id === 'profile') return 2 * 60 * 1000;
+	if (resourceBase === 'portfolios' && subResource === 'event-inbox') return 10 * 1000;
+	if (resourceBase === 'portfolios' && subResource === 'event-notices') return 15 * 1000;
+	if (
+		resourceBase === 'portfolios'
+		&& ['dashboard', 'price-history', 'dividends', 'risk', 'benchmarks', 'multi-currency', 'rebalance'].includes(subResource)
+	) {
+		return 45 * 1000;
+	}
+	if (resourceBase === 'portfolios' && ['assets', 'transactions', 'tax', 'theses'].includes(subResource)) {
+		return 30 * 1000;
+	}
+	if (resourceBase === 'portfolios' && !subResource) return 30 * 1000;
+	return RESPONSE_CACHE_DEFAULT_TTL_MS;
+};
+
+const toCacheDiagnosticsResponse = () => {
+	const responseStats = responseCache.stats();
+	const scraperStats = typeof scraperCache.stats === 'function'
+		? scraperCache.stats()
+		: {
+			entries: scraperCache.items?.size || 0,
+			defaultTtlMs: scraperCache.defaultTtlMs || 0,
+		};
+	const responseRequests = responseStats.hitCount + responseStats.missCount;
+	const responseHitRatePct = responseRequests > 0
+		? Number(((responseStats.hitCount / responseRequests) * 100).toFixed(2))
+		: 0;
+	const scraperRequests = Number(scraperStats.hitCount || 0) + Number(scraperStats.missCount || 0);
+	const scraperHitRatePct = scraperRequests > 0
+		? Number(((Number(scraperStats.hitCount || 0) / scraperRequests) * 100).toFixed(2))
+		: 0;
+
+	return {
+		responseCache: {
+			...responseStats,
+			requests: responseRequests,
+			hitRatePct: responseHitRatePct,
+		},
+		scraperCache: {
+			...scraperStats,
+			requests: scraperRequests,
+			hitRatePct: scraperHitRatePct,
+		},
+		fetchedAt: new Date().toISOString(),
+	};
+};
 
 const sanitizeDropdownOption = (option) => {
 	if (!option || typeof option !== 'object') return null;
@@ -1190,6 +1323,47 @@ async function handleSettingsBackup(method, userId, body) {
 	throw errorResponse(405, 'Method not allowed');
 }
 
+async function handleSettingsCache(method, userId, body) {
+	void userId;
+
+	if (method === 'GET') {
+		return toCacheDiagnosticsResponse();
+	}
+
+	if (method === 'POST' || method === 'DELETE') {
+		const payload = parseBody(body);
+		const action = String(payload.action || '').trim().toLowerCase();
+		if (method === 'POST' && action && action !== 'clear') {
+			throw errorResponse(400, 'Only action=clear is supported');
+		}
+
+		const scope = String(payload.scope || 'all').trim().toLowerCase();
+		if (!['all', 'response', 'scraper'].includes(scope)) {
+			throw errorResponse(400, 'scope must be one of: all, response, scraper');
+		}
+
+		const clearedResponseCache = scope === 'all' || scope === 'response';
+		const clearedScraperCache = scope === 'all' || scope === 'scraper';
+
+		if (clearedResponseCache) {
+			responseCache.clear();
+		}
+		if (clearedScraperCache && typeof scraperCache.clear === 'function') {
+			scraperCache.clear();
+		}
+
+		return {
+			cleared: {
+				responseCache: clearedResponseCache,
+				scraperCache: clearedScraperCache,
+			},
+			...toCacheDiagnosticsResponse(),
+		};
+	}
+
+	throw errorResponse(405, 'Method not allowed');
+}
+
 async function handleAliases(method, body) {
 	if (method === 'GET') {
 		const result = await dynamo.send(
@@ -2020,6 +2194,10 @@ async function handleCommunity(method, id, userId, body, query = {}) {
 exports.handler = async (event) => {
 	let body;
 	let statusCode = 200;
+	let requestMethod = '';
+	let requestPath = '';
+	let requestUserId = 'anonymous';
+	let cacheConfig = null;
 	const headers = {
 		'Content-Type': 'application/json',
 		'Access-Control-Allow-Origin': resolveCorsOrigin(event),
@@ -2037,6 +2215,10 @@ exports.handler = async (event) => {
 		const claims = requestContext?.authorizer?.claims || {};
 		const userId = claims?.sub || 'anonymous';
 		const appRole = resolveAppRole(claims);
+		requestMethod = String(httpMethod || '').toUpperCase();
+		requestPath = String(path || '/');
+		requestUserId = userId;
+		const query = queryStringParameters || {};
 
 		const pathSegments = path.split('/').filter((s) => s);
 
@@ -2055,6 +2237,32 @@ exports.handler = async (event) => {
 		const subResource = pathSegments[startIndex + 2];
 		const subId = pathSegments[startIndex + 3];
 		const subSubResource = pathSegments[startIndex + 4];
+
+		if (
+			requestMethod === 'GET'
+			&& !shouldBypassResponseCache(query)
+			&& isCacheableGetRoute(resourceBase, id, subResource, subId, query)
+		) {
+			cacheConfig = {
+				key: buildResponseCacheKey({
+					userId,
+					appRole,
+					method: requestMethod,
+					path: requestPath,
+					query,
+				}),
+				ttlMs: resolveRouteResponseCacheTtlMs(resourceBase, id, subResource),
+			};
+			const cached = responseCache.get(cacheConfig.key);
+			if (cached) {
+				headers['X-Cache'] = 'HIT';
+				return {
+					statusCode: cached.statusCode,
+					headers,
+					body: cached.body,
+				};
+			}
+		}
 
 		if (resourceBase === 'portfolios') {
 			ensureAppAccess(appRole, 'EDITOR');
@@ -2250,17 +2458,23 @@ exports.handler = async (event) => {
 					userId,
 					requestBody
 				);
-				} else if (section === 'aliases') {
-					body = await handleAliasesList(httpMethod);
-					if (httpMethod === 'POST' || httpMethod === 'PUT') {
-						body = await handleAliases(httpMethod, requestBody);
-					}
-				} else if (section === 'backup') {
-					body = await handleSettingsBackup(httpMethod, userId, requestBody);
-				} else {
-					throw errorResponse(404, 'Settings route not found');
+			} else if (section === 'cache') {
+				body = await handleSettingsCache(
+					httpMethod,
+					userId,
+					requestBody
+				);
+			} else if (section === 'aliases') {
+				body = await handleAliasesList(httpMethod);
+				if (httpMethod === 'POST' || httpMethod === 'PUT') {
+					body = await handleAliases(httpMethod, requestBody);
 				}
+			} else if (section === 'backup') {
+				body = await handleSettingsBackup(httpMethod, userId, requestBody);
 			} else {
+				throw errorResponse(404, 'Settings route not found');
+			}
+		} else {
 			throw errorResponse(404, 'Route not found');
 		}
 	} catch (err) {
@@ -2278,10 +2492,37 @@ exports.handler = async (event) => {
 		}
 	}
 
+	const responseBody = JSON.stringify(body);
+
+	if (cacheConfig) {
+		if (statusCode >= 200 && statusCode < 400) {
+			const stored = responseCache.set(
+				cacheConfig.key,
+				{ statusCode, body: responseBody },
+				cacheConfig.ttlMs
+			);
+			headers['X-Cache'] = stored ? 'MISS-STORE' : 'MISS-SKIP';
+		} else {
+			headers['X-Cache'] = 'MISS-ERROR';
+		}
+	} else if (!headers['X-Cache']) {
+		headers['X-Cache'] = 'BYPASS';
+	}
+
+	if (
+		MUTATION_METHODS.has(requestMethod)
+		&& statusCode >= 200
+		&& statusCode < 400
+	) {
+		const invalidationPrefix = `u:${requestUserId}|`;
+		const removed = responseCache.invalidateByPrefix(invalidationPrefix);
+		headers['X-Cache-Invalidated'] = String(removed);
+	}
+
 	return {
 		statusCode,
 		headers,
-		body: JSON.stringify(body),
+		body: responseBody,
 	};
 };
 
@@ -2306,4 +2547,6 @@ exports._test = {
 	marketDataService,
 	priceHistoryService,
 	platformService,
+	responseCache,
+	clearResponseCache: () => responseCache.clear(),
 };

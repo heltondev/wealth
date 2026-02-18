@@ -1376,6 +1376,46 @@
         "importError": "Falha ao restaurar backup."
       }
     },
+    "cache": {
+      "tab": "Cache",
+      "description": "Inspecione e limpe as camadas de cache do backend usadas para respostas da API e scrapers de dados de mercado.",
+      "empty": "Nenhum diagnóstico de cache disponível.",
+      "actions": {
+        "refresh": "Atualizar diagnóstico",
+        "clearAll": "Limpar todos os caches",
+        "clearResponse": "Limpar cache de resposta",
+        "clearScraper": "Limpar cache de scraper"
+      },
+      "response": {
+        "title": "Cache de Resposta da API"
+      },
+      "scraper": {
+        "title": "Cache de Scraper de Mercado"
+      },
+      "metrics": {
+        "entries": "Entradas: {{value}}",
+        "maxEntries": "Máximo de entradas: {{value}}",
+        "ttl": "TTL padrão (ms): {{value}}",
+        "requests": "Requisições: {{value}}",
+        "hitRate": "Taxa de acerto: {{value}}%",
+        "hitCount": "Acertos: {{value}}",
+        "missCount": "Erros de cache: {{value}}",
+        "stored": "Armazenamentos: {{value}}",
+        "storeSkipped": "Armazenamento ignorado: {{value}}",
+        "invalidations": "Invalidações: {{value}}",
+        "invalidatedEntries": "Entradas removidas: {{value}}"
+      },
+      "messages": {
+        "refreshed": "Diagnóstico de cache atualizado.",
+        "loadError": "Falha ao carregar diagnóstico de cache.",
+        "clearError": "Falha ao limpar cache.",
+        "cleared": {
+          "all": "Todos os caches foram limpos.",
+          "response": "Cache de resposta limpo.",
+          "scraper": "Cache de scraper limpo."
+        }
+      }
+    },
     "theses": {
       "title": "Teses",
       "description": "Defina uma tese ativa por escopo de país + classe de ativo (exemplo BR:FII). Cada salvamento cria uma nova versão e arquiva a tese ativa anterior do mesmo escopo.",

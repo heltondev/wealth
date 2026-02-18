@@ -24,6 +24,8 @@ const {
 		marketDataService,
 		priceHistoryService,
 		platformService,
+		responseCache,
+		clearResponseCache,
 	},
 } = require('./wealth-lambda-handler');
 
@@ -351,6 +353,33 @@ test('handler returns 404 for unknown settings section', async () => {
 	assert.match(body.error, /Settings route not found/);
 });
 
+test('handler GET /settings/cache returns cache diagnostics', async () => {
+	clearResponseCache();
+	const response = await handler(makeEvent('GET', '/settings/cache'));
+	assert.equal(response.statusCode, 200);
+	const body = JSON.parse(response.body);
+	assert.equal(typeof body?.responseCache?.entries, 'number');
+	assert.equal(typeof body?.responseCache?.hitRatePct, 'number');
+	assert.equal(typeof body?.scraperCache?.entries, 'number');
+	assert.equal(typeof body?.fetchedAt, 'string');
+});
+
+test('handler POST /settings/cache clears selected caches', async () => {
+	clearResponseCache();
+	responseCache.set('u:test|r:ADMIN|m:GET|p:/x|q:', { statusCode: 200, body: '{}' }, 60_000);
+	assert.ok(responseCache.stats().entries > 0);
+
+	const response = await handler(
+		makeEvent('POST', '/settings/cache', { action: 'clear', scope: 'response' })
+	);
+
+	assert.equal(response.statusCode, 200);
+	const body = JSON.parse(response.body);
+	assert.equal(body?.cleared?.responseCache, true);
+	assert.equal(body?.cleared?.scraperCache, false);
+	assert.equal(body?.responseCache?.entries, 0);
+});
+
 test('handler skips stage prefix in path', async () => {
 	const response = await handler(makeEvent('GET', '/prod/settings/unknown'));
 	assert.equal(response.statusCode, 404);
@@ -498,6 +527,82 @@ test('handler GET /portfolios/{id}/dashboard delegates to platform service', asy
 		assert.equal(body.total_value_brl, 1000);
 	} finally {
 		platformService.getDashboard = original;
+	}
+});
+
+test('handler caches GET dashboard responses and returns HIT on repeated request', async () => {
+	clearResponseCache();
+	const original = platformService.getDashboard;
+	let calls = 0;
+	platformService.getDashboard = async (_userId, options) => {
+		calls += 1;
+		return {
+			portfolioId: options.portfolioId,
+			total_value_brl: 1234,
+			calls,
+		};
+	};
+
+	try {
+		const first = await handler(
+			makeEvent('GET', '/portfolios/test-portfolio/dashboard', null, null, { period: 'MAX' })
+		);
+		const second = await handler(
+			makeEvent('GET', '/portfolios/test-portfolio/dashboard', null, null, { period: 'MAX' })
+		);
+
+		assert.equal(first.statusCode, 200);
+		assert.equal(second.statusCode, 200);
+		assert.equal(first.headers['X-Cache'], 'MISS-STORE');
+		assert.equal(second.headers['X-Cache'], 'HIT');
+		assert.equal(calls, 1);
+	} finally {
+		platformService.getDashboard = original;
+		clearResponseCache();
+	}
+});
+
+test('handler invalidates cached GET responses after successful mutation', async () => {
+	clearResponseCache();
+	const originalDashboard = platformService.getDashboard;
+	const originalRefresh = marketDataService.refreshPortfolioAssets;
+	let dashboardCalls = 0;
+	platformService.getDashboard = async (_userId, options) => {
+		dashboardCalls += 1;
+		return {
+			portfolioId: options.portfolioId,
+			total_value_brl: 1000 + dashboardCalls,
+		};
+	};
+	marketDataService.refreshPortfolioAssets = async (portfolioId) => ({
+		portfolioId,
+		processed: 1,
+		updated: 1,
+		failed: 0,
+	});
+
+	try {
+		const first = await handler(
+			makeEvent('GET', '/portfolios/test-portfolio/dashboard', null, null, { period: 'MAX' })
+		);
+		const mutation = await handler(
+			makeEvent('POST', '/portfolios/test-portfolio/market-data/refresh', {})
+		);
+		const second = await handler(
+			makeEvent('GET', '/portfolios/test-portfolio/dashboard', null, null, { period: 'MAX' })
+		);
+
+		assert.equal(first.statusCode, 200);
+		assert.equal(second.statusCode, 200);
+		assert.equal(mutation.statusCode, 200);
+		assert.equal(first.headers['X-Cache'], 'MISS-STORE');
+		assert.equal(second.headers['X-Cache'], 'MISS-STORE');
+		assert.ok(Number(mutation.headers['X-Cache-Invalidated']) >= 1);
+		assert.equal(dashboardCalls, 2);
+	} finally {
+		platformService.getDashboard = originalDashboard;
+		marketDataService.refreshPortfolioAssets = originalRefresh;
+		clearResponseCache();
 	}
 });
 
