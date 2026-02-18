@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import {
   CartesianGrid,
@@ -211,11 +212,30 @@ type AssetNewsItem = {
   dataSource: string | null;
 };
 
+type AssetNewsScoreBreakdown = {
+  tickerInTitleCount: number;
+  tickerInDescriptionCount: number;
+  tickerInLinkCount: number;
+  assetNameInTitleCount: number;
+  assetNameInDescriptionCount: number;
+  tickerInTitlePoints: number;
+  tickerInDescriptionPoints: number;
+  tickerInLinkPoints: number;
+  assetNameInTitlePoints: number;
+  assetNameInDescriptionPoints: number;
+  recencyPoints: number;
+  penaltyNoTickerPoints: number;
+  penaltyNoContextPoints: number;
+  ageDays: number | null;
+  totalPoints: number;
+};
+
 type AssetNewsScoredItem = AssetNewsItem & {
   relevanceScore: number;
   publishedAtTs: number;
   hasTickerMatch: boolean;
   sourceLabel: string;
+  scoreBreakdown: AssetNewsScoreBreakdown;
 };
 
 type ParsedFinancialRow = {
@@ -518,16 +538,27 @@ const SUMMARY_HEADING_BREAK_TOKENS = [
   'Para conferir outros dados',
 ];
 
-const decodeBasicHtmlEntities = (value: string): string => (
-  String(value || '')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&quot;/gi, '"')
-    .replace(/&apos;/gi, '\'')
-    .replace(/&#39;/gi, '\'')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-);
+const decodeBasicHtmlEntities = (value: string): string => {
+  let decoded = String(value || '');
+
+  // Run multiple passes to handle nested encodings like "&amp;nbsp;".
+  for (let index = 0; index < 3; index += 1) {
+    const next = decoded
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&#160;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/&quot;/gi, '"')
+      .replace(/&apos;/gi, '\'')
+      .replace(/&#39;/gi, '\'')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>');
+
+    if (next === decoded) break;
+    decoded = next;
+  }
+
+  return decoded;
+};
 
 const stripSummaryMarkup = (value: string): string => (
   decodeBasicHtmlEntities(String(value || ''))
@@ -1245,24 +1276,54 @@ const scoreAssetNewsItem = (
   const assetNameInDescription = assetNameTokens.filter((token) => descriptionTokenSet.has(token)).length;
   const hasTickerMatch = tickerInTitle > 0 || tickerInDescription > 0 || tickerInLink > 0;
 
-  let relevanceScore = 0;
-  if (tickerInTitle > 0) relevanceScore += 8;
-  if (tickerInDescription > 0) relevanceScore += 5;
-  if (tickerInLink > 0) relevanceScore += 3;
-  relevanceScore += Math.min(assetNameInTitle * 2, 6);
-  relevanceScore += Math.min(assetNameInDescription, 3);
-  if (!hasTickerMatch && tickerTokens.length > 0) relevanceScore -= 2;
-  if (!hasTickerMatch && assetNameInTitle === 0 && assetNameInDescription === 0) relevanceScore -= 4;
+  const tickerInTitlePoints = tickerInTitle > 0 ? 8 : 0;
+  const tickerInDescriptionPoints = tickerInDescription > 0 ? 5 : 0;
+  const tickerInLinkPoints = tickerInLink > 0 ? 3 : 0;
+  const assetNameInTitlePoints = Math.min(assetNameInTitle * 2, 6);
+  const assetNameInDescriptionPoints = Math.min(assetNameInDescription, 3);
+  const penaltyNoTickerPoints = (!hasTickerMatch && tickerTokens.length > 0) ? -2 : 0;
+  const penaltyNoContextPoints = (!hasTickerMatch && assetNameInTitle === 0 && assetNameInDescription === 0) ? -4 : 0;
 
   const parsedPublishedAt = item.publishedAt ? Date.parse(item.publishedAt) : Number.NaN;
   const publishedAtTs = Number.isFinite(parsedPublishedAt) ? parsedPublishedAt : 0;
+  let recencyPoints = 0;
+  let ageDays: number | null = null;
   if (publishedAtTs > 0) {
-    const ageDays = Math.max(0, (Date.now() - publishedAtTs) / (1000 * 60 * 60 * 24));
-    if (ageDays <= 1) relevanceScore += 3;
-    else if (ageDays <= 3) relevanceScore += 2;
-    else if (ageDays <= 7) relevanceScore += 1;
-    else if (ageDays > 30) relevanceScore -= 1;
+    ageDays = Math.max(0, (Date.now() - publishedAtTs) / (1000 * 60 * 60 * 24));
+    if (ageDays <= 1) recencyPoints = 3;
+    else if (ageDays <= 3) recencyPoints = 2;
+    else if (ageDays <= 7) recencyPoints = 1;
+    else if (ageDays > 30) recencyPoints = -1;
   }
+
+  const relevanceScore = (
+    tickerInTitlePoints
+    + tickerInDescriptionPoints
+    + tickerInLinkPoints
+    + assetNameInTitlePoints
+    + assetNameInDescriptionPoints
+    + recencyPoints
+    + penaltyNoTickerPoints
+    + penaltyNoContextPoints
+  );
+
+  const scoreBreakdown: AssetNewsScoreBreakdown = {
+    tickerInTitleCount: tickerInTitle,
+    tickerInDescriptionCount: tickerInDescription,
+    tickerInLinkCount: tickerInLink,
+    assetNameInTitleCount: assetNameInTitle,
+    assetNameInDescriptionCount: assetNameInDescription,
+    tickerInTitlePoints,
+    tickerInDescriptionPoints,
+    tickerInLinkPoints,
+    assetNameInTitlePoints,
+    assetNameInDescriptionPoints,
+    recencyPoints,
+    penaltyNoTickerPoints,
+    penaltyNoContextPoints,
+    ageDays,
+    totalPoints: relevanceScore,
+  };
 
   return {
     ...item,
@@ -1270,6 +1331,7 @@ const scoreAssetNewsItem = (
     publishedAtTs,
     hasTickerMatch,
     sourceLabel: item.dataSource ? toDisplayLabel(item.dataSource) : '-',
+    scoreBreakdown,
   };
 };
 
@@ -1880,6 +1942,10 @@ const AssetDetailsPage = () => {
   const [assetNews, setAssetNews] = useState<AssetNewsItem[]>([]);
   const [assetNewsLoading, setAssetNewsLoading] = useState(false);
   const [assetNewsError, setAssetNewsError] = useState<string | null>(null);
+  const [newsScoreModalSelection, setNewsScoreModalSelection] = useState<{
+    id: string;
+    fallbackItem: AssetNewsScoredItem;
+  } | null>(null);
   const [fiiUpdates, setFiiUpdates] = useState<Array<{
     id: number;
     category: string | null;
@@ -2005,6 +2071,10 @@ const AssetDetailsPage = () => {
       minute: '2-digit',
     });
   }, [formatDetailValue, numberLocale]);
+
+  const formatScoreContribution = useCallback((value: number) => (
+    value > 0 ? `+${value}` : String(value)
+  ), []);
 
   // Sync portfolio selection from URL query if present.
   useEffect(() => {
@@ -2361,6 +2431,7 @@ const AssetDetailsPage = () => {
     setSelectedDocumentType('all');
     setAssetNews([]);
     setAssetNewsError(null);
+    setNewsScoreModalSelection(null);
     if (selectedAsset && isStockAssetClass(selectedAsset.assetClass)) {
       setAssetInsights(createEmptyInsightsSnapshot('loading', selectedAsset.ticker, selectedAsset.assetClass));
     } else {
@@ -3878,6 +3949,51 @@ const AssetDetailsPage = () => {
   const handleNewsTilesPerRowChange = useCallback((value: number) => {
     setNewsTilesPerRow(clampNewsTilesPerRow(value));
   }, []);
+
+  const newsScoreModalItem = useMemo<AssetNewsScoredItem | null>(() => {
+    if (!newsScoreModalSelection) return null;
+    return (
+      relevantAssetNews.find((item) => item.id === newsScoreModalSelection.id)
+      || newsScoreModalSelection.fallbackItem
+    );
+  }, [newsScoreModalSelection, relevantAssetNews]);
+
+  const openNewsScoreModal = useCallback((newsItem: AssetNewsScoredItem) => {
+    setNewsScoreModalSelection({
+      id: newsItem.id,
+      fallbackItem: newsItem,
+    });
+  }, []);
+
+  const closeNewsScoreModal = useCallback(() => {
+    setNewsScoreModalSelection(null);
+  }, []);
+
+  useEffect(() => {
+    if (!newsScoreModalItem) return;
+    if (typeof window === 'undefined' || typeof document === 'undefined') return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeNewsScoreModal();
+      }
+    };
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [closeNewsScoreModal, newsScoreModalItem]);
+
+  useEffect(() => {
+    if (activeTab === 'news') return;
+    setNewsScoreModalSelection(null);
+  }, [activeTab]);
 
   const tabOptions = useMemo(() => {
     const tabs: Array<{ value: AssetDetailsTab; label: string }> = [
@@ -5479,9 +5595,14 @@ const AssetDetailsPage = () => {
                         >
                           {item.title}
                         </a>
-                        <span className="asset-details-page__news-score">
+                        <button
+                          type="button"
+                          className="asset-details-page__news-score asset-details-page__news-score-button"
+                          onClick={() => openNewsScoreModal(item)}
+                          aria-haspopup="dialog"
+                        >
                           {t('assets.modal.news.relevance', { defaultValue: 'Relevance' })}: {item.relevanceScore}
-                        </span>
+                        </button>
                       </div>
 
                       {item.description ? (
@@ -5505,6 +5626,102 @@ const AssetDetailsPage = () => {
                   })}
                 </div>
               ) : null}
+
+              {newsScoreModalItem && typeof document !== 'undefined'
+                ? createPortal(
+                  <div
+                    className="asset-details-page__news-score-modal-backdrop"
+                    role="presentation"
+                    onClick={closeNewsScoreModal}
+                  >
+                    <section
+                      id={`news-score-details-${newsScoreModalItem.id}`}
+                      className="asset-details-page__news-score-modal"
+                      role="dialog"
+                      aria-modal="true"
+                      aria-labelledby="asset-news-score-modal-title"
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <div className="asset-details-page__news-score-modal-header">
+                        <h4 id="asset-news-score-modal-title" className="asset-details-page__news-score-modal-title">
+                          {t('assets.modal.news.scoreBreakdownTitle', {
+                            score: newsScoreModalItem.relevanceScore,
+                            defaultValue: 'Why this score: {{score}}',
+                          })}
+                        </h4>
+                        <button
+                          type="button"
+                          className="asset-details-page__news-score-modal-close"
+                          onClick={closeNewsScoreModal}
+                        >
+                          {t('common.close', { defaultValue: 'Close' })}
+                        </button>
+                      </div>
+
+                      <p className="asset-details-page__news-score-modal-subtitle">
+                        {newsScoreModalItem.title}
+                      </p>
+
+                      <dl className="asset-details-page__news-score-breakdown-list">
+                        <div>
+                          <dt>{t('assets.modal.news.score.tickerTitle', { defaultValue: 'Ticker match in title' })} ({newsScoreModalItem.scoreBreakdown.tickerInTitleCount})</dt>
+                          <dd>{formatScoreContribution(newsScoreModalItem.scoreBreakdown.tickerInTitlePoints)}</dd>
+                        </div>
+                        <div>
+                          <dt>{t('assets.modal.news.score.tickerDescription', { defaultValue: 'Ticker match in summary' })} ({newsScoreModalItem.scoreBreakdown.tickerInDescriptionCount})</dt>
+                          <dd>{formatScoreContribution(newsScoreModalItem.scoreBreakdown.tickerInDescriptionPoints)}</dd>
+                        </div>
+                        <div>
+                          <dt>{t('assets.modal.news.score.tickerLink', { defaultValue: 'Ticker match in link' })} ({newsScoreModalItem.scoreBreakdown.tickerInLinkCount})</dt>
+                          <dd>{formatScoreContribution(newsScoreModalItem.scoreBreakdown.tickerInLinkPoints)}</dd>
+                        </div>
+                        <div>
+                          <dt>{t('assets.modal.news.score.assetNameTitle', { defaultValue: 'Asset name match in title' })} ({newsScoreModalItem.scoreBreakdown.assetNameInTitleCount})</dt>
+                          <dd>{formatScoreContribution(newsScoreModalItem.scoreBreakdown.assetNameInTitlePoints)}</dd>
+                        </div>
+                        <div>
+                          <dt>{t('assets.modal.news.score.assetNameDescription', { defaultValue: 'Asset name match in summary' })} ({newsScoreModalItem.scoreBreakdown.assetNameInDescriptionCount})</dt>
+                          <dd>{formatScoreContribution(newsScoreModalItem.scoreBreakdown.assetNameInDescriptionPoints)}</dd>
+                        </div>
+                        <div>
+                          <dt>
+                            {t('assets.modal.news.score.recency', { defaultValue: 'Recency' })}
+                            {newsScoreModalItem.scoreBreakdown.ageDays !== null
+                              ? ` ${t('assets.modal.news.score.ageDays', {
+                                days: newsScoreModalItem.scoreBreakdown.ageDays.toLocaleString(numberLocale, {
+                                  minimumFractionDigits: 1,
+                                  maximumFractionDigits: 1,
+                                }),
+                                defaultValue: '({{days}} days)',
+                              })}`
+                              : ''}
+                          </dt>
+                          <dd>{formatScoreContribution(newsScoreModalItem.scoreBreakdown.recencyPoints)}</dd>
+                        </div>
+                        <div>
+                          <dt>{t('assets.modal.news.score.noTickerPenalty', { defaultValue: 'Penalty: no ticker match' })}</dt>
+                          <dd>{formatScoreContribution(newsScoreModalItem.scoreBreakdown.penaltyNoTickerPoints)}</dd>
+                        </div>
+                        <div>
+                          <dt>{t('assets.modal.news.score.noContextPenalty', { defaultValue: 'Penalty: low context match' })}</dt>
+                          <dd>{formatScoreContribution(newsScoreModalItem.scoreBreakdown.penaltyNoContextPoints)}</dd>
+                        </div>
+                        <div className="asset-details-page__news-score-breakdown-total">
+                          <dt>{t('assets.modal.news.score.total', { defaultValue: 'Total' })}</dt>
+                          <dd>{formatScoreContribution(newsScoreModalItem.scoreBreakdown.totalPoints)}</dd>
+                        </div>
+                      </dl>
+
+                      <p className="asset-details-page__news-score-details-note">
+                        {t('assets.modal.news.score.explainer', {
+                          defaultValue: 'Rank = signal match (ticker/name) + freshness adjustments. This is a relevance rank, not sentiment or source credibility.',
+                        })}
+                      </p>
+                    </section>
+                  </div>,
+                  document.body
+                )
+                : null}
             </section>
             </>)}
 

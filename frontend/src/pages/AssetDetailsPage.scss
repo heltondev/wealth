@@ -1103,6 +1103,127 @@
     white-space: nowrap;
   }
 
+  &__news-score-button {
+    cursor: pointer;
+    transition: transform 0.14s ease, border-color 0.16s ease, background-color 0.16s ease, color 0.16s ease;
+  }
+
+  &__news-score-button:hover {
+    transform: translateY(-1px);
+    border-color: rgba(34, 211, 238, 0.54);
+    background: rgba(34, 211, 238, 0.18);
+  }
+
+  &__news-item--with-image &__news-score-button {
+    border-color: rgba(191, 219, 254, 0.5);
+    background: rgba(30, 41, 59, 0.56);
+    color: #e2e8f0;
+  }
+
+  &__news-item--with-image &__news-score-button:hover {
+    border-color: rgba(191, 219, 254, 0.74);
+    background: rgba(30, 41, 59, 0.74);
+  }
+
+  &__news-score-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1400;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: clamp(0.9rem, 2vw, 1.6rem);
+    background: rgba(2, 6, 23, 0.68);
+    backdrop-filter: blur(8px);
+    animation: asset-news-modal-fade-in 180ms ease;
+  }
+
+  &__news-score-modal {
+    width: min(600px, 100%);
+    max-width: 600px;
+    max-height: 400px;
+    margin: 0 auto;
+    overflow: auto;
+    border: 1px solid rgba(56, 189, 248, 0.3);
+    border-radius: 14px;
+    background: linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(2, 6, 23, 0.95));
+    box-shadow: 0 24px 56px rgba(2, 6, 23, 0.48);
+    padding: 0.86rem 0.9rem;
+    display: grid;
+    gap: 0.62rem;
+    animation: asset-news-modal-pop 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  &__news-score-modal-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: $spacing-sm;
+  }
+
+  &__news-score-modal-title {
+    margin: 0;
+    font-size: 0.86rem;
+    line-height: 1.3;
+    color: #e2e8f0;
+    text-transform: uppercase;
+    letter-spacing: 0.24px;
+  }
+
+  &__news-score-modal-close {
+    @include button-base(0.72rem, 0.28rem, 0.58rem);
+    @include button-secondary;
+    flex-shrink: 0;
+    border-radius: 999px;
+  }
+
+  &__news-score-modal-subtitle {
+    margin: 0;
+    font-size: 0.8rem;
+    line-height: 1.4;
+    color: rgba(226, 232, 240, 0.94);
+  }
+
+  &__news-score-breakdown-list {
+    margin: 0;
+    display: grid;
+    gap: 0.26rem;
+  }
+
+  &__news-score-breakdown-list > div {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: start;
+    gap: 0.62rem;
+  }
+
+  &__news-score-breakdown-list dt {
+    margin: 0;
+    font-size: 0.74rem;
+    color: rgba(203, 213, 225, 0.9);
+    line-height: 1.32;
+  }
+
+  &__news-score-breakdown-list dd {
+    margin: 0;
+    font-size: 0.74rem;
+    font-weight: 700;
+    color: #f8fafc;
+    white-space: nowrap;
+  }
+
+  &__news-score-breakdown-total dt,
+  &__news-score-breakdown-total dd {
+    color: #e0f2fe;
+  }
+
+  &__news-score-details-note {
+    margin: 0;
+    font-size: 0.72rem;
+    line-height: 1.38;
+    color: rgba(203, 213, 225, 0.9);
+  }
+
   &__news-description {
     margin: 0;
     color: var(--text-secondary);
@@ -1116,6 +1237,40 @@
 
   &__news-item--with-image &__news-description {
     color: rgba(226, 232, 240, 0.94);
+  }
+
+  &__news-item--with-image &__news-score-breakdown-list dt {
+    color: rgba(226, 232, 240, 0.84);
+  }
+
+  &__news-item--with-image &__news-score-breakdown-list dd {
+    color: #f8fafc;
+  }
+
+  &__news-item--with-image &__news-score-details-note {
+    color: rgba(203, 213, 225, 0.9);
+  }
+
+  @keyframes asset-news-modal-fade-in {
+    from {
+      opacity: 0;
+    }
+
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes asset-news-modal-pop {
+    from {
+      opacity: 0;
+      transform: translateY(10px) scale(0.985);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
   }
 
   &__news-meta {
@@ -1564,8 +1719,31 @@
       text-align: center;
     }
 
+    &__news-score-modal {
+      max-height: 400px;
+      padding: 0.78rem 0.76rem;
+    }
+
+    &__news-score-modal-header {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    &__news-score-modal-close {
+      width: 100%;
+    }
+
     &__news-list {
       grid-template-columns: 1fr;
+    }
+
+    &__news-score-breakdown-list > div {
+      grid-template-columns: 1fr;
+      gap: 0.16rem;
+    }
+
+    &__news-score-breakdown-list dd {
+      justify-self: start;
     }
 
     &__portfolio-header {

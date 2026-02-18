@@ -752,7 +752,21 @@
         "source": "Source",
         "relevance": "Relevance",
         "tilesPerLine": "Tiles per line",
-        "tilesPerLineAria": "Select news tiles per line"
+        "tilesPerLineAria": "Select news tiles per line",
+        "scoreBreakdownTitle": "Why this score: {{score}}",
+        "score": {
+          "tickerTitle": "Ticker match in title",
+          "tickerDescription": "Ticker match in summary",
+          "tickerLink": "Ticker match in link",
+          "assetNameTitle": "Asset name match in title",
+          "assetNameDescription": "Asset name match in summary",
+          "recency": "Recency",
+          "ageDays": "({{days}} days)",
+          "noTickerPenalty": "Penalty: no ticker match",
+          "noContextPenalty": "Penalty: low context match",
+          "total": "Total",
+          "explainer": "Rank = signal match (ticker/name) + freshness adjustments. This is a relevance rank, not sentiment or source credibility."
+        }
       },
       "portfolio": {
         "title": "Portfolio do {{ticker}}",

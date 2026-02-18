@@ -752,7 +752,21 @@
         "source": "Fonte",
         "relevance": "Relevância",
         "tilesPerLine": "Cards por linha",
-        "tilesPerLineAria": "Selecionar quantidade de cards por linha"
+        "tilesPerLineAria": "Selecionar quantidade de cards por linha",
+        "scoreBreakdownTitle": "Por que esta pontuação: {{score}}",
+        "score": {
+          "tickerTitle": "Ticker encontrado no título",
+          "tickerDescription": "Ticker encontrado no resumo",
+          "tickerLink": "Ticker encontrado no link",
+          "assetNameTitle": "Nome do ativo no título",
+          "assetNameDescription": "Nome do ativo no resumo",
+          "recency": "Recência",
+          "ageDays": "({{days}} dias)",
+          "noTickerPenalty": "Penalidade: sem ticker",
+          "noContextPenalty": "Penalidade: baixo contexto",
+          "total": "Total",
+          "explainer": "Rank = correspondência de sinais (ticker/nome) + ajustes por recência. É uma pontuação de relevância, não de sentimento nem de credibilidade da fonte."
+        }
       },
       "portfolio": {
         "title": "Portfólio do {{ticker}}",
