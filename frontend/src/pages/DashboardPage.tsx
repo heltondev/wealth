@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import {
   Area,
   AreaChart,
@@ -35,6 +35,12 @@ const CHART_COLORS = ['#22d3ee', '#818cf8', '#34d399', '#f59e0b', '#fb7185', '#3
 const EVOLUTION_STROKE = '#22d3ee';
 const EVOLUTION_FILL = 'rgba(34, 211, 238, 0.26)';
 const SUPPORTED_EVOLUTION_PERIODS = new Set(['1M', '3M', '6M', '1Y', '2Y', '5Y', 'MAX']);
+const EPSILON = 1e-9;
+const CURRENCY_META: Record<string, { flag: string; defaultName: string }> = {
+  BRL: { flag: '🇧🇷', defaultName: 'Brazilian Real' },
+  USD: { flag: '🇺🇸', defaultName: 'US Dollar' },
+  CAD: { flag: '🇨🇦', defaultName: 'Canadian Dollar' },
+};
 
 type Trend = 'positive' | 'negative' | 'neutral';
 type NoticeKind = 'payment' | 'provisioned' | 'informe' | 'event';
@@ -75,6 +81,11 @@ const toTitleLabel = (value: string): string => value
   .map((token) => token.charAt(0).toUpperCase() + token.slice(1))
   .join(' ');
 
+const toFiniteNumber = (value: unknown): number => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : 0;
+};
+
 const normalizeEventTypeLabel = (value: string): string => toTitleLabel(
   String(value || '')
     .toLowerCase()
@@ -111,6 +122,7 @@ const DashboardPage = () => {
     portfolios,
     selectedPortfolio,
     setSelectedPortfolio,
+    assets,
     eventNotices,
     eventNoticesLoading,
     refreshEventNotices,
@@ -206,6 +218,34 @@ const DashboardPage = () => {
     dashboard?.allocation_by_sector,
     (key) => toTitleLabel(key)
   ), [dashboard?.allocation_by_sector]);
+
+  const currencyBalanceTiles = useMemo(() => {
+    const totalsByCurrency = new Map<string, number>();
+    const activeAssets = assets.filter((asset) => String(asset.status || 'active').toLowerCase() === 'active');
+
+    for (const asset of activeAssets) {
+      const currency = String(asset.currency || 'BRL').trim().toUpperCase() || 'BRL';
+      const currentValue = toFiniteNumber(asset.currentValue);
+      const fallbackValue = toFiniteNumber(asset.currentPrice) * toFiniteNumber(asset.quantity);
+      const nativeValue = Math.abs(currentValue) > EPSILON ? currentValue : fallbackValue;
+      if (Math.abs(nativeValue) <= EPSILON) continue;
+      totalsByCurrency.set(currency, (totalsByCurrency.get(currency) || 0) + nativeValue);
+    }
+
+    return Array.from(totalsByCurrency.entries())
+      .map(([currency, amount]) => {
+        const meta = CURRENCY_META[currency] || { flag: '🏳️', defaultName: currency };
+        return {
+          currency,
+          amount,
+          flag: meta.flag,
+          label: t(`dashboard.currencyNames.${currency}`, {
+            defaultValue: meta.defaultName,
+          }),
+        };
+      })
+      .sort((left, right) => right.amount - left.amount);
+  }, [assets, t]);
 
   const evolutionData = useMemo(() => {
     if (!Array.isArray(dashboard?.evolution)) return [];
@@ -687,6 +727,24 @@ const DashboardPage = () => {
                 <span className="kpi-card__value">{classAllocation.length}</span>
               </article>
             </div>
+
+            {currencyBalanceTiles.length > 0 && (
+              <div
+                className="dashboard__currency-grid"
+                style={{ '--dashboard-currency-columns': String(currencyBalanceTiles.length) } as CSSProperties}
+              >
+                {currencyBalanceTiles.map((tile) => (
+                  <article key={`currency-tile-${tile.currency}`} className="kpi-card kpi-card--currency">
+                    <span className="kpi-card__label kpi-card__label--currency">
+                      {`${tile.flag} ${tile.label}`}
+                    </span>
+                    <span className="kpi-card__value">
+                      {formatCurrency(tile.amount, tile.currency, numberLocale)}
+                    </span>
+                  </article>
+                ))}
+              </div>
+            )}
 
             <div className="dashboard__charts-grid">
               <section className="dashboard-card">

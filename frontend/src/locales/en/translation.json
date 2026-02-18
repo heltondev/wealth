@@ -34,6 +34,11 @@
     "allocationByClass": "Allocation by Class",
     "allocationByCurrency": "Allocation by Currency",
     "allocationBySector": "Allocation by Sector",
+    "currencyNames": {
+      "BRL": "Brazilian Real",
+      "USD": "US Dollar",
+      "CAD": "Canadian Dollar"
+    },
     "evolution": "Portfolio Evolution",
     "period": "Period",
     "selectPortfolio": "Select portfolio",

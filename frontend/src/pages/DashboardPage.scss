@@ -59,6 +59,16 @@
     gap: $spacing-md;
   }
 
+  &__currency-grid {
+    display: grid;
+    grid-template-columns: repeat(var(--dashboard-currency-columns, 1), minmax(0, 1fr));
+    gap: $spacing-md;
+
+    @media (max-width: $breakpoint-tablet) {
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    }
+  }
+
   &__charts-grid {
     display: grid;
     grid-template-columns: repeat(12, minmax(0, 1fr));
@@ -386,6 +396,12 @@
     text-transform: uppercase;
     letter-spacing: 0.5px;
     font-weight: 600;
+
+    &--currency {
+      text-transform: none;
+      letter-spacing: 0.2px;
+      font-size: 0.88rem;
+    }
   }
 
   &__value {
@@ -404,6 +420,15 @@
 
     &--neutral {
       color: #cbd5e1;
+    }
+  }
+
+  &--currency {
+    justify-content: center;
+    min-height: 118px;
+
+    .kpi-card__value {
+      font-size: 1.5rem;
     }
   }
 }

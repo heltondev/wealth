@@ -34,6 +34,11 @@
     "allocationByClass": "Alocação por Classe",
     "allocationByCurrency": "Alocação por Moeda",
     "allocationBySector": "Alocação por Setor",
+    "currencyNames": {
+      "BRL": "Real Brasileiro",
+      "USD": "Dólar Americano",
+      "CAD": "Dólar Canadense"
+    },
     "evolution": "Evolução da Carteira",
     "period": "Período",
     "selectPortfolio": "Selecionar portfólio",
