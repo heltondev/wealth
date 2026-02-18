@@ -17,8 +17,8 @@
     "logout": "Sair"
   },
   "login": {
-    "title": "WealthHub",
-    "subtitle": "Rastreador de portfólio multi-moeda",
+    "title": "Invest",
+    "subtitle": "Gerencie investimentos globais com precisão.",
     "mockLogin": "Entrar (Dev Local)",
     "googleLogin": "Entrar com Google"
   },

@@ -43,7 +43,7 @@ const Layout = ({ children }: LayoutProps) => {
     <div className="layout">
       <aside className="sidebar">
         <div className="sidebar__header">
-          <h1 className="sidebar__logo">WealthHub</h1>
+          <h1 className="sidebar__logo">Invest</h1>
           <div className="sidebar__notice">
             <span className={`sidebar__notice-dot ${
               todayCount > 0

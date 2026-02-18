@@ -1,9 +1,9 @@
 {
-  "name": "wealthhub-frontend",
+  "name": "invest-frontend",
   "private": true,
   "version": "0.0.0",
   "author": "Oliver",
-  "description": "Frontend for WealthHub - Multi-currency Portfolio Tracker",
+  "description": "Frontend for Invest - Global investment intelligence platform",
   "type": "module",
   "scripts": {
     "dev": "vite",

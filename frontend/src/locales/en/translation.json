@@ -17,8 +17,8 @@
     "logout": "Logout"
   },
   "login": {
-    "title": "WealthHub",
-    "subtitle": "Multi-currency portfolio tracker",
+    "title": "Invest",
+    "subtitle": "Manage global investments with precision.",
     "mockLogin": "Sign in (Local Dev)",
     "googleLogin": "Sign in with Google"
   },

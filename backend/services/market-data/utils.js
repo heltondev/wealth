@@ -34,7 +34,7 @@ async function fetchWithTimeout(url, options = {}) {
 			...options,
 			signal: controller.signal,
 			headers: {
-				'User-Agent': 'wealthhub-market-data/1.0 (+https://wealthhub.local)',
+				'User-Agent': 'invest-market-data/1.0 (+https://invest.local)',
 				Accept: 'application/json,text/csv,text/plain,text/html,*/*',
 				...(options.headers || {}),
 			},

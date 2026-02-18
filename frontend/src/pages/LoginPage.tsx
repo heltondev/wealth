@@ -31,7 +31,22 @@ const LoginPage = () => {
 
   return (
     <div className="login-page">
+      <div className="login-bg" aria-hidden="true">
+        <span className="login-bg__aurora login-bg__aurora--one" />
+        <span className="login-bg__aurora login-bg__aurora--two" />
+        <span className="login-bg__aurora login-bg__aurora--three" />
+        <span className="login-bg__ring login-bg__ring--left" />
+        <span className="login-bg__ring login-bg__ring--right" />
+        <span className="login-bg__grid" />
+        <span className="login-bg__noise" />
+      </div>
+
       <div className="login-card">
+        <div className="login-card__brand">
+          <span className="login-card__brand-dot" />
+          <span className="login-card__brand-text">{t('login.title')}</span>
+        </div>
+
         <h1 className="login-card__title">{t('login.title')}</h1>
         <p className="login-card__subtitle">{t('login.subtitle')}</p>
 
@@ -46,7 +61,13 @@ const LoginPage = () => {
             disabled={!isAuthConfigured || isLoading}
             onClick={handleGoogleLogin}
           >
-            {t('login.googleLogin')}
+            <img
+              className="login-card__google-icon"
+              src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
+              alt=""
+              aria-hidden="true"
+            />
+            <span>{t('login.googleLogin')}</span>
           </button>
         </div>
       </div>

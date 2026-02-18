@@ -18,9 +18,9 @@ export default defineConfig({
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024
       },
       manifest: {
-        name: 'WealthHub - Portfolio Tracker',
-        short_name: 'WealthHub',
-        description: 'Multi-currency investment portfolio tracker',
+        name: 'Invest - Portfolio Intelligence',
+        short_name: 'Invest',
+        description: 'Global investment intelligence platform',
         theme_color: '#0a0a12',
         background_color: '#0a0a12',
         display: 'standalone',

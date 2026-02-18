@@ -153,7 +153,7 @@ const REPORT_COPY = {
 			no_data_available: 'Sem dados disponiveis.',
 			tax_gain_label: 'Ganho',
 			tax_due_label: 'Imposto',
-			footer: 'Relatorio Analitico WealthHub',
+			footer: 'Relatorio Analitico Invest',
 		},
 	en: {
 		generated: 'Generated',
@@ -236,7 +236,7 @@ const REPORT_COPY = {
 			no_data_available: 'No data available.',
 			tax_gain_label: 'Gain',
 			tax_due_label: 'Tax',
-			footer: 'WealthHub Analytics Report',
+			footer: 'Invest Analytics Report',
 		},
 	};
 
@@ -2178,7 +2178,7 @@ const buildPortfolioPdfLines = (payload, context = {}) => {
 	const requestedPeriod = context?.period || payload?.evolution_period || 'MAX';
 	const portfolioId = payload?.portfolioId || context?.portfolioId || '-';
 	const lines = [
-		'WealthHub - Relatorio de Portfolio',
+		'Invest - Relatorio de Portfolio',
 		'',
 		`Usuario: ${context.userId || '-'}`,
 		`Portfolio: ${portfolioId}`,
@@ -2297,7 +2297,7 @@ const buildTransactionsPdfLines = (payload, context = {}) => {
 	const to = payload?.to || '-';
 	const generatedAt = nowIso();
 	const lines = [
-		'WealthHub - Relatorio de Movimentacoes',
+		'Invest - Relatorio de Movimentacoes',
 		'',
 		`Usuario: ${context.userId || '-'}`,
 		`Portfolio: ${portfolioId}`,
@@ -2350,7 +2350,7 @@ const buildTransactionsPdfLines = (payload, context = {}) => {
 
 const buildGenericPdfLines = (type, payload, context = {}) => {
 	const lines = [
-		`WealthHub - Relatorio ${String(type || 'portfolio').toUpperCase()}`,
+		`Invest - Relatorio ${String(type || 'portfolio').toUpperCase()}`,
 		'',
 		`Usuario: ${context.userId || '-'}`,
 		`Periodo: ${context.period || 'current'}`,
@@ -2525,7 +2525,7 @@ const createFancyPortfolioPdfBuffer = (payload, context = {}) => {
 	drawRect(0, 0, 612, 842, [0.96, 0.97, 0.99]);
 	drawRect(24, 758, 564, 60, [0.08, 0.14, 0.24]);
 	drawRect(24, 758, 564, 4, [0.12, 0.72, 0.68]);
-	drawText('WEALTHHUB', 40, 790, { font: 'F2', size: 23, color: [0.96, 0.98, 1] });
+	drawText('INVEST', 40, 790, { font: 'F2', size: 23, color: [0.96, 0.98, 1] });
 	drawText(copy.portfolio_report_subtitle, 40, 772, { font: 'F1', size: 12, color: [0.78, 0.86, 0.98] });
 	drawText(`${copy.generated}: ${formatHumanDateTime(generatedAt, locale)}`, 572, 790, {
 		font: 'F1',
@@ -3167,7 +3167,7 @@ const createFancyInsightsPdfBuffer = (config, context = {}) => {
 	drawRect(0, 0, 612, 842, [0.96, 0.97, 0.99]);
 	drawRect(24, 758, 564, 60, [0.08, 0.14, 0.24]);
 	drawRect(24, 758, 564, 4, [0.14, 0.7, 0.79]);
-	drawText('WEALTHHUB', 40, 790, { font: 'F2', size: 23, color: [0.96, 0.98, 1] });
+	drawText('INVEST', 40, 790, { font: 'F2', size: 23, color: [0.96, 0.98, 1] });
 	drawText(config?.title || 'Report', 40, 772, { font: 'F1', size: 12, color: [0.78, 0.86, 0.98] });
 	drawText(`${copy.generated}: ${formatHumanDateTime(context?.generatedAt || nowIso(), locale)}`, 572, 790, {
 		font: 'F1',
@@ -7503,7 +7503,7 @@ class PlatformService {
 		const generatedAt = nowIso();
 		const isPt = isPortugueseLocale(reportLocale);
 		const lines = [
-			isPt ? 'WealthHub - Relatorio Combinado' : 'WealthHub - Combined Report',
+			isPt ? 'Invest - Relatorio Combinado' : 'Invest - Combined Report',
 			'',
 			`${isPt ? 'Usuario' : 'User'}: ${userId}`,
 			`${isPt ? 'Total de relatorios' : 'Total reports'}: ${normalizedIds.length}`,

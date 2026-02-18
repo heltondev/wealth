@@ -18,7 +18,7 @@ const resolveAwsRegion = () => process.env.AWS_REGION || DEFAULT_REGION;
 const resolveTableName = () => process.env.TABLE_NAME || DEFAULT_TABLE_NAME;
 
 const resolveS3BucketName = () =>
-	process.env.S3_BUCKET || `wealthhub-data-${resolveRuntimeEnvironment()}`;
+	process.env.S3_BUCKET || `invest-data-${resolveRuntimeEnvironment()}`;
 
 const buildAwsClientConfig = (options = {}) => {
 	const service = String(options.service || '').toLowerCase();
