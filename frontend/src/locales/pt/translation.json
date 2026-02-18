@@ -1154,7 +1154,8 @@
         "b3-negociacao": "B3 Negociação (trades)",
         "b3-movimentacao": "B3 Movimentação",
         "b3-posicao": "B3 Posição (snapshot)",
-        "b3-relatorio": "B3 Relatório consolidado"
+        "b3-relatorio": "B3 Relatório consolidado",
+        "robinhood-activity": "Robinhood Activity CSV"
       },
       "summary": {
         "title": "Resumo da importação",

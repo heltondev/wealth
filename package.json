@@ -24,6 +24,8 @@
     "setup:db:demo": "node backend/scripts/seed-data.js --seed-demo",
     "import:b3": "node backend/scripts/import-b3.js",
     "import:b3:dry": "node backend/scripts/import-b3.js --dry-run",
+    "import:robinhood": "node backend/scripts/import-robinhood.js",
+    "import:robinhood:dry": "node backend/scripts/import-robinhood.js --dry-run",
     "test": "npm run test:backend && npm run test:frontend",
     "test:backend": "node --test $(find backend -type f -name '*.test.js')",
     "test:frontend": "npm --prefix frontend run test",

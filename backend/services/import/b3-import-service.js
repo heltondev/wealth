@@ -8,7 +8,9 @@ const BaseParser = require('../../parsers/base-parser');
 
 const RELATORIO_TRADE_TYPES = new Set(['buy', 'sell', 'subscription']);
 const RELATORIO_INCOME_TYPES = new Set(['dividend', 'jcp', 'reimbursement']);
-const AUTHORITATIVE_SNAPSHOT_PARSERS = new Set(['b3-posicao']);
+const AUTHORITATIVE_SNAPSHOT_PARSERS = new Set(['b3-posicao', 'robinhood-activity']);
+const TRANSACTION_QUANTITY_PRECISION = 6;
+const POSITION_QUANTITY_EPSILON = 1e-5;
 
 const generateId = () =>
 	`${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -36,8 +38,9 @@ const parseTransactionQuantity = (value) => {
 	if (value === undefined || value === null || value === '') return 0;
 	const numeric = Number(value);
 	if (!Number.isFinite(numeric)) return 0;
-	const scaled = Math.round(numeric * 100);
-	return scaled / 100;
+	const factor = 10 ** TRANSACTION_QUANTITY_PRECISION;
+	const scaled = Math.round(numeric * factor);
+	return scaled / factor;
 };
 
 const resolveSnapshotCurrentValue = (asset) => {
@@ -316,6 +319,9 @@ const upsertImportedAssets = async ({
 		const currentValue = resolveSnapshotCurrentValue(importedAsset);
 		const currentPrice = resolveSnapshotCurrentPrice(importedAsset, quantity);
 		const existing = existingAssetsByTicker.get(ticker);
+		const hasPosition = Number.isFinite(quantity) && Math.abs(quantity) > POSITION_QUANTITY_EPSILON;
+		const resolvedStatus = hasPosition ? 'active' : 'inactive';
+		const resolvedQuantity = hasPosition ? quantity : 0;
 
 		if (existing) {
 			if (!authoritativeSnapshot) {
@@ -357,12 +363,12 @@ const upsertImportedAssets = async ({
 							'#src': 'source',
 						},
 						ExpressionAttributeValues: {
-							':status': 'active',
+							':status': resolvedStatus,
 							':name': importedAsset.name || ticker,
 							':assetClass': importedAsset.assetClass || BaseParser.inferAssetClass(ticker, importedAsset.name || ''),
 							':country': importedAsset.country || 'BR',
 							':currency': importedAsset.currency || 'BRL',
-							':quantity': quantity,
+							':quantity': resolvedQuantity,
 							':currentPrice': currentPrice,
 							':currentValue': currentValue,
 							':source': sourceFile || null,
@@ -381,12 +387,12 @@ const upsertImportedAssets = async ({
 						assetClass:
 							importedAsset.assetClass
 							|| BaseParser.inferAssetClass(ticker, importedAsset.name || ''),
-						country: importedAsset.country || 'BR',
-						currency: importedAsset.currency || 'BRL',
-						quantity,
-						currentPrice,
-						currentValue,
-						status: 'active',
+							country: importedAsset.country || 'BR',
+							currency: importedAsset.currency || 'BRL',
+							quantity: resolvedQuantity,
+							currentPrice,
+							currentValue,
+							status: resolvedStatus,
 					},
 					{ reason: 'updated_from_authoritative_snapshot' }
 				)
@@ -394,8 +400,7 @@ const upsertImportedAssets = async ({
 			continue;
 		}
 
-		const hasPosition = Number.isFinite(quantity) && Math.abs(quantity) > Number.EPSILON;
-		const shouldBeActive = authoritativeSnapshot || hasPosition;
+		const shouldBeActive = hasPosition;
 		const assetId = `asset-${ticker.toLowerCase()}`;
 		const item = {
 			PK: `PORTFOLIO#${portfolioId}`,
@@ -404,11 +409,11 @@ const upsertImportedAssets = async ({
 			portfolioId,
 			ticker,
 			name: importedAsset.name || ticker,
-			assetClass: importedAsset.assetClass || BaseParser.inferAssetClass(ticker, importedAsset.name || ''),
-			country: importedAsset.country || 'BR',
-			currency: importedAsset.currency || 'BRL',
-			quantity: hasPosition ? quantity : 0,
-			currentPrice: currentPrice,
+				assetClass: importedAsset.assetClass || BaseParser.inferAssetClass(ticker, importedAsset.name || ''),
+				country: importedAsset.country || 'BR',
+				currency: importedAsset.currency || 'BRL',
+				quantity: resolvedQuantity,
+				currentPrice: currentPrice,
 			currentValue: currentValue,
 			source: sourceFile || null,
 			status: shouldBeActive ? 'active' : 'inactive',

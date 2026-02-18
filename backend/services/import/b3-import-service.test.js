@@ -10,9 +10,10 @@ test('normalizeQuantityForKey removes trailing zeros and keeps integers stable',
 	assert.equal(_test.normalizeQuantityForKey(null), '0');
 });
 
-test('parseTransactionQuantity rounds to two decimal places', () => {
+test('parseTransactionQuantity rounds to six decimal places', () => {
 	assert.equal(_test.parseTransactionQuantity('3'), 3);
-	assert.equal(_test.parseTransactionQuantity('3.456'), 3.46);
+	assert.equal(_test.parseTransactionQuantity('3.456'), 3.456);
+	assert.equal(_test.parseTransactionQuantity('3.4567899'), 3.45679);
 	assert.equal(_test.parseTransactionQuantity(null), 0);
 	assert.equal(_test.parseTransactionQuantity('invalid'), 0);
 });
@@ -116,4 +117,66 @@ test('importParsedB3 dryRun builds preview without persisting writes', async () 
 
 	const writeCommands = commandNames.filter((name) => name === 'PutCommand' || name === 'UpdateCommand');
 	assert.equal(writeCommands.length, 0);
+});
+
+test('importParsedB3 authoritative parser marks existing asset inactive when quantity is zero', async () => {
+	const updateInputs = [];
+	const dynamo = {
+		send: async (command) => {
+			const name = command?.constructor?.name || 'UnknownCommand';
+			if (name === 'QueryCommand') {
+				const sk = command?.input?.ExpressionAttributeValues?.[':sk'];
+				if (sk === 'ASSET#') {
+					return {
+						Items: [{
+							PK: 'PORTFOLIO#oliver-main',
+							SK: 'ASSET#asset-o',
+							assetId: 'asset-o',
+							ticker: 'O',
+							status: 'active',
+						}],
+					};
+				}
+				return { Items: [] };
+			}
+			if (name === 'ScanCommand') return { Items: [] };
+			if (name === 'UpdateCommand') {
+				updateInputs.push(command.input);
+				return {};
+			}
+			return {};
+		},
+	};
+
+	const result = await importParsedB3({
+		dynamo,
+		tableName: 'wealth-main',
+		portfolioId: 'oliver-main',
+		parser: { id: 'robinhood-activity', provider: 'robinhood' },
+		parsed: {
+			assets: [
+				{
+					ticker: 'O',
+					name: 'Realty Income',
+					assetClass: 'stock',
+					country: 'US',
+					currency: 'USD',
+					quantity: 0,
+					price: 66.11,
+					value: 0,
+				},
+			],
+			transactions: [],
+			aliases: [],
+		},
+		sourceFile: 'robinhood.csv',
+		detectionMode: 'manual',
+		dryRun: false,
+		now: '2026-02-17T00:00:00.000Z',
+	});
+
+	assert.equal(result.stats.assets.updated, 1);
+	assert.equal(updateInputs.length, 1);
+	assert.equal(updateInputs[0].ExpressionAttributeValues[':status'], 'inactive');
+	assert.equal(updateInputs[0].ExpressionAttributeValues[':quantity'], 0);
 });
