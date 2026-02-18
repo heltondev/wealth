@@ -932,6 +932,15 @@ const SettingsPage = () => {
               >
                 {importingBackup ? t('common.loading') : t('settings.backup.actions.upload')}
               </button>
+              {importingBackup ? (
+                <div className="backup-config__progress" role="status" aria-live="polite">
+                  <span className="backup-config__spinner" />
+                  <span>{t('settings.backup.messages.importing')}</span>
+                  <div className="backup-config__progress-track">
+                    <span className="backup-config__progress-bar" />
+                  </div>
+                </div>
+              ) : null}
             </form>
           </div>
         )}

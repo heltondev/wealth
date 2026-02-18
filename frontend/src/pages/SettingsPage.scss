@@ -166,6 +166,59 @@
     @include button-primary;
     justify-self: flex-start;
   }
+
+  &__progress {
+    display: grid;
+    gap: $spacing-xs;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+  }
+
+  &__spinner {
+    width: 14px;
+    height: 14px;
+    border-radius: 999px;
+    border: 2px solid rgba(148, 163, 184, 0.35);
+    border-top-color: rgba(56, 189, 248, 0.9);
+    animation: backup-spin 0.9s linear infinite;
+  }
+
+  &__progress-track {
+    width: 100%;
+    max-width: 380px;
+    height: 6px;
+    border-radius: 999px;
+    overflow: hidden;
+    background: rgba(15, 23, 42, 0.45);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+  }
+
+  &__progress-bar {
+    display: block;
+    width: 45%;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(135deg, rgba(56, 189, 248, 0.95), rgba(14, 165, 233, 0.95));
+    animation: backup-progress 1.1s ease-in-out infinite;
+  }
+}
+
+@keyframes backup-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes backup-progress {
+  0% {
+    transform: translateX(-110%);
+  }
+  50% {
+    transform: translateX(60%);
+  }
+  100% {
+    transform: translateX(230%);
+  }
 }
 
 .theses-config {

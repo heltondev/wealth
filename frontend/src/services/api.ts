@@ -370,6 +370,31 @@ export interface RebalanceSuggestionItem {
   target_value: number;
 }
 
+export interface RebalanceContributionInput {
+  amount_brl: number;
+  amount_usd: number;
+  usd_brl_rate: number;
+  total_brl: number;
+}
+
+export interface RebalanceContributionPool {
+  currency: string;
+  countries: string[];
+  amount_native: number;
+  amount_brl: number;
+  allocated_brl: number;
+  unallocated_brl: number;
+  eligible_keys: number;
+  strategy: string;
+}
+
+export interface RebalanceContributionBreakdown {
+  mode: 'single' | 'by_currency' | string;
+  input?: RebalanceContributionInput | null;
+  pools?: RebalanceContributionPool[];
+  unallocated_brl?: number;
+}
+
 export interface RebalanceThesisConflict {
   scope: 'thesisScope' | 'assetClass' | string;
   scope_key: string;
@@ -402,6 +427,9 @@ export interface RebalanceSuggestionResponse {
   portfolioId: string;
   scope: 'assetClass' | 'asset' | string;
   contribution: number;
+  contribution_mode?: 'single' | 'by_currency' | string;
+  contribution_input?: RebalanceContributionInput | null;
+  contribution_breakdown?: RebalanceContributionBreakdown | null;
   current_total: number;
   target_total_after_contribution: number;
   target_source?: 'manual' | 'thesis' | 'equal_weight' | string;
@@ -1021,10 +1049,30 @@ export const api = {
     request<TaxReportResponse>(`/portfolios/${portfolioId}/tax?year=${encodeURIComponent(String(year))}`),
   getRebalanceTargets: (portfolioId: string) =>
     request<RebalanceTargetsResponse>(`/portfolios/${portfolioId}/rebalance/targets`),
-  getRebalanceSuggestion: (portfolioId: string, amount: number, scope = 'assetClass') =>
-    request<RebalanceSuggestionResponse>(
-      `/portfolios/${portfolioId}/rebalance/suggestion?amount=${encodeURIComponent(String(amount))}&scope=${encodeURIComponent(scope)}`
-    ),
+  getRebalanceSuggestion: (
+    portfolioId: string,
+    amount: number,
+    scope = 'assetClass',
+    options?: { amountBrl?: number; amountUsd?: number }
+  ) => {
+    const query = new URLSearchParams();
+    query.set('scope', scope);
+    const hasSplitContribution =
+      typeof options?.amountBrl === 'number' || typeof options?.amountUsd === 'number';
+    if (hasSplitContribution) {
+      if (typeof options?.amountBrl === 'number' && Number.isFinite(options.amountBrl)) {
+        query.set('amountBrl', String(options.amountBrl));
+      }
+      if (typeof options?.amountUsd === 'number' && Number.isFinite(options.amountUsd)) {
+        query.set('amountUsd', String(options.amountUsd));
+      }
+    } else {
+      query.set('amount', String(amount));
+    }
+    return request<RebalanceSuggestionResponse>(
+      `/portfolios/${portfolioId}/rebalance/suggestion?${query.toString()}`
+    );
+  },
   setRebalanceTargets: (portfolioId: string, targets: RebalanceTarget[]) =>
     request<RebalanceTargetsResponse>(`/portfolios/${portfolioId}/rebalance/targets`, { method: 'POST', body: JSON.stringify({ targets }) }),
   getTheses: (portfolioId: string, options?: { includeHistory?: boolean }) => {

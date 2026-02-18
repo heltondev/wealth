@@ -24,7 +24,8 @@ interface EditableTargetRow {
   percent: string;
 }
 
-const DEFAULT_CONTRIBUTION_AMOUNT = '1000';
+const DEFAULT_CONTRIBUTION_BRL = '1000';
+const DEFAULT_CONTRIBUTION_USD = '0';
 
 const normalizeScope = (value: unknown): RebalanceScope => {
   const normalized = String(value || '').trim().toLowerCase();
@@ -96,7 +97,8 @@ const RebalancePage = () => {
   const { t, i18n } = useTranslation();
   const { portfolios, selectedPortfolio, setSelectedPortfolio, assets } = usePortfolioData();
   const [scope, setScope] = useState<RebalanceScope>('assetClass');
-  const [contributionAmount, setContributionAmount] = useState(DEFAULT_CONTRIBUTION_AMOUNT);
+  const [contributionAmountBrl, setContributionAmountBrl] = useState(DEFAULT_CONTRIBUTION_BRL);
+  const [contributionAmountUsd, setContributionAmountUsd] = useState(DEFAULT_CONTRIBUTION_USD);
   const [targetsByScope, setTargetsByScope] = useState<Record<RebalanceScope, EditableTargetRow[]>>({
     assetClass: [],
     asset: [],
@@ -198,16 +200,21 @@ const RebalancePage = () => {
 
   const runSuggestion = useCallback(() => {
     if (!selectedPortfolio) return;
-    const amount = toNumber(contributionAmount);
-    if (amount <= 0) {
+    const amountBrl = Math.max(0, toNumber(contributionAmountBrl));
+    const amountUsd = Math.max(0, toNumber(contributionAmountUsd));
+    if (amountBrl <= 0 && amountUsd <= 0) {
       setError(t('rebalance.messages.invalidAmount'));
       return;
     }
+    const totalAmount = amountBrl + amountUsd;
 
     setLoadingSuggestion(true);
     setError(null);
 
-    api.getRebalanceSuggestion(selectedPortfolio, amount, scope)
+    api.getRebalanceSuggestion(selectedPortfolio, totalAmount, scope, {
+      amountBrl,
+      amountUsd,
+    })
       .then((response) => {
         setSuggestion(response);
       })
@@ -217,7 +224,7 @@ const RebalancePage = () => {
         setSuggestion(null);
       })
       .finally(() => setLoadingSuggestion(false));
-  }, [contributionAmount, scope, selectedPortfolio, t]);
+  }, [contributionAmountBrl, contributionAmountUsd, scope, selectedPortfolio, t]);
 
   useEffect(() => {
     if (!selectedPortfolio) {
@@ -596,17 +603,40 @@ const RebalancePage = () => {
                   <h2>{t('rebalance.suggestionTitle')}</h2>
                 </header>
                 <div className="rebalance-page__contribution">
-                  <label htmlFor="rebalance-contribution">{t('rebalance.amount')}</label>
+                  <label htmlFor="rebalance-contribution-brl">{t('rebalance.amountBrl')}</label>
                   <input
-                    id="rebalance-contribution"
+                    id="rebalance-contribution-brl"
                     className="rebalance-page__input"
-                    value={contributionAmount}
-                    onChange={(event) => setContributionAmount(event.target.value)}
+                    value={contributionAmountBrl}
+                    onChange={(event) => setContributionAmountBrl(event.target.value)}
                     inputMode="decimal"
                     type="number"
                     min="0"
                     step="0.01"
                   />
+                  <label htmlFor="rebalance-contribution-usd">{t('rebalance.amountUsd')}</label>
+                  <input
+                    id="rebalance-contribution-usd"
+                    className="rebalance-page__input"
+                    value={contributionAmountUsd}
+                    onChange={(event) => setContributionAmountUsd(event.target.value)}
+                    inputMode="decimal"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                  />
+                  <p className="rebalance-page__contribution-hint">{t('rebalance.contributionRoutingHint')}</p>
+                  {suggestion?.contribution_input ? (
+                    <p className="rebalance-page__contribution-summary">
+                      {t('rebalance.convertedContribution', {
+                        total: formatBrl(toNumber(suggestion.contribution_input.total_brl)),
+                        fx: toNumber(suggestion.contribution_input.usd_brl_rate).toLocaleString(numberLocale, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 4,
+                        }),
+                      })}
+                    </p>
+                  ) : null}
                   <button
                     type="button"
                     className="rebalance-page__button"

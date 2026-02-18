@@ -6,6 +6,7 @@ const {
 	GetCommand,
 	UpdateCommand,
 	DeleteCommand,
+	BatchWriteCommand,
 	ScanCommand,
 } = require('@aws-sdk/lib-dynamodb');
 const { AssetMarketDataService } = require('../services/market-data');
@@ -340,6 +341,14 @@ const sanitizeDropdownConfig = (key, config, fallbackConfig) => {
 	return { label, options };
 };
 
+const chunkArray = (items = [], size = 25) => {
+	const chunks = [];
+	for (let index = 0; index < items.length; index += size) {
+		chunks.push(items.slice(index, index + size));
+	}
+	return chunks;
+};
+
 const isPlainObject = (value) =>
 	Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
@@ -440,34 +449,80 @@ const normalizePortfolioItem = (item, userId) => {
 };
 
 const deleteItemsByPrimaryKey = async (items = []) => {
+	const requests = [];
 	for (const item of items) {
 		const pk = String(item.PK || '').trim();
 		const sk = String(item.SK || '').trim();
 		if (!pk || !sk) continue;
-		await dynamo.send(
-			new DeleteCommand({
-				TableName: TABLE_NAME,
+		requests.push({
+			DeleteRequest: {
 				Key: { PK: pk, SK: sk },
-			})
-		);
+			},
+		});
+	}
+	if (requests.length === 0) return;
+
+	for (const batch of chunkArray(requests, 25)) {
+		let pending = batch;
+		let attempts = 0;
+		while (pending.length > 0) {
+			attempts += 1;
+			const response = await dynamo.send(
+				new BatchWriteCommand({
+					RequestItems: {
+						[TABLE_NAME]: pending,
+					},
+				})
+			);
+			const unprocessed = response?.UnprocessedItems?.[TABLE_NAME] || [];
+			if (!Array.isArray(unprocessed) || unprocessed.length === 0) break;
+			if (attempts >= 8) {
+				throw errorResponse(500, 'Failed to delete all backup records after retries');
+			}
+			pending = unprocessed;
+			await new Promise((resolve) => setTimeout(resolve, attempts * 60));
+		}
 	}
 };
 
 const putItemsByPrimaryKey = async (items = []) => {
+	const requests = [];
 	for (const item of items) {
 		const pk = String(item.PK || '').trim();
 		const sk = String(item.SK || '').trim();
 		if (!pk || !sk) continue;
-		await dynamo.send(
-			new PutCommand({
-				TableName: TABLE_NAME,
+		requests.push({
+			PutRequest: {
 				Item: {
 					...item,
 					PK: pk,
 					SK: sk,
 				},
-			})
-		);
+			},
+		});
+	}
+	if (requests.length === 0) return;
+
+	for (const batch of chunkArray(requests, 25)) {
+		let pending = batch;
+		let attempts = 0;
+		while (pending.length > 0) {
+			attempts += 1;
+			const response = await dynamo.send(
+				new BatchWriteCommand({
+					RequestItems: {
+						[TABLE_NAME]: pending,
+					},
+				})
+			);
+			const unprocessed = response?.UnprocessedItems?.[TABLE_NAME] || [];
+			if (!Array.isArray(unprocessed) || unprocessed.length === 0) break;
+			if (attempts >= 8) {
+				throw errorResponse(500, 'Failed to import all backup records after retries');
+			}
+			pending = unprocessed;
+			await new Promise((resolve) => setTimeout(resolve, attempts * 60));
+		}
 	}
 };
 
@@ -1450,12 +1505,37 @@ async function handleTax(method, portfolioId, userId, query = {}) {
 	return platformService.getTaxReport(userId, year, { portfolioId });
 }
 
+function resolveQueryValue(query = {}, keys = []) {
+	if (!query || typeof query !== 'object') return null;
+	for (const key of keys) {
+		if (!Object.prototype.hasOwnProperty.call(query, key)) continue;
+		const value = query[key];
+		if (value === undefined || value === null) continue;
+		return value;
+	}
+	for (const [rawKey, value] of Object.entries(query)) {
+		const normalizedKey = String(rawKey || '').trim().toLowerCase();
+		if (!normalizedKey) continue;
+		if (!keys.some((key) => normalizedKey === String(key || '').trim().toLowerCase())) continue;
+		if (value === undefined || value === null) continue;
+		return value;
+	}
+	return null;
+}
+
 async function handleRebalance(method, portfolioId, userId, body, query = {}, subId = null) {
 	if (subId === 'suggestion') {
 		if (method !== 'GET') throw errorResponse(405, 'Method not allowed');
-		const amount = Number(query.amount || 0);
-		const scope = String(query.scope || query.targetScope || 'assetClass');
-		return platformService.getRebalancingSuggestion(userId, amount, { portfolioId, scope });
+		const amount = Number(resolveQueryValue(query, ['amount']) || 0);
+		const scope = String(resolveQueryValue(query, ['scope', 'targetScope', 'target_scope']) || 'assetClass');
+		const amountBrl = resolveQueryValue(query, ['amountBrl', 'amount_brl', 'amountbrl']);
+		const amountUsd = resolveQueryValue(query, ['amountUsd', 'amount_usd', 'amountusd']);
+		return platformService.getRebalancingSuggestion(userId, amount, {
+			portfolioId,
+			scope,
+			amountBrl,
+			amountUsd,
+		});
 	}
 
 	if (subId === 'targets') {

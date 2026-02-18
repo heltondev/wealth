@@ -211,6 +211,10 @@
     "driftTitle": "Current vs Target Drift",
     "suggestionTitle": "Contribution Simulation",
     "amount": "Contribution Amount",
+    "amountBrl": "BRL contribution (to BR assets)",
+    "amountUsd": "USD contribution (to US assets)",
+    "contributionRoutingHint": "BRL is simulated only for Brazilian assets. USD is simulated only for US assets.",
+    "convertedContribution": "Converted total contribution: {{total}} (USD/BRL: {{fx}})",
     "refreshSuggestion": "Refresh Suggestion",
     "saveTargets": "Save Targets",
     "addTarget": "Add Target",
@@ -1339,6 +1343,7 @@
         "selectFile": "Select a backup file first.",
         "exportSuccess": "Backup downloaded.",
         "exportError": "Failed to download backup.",
+        "importing": "Importing backup. This can take a while for large datasets.",
         "importSuccess": "Backup restored ({{total}} items).",
         "importError": "Failed to restore backup."
       }

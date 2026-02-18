@@ -132,6 +132,19 @@
       letter-spacing: 0.4px;
     }
   }
+
+  &__contribution-hint {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+  }
+
+  &__contribution-summary {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: 0.82rem;
+    font-weight: 600;
+  }
 }
 
 .rebalance-kpi {

@@ -211,6 +211,10 @@
     "driftTitle": "Desvio Atual vs Alvo",
     "suggestionTitle": "Simulação de Aporte",
     "amount": "Valor do Aporte",
+    "amountBrl": "Aporte em BRL (para ativos BR)",
+    "amountUsd": "Aporte em USD (para ativos US)",
+    "contributionRoutingHint": "BRL é simulado apenas para ativos brasileiros. USD é simulado apenas para ativos dos EUA.",
+    "convertedContribution": "Aporte total convertido: {{total}} (USD/BRL: {{fx}})",
     "refreshSuggestion": "Atualizar Sugestão",
     "saveTargets": "Salvar Alvos",
     "addTarget": "Adicionar Alvo",
@@ -1339,6 +1343,7 @@
         "selectFile": "Selecione primeiro um arquivo de backup.",
         "exportSuccess": "Backup baixado.",
         "exportError": "Falha ao baixar backup.",
+        "importing": "Importando backup. Isso pode demorar para bases grandes.",
         "importSuccess": "Backup restaurado ({{total}} itens).",
         "importError": "Falha ao restaurar backup."
       }

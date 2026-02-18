@@ -453,6 +453,12 @@ const numeric = (value, fallback = 0) => {
 const REBALANCE_TARGET_SOURCE_MANUAL = 'manual';
 const REBALANCE_TARGET_SOURCE_THESIS = 'thesis';
 const REBALANCE_TARGET_SOURCE_EQUAL_WEIGHT = 'equal_weight';
+const REBALANCE_CONTRIBUTION_MODE_SINGLE = 'single';
+const REBALANCE_CONTRIBUTION_MODE_BY_CURRENCY = 'by_currency';
+const REBALANCE_COUNTRIES_BY_CURRENCY = {
+	BRL: ['BR'],
+	USD: ['US'],
+};
 
 const THESIS_ACTIVE_STATUS = 'active';
 const THESIS_COUNTRY_SET = new Set(['BR', 'US', 'CA']);
@@ -5478,10 +5484,11 @@ class PlatformService {
 	}
 
 	async getRebalancingSuggestion(userId, amount, options = {}) {
-		const contribution = numeric(amount, 0);
-		if (contribution <= 0) {
-			throw new Error('amount must be greater than zero');
-		}
+		const amountBrlInput = toNumberOrNull(options.amountBrl);
+		const amountUsdInput = toNumberOrNull(options.amountUsd);
+		const hasCurrencySplitInput = amountBrlInput !== null || amountUsdInput !== null;
+		const contributionBrlInput = Math.max(0, numeric(amountBrlInput, 0));
+		const contributionUsdInput = Math.max(0, numeric(amountUsdInput, 0));
 		const scopeRaw = String(options.scope || 'assetClass').trim().toLowerCase();
 		const suggestionScope = scopeRaw === 'asset' ? 'asset' : 'assetClass';
 
@@ -5499,6 +5506,25 @@ class PlatformService {
 			method: options.method || 'fifo',
 		});
 		const fxRates = await this.#getLatestFxMap();
+		const usdBrlRate = numeric(fxRates['USD/BRL'], 0);
+		const contributionMode = hasCurrencySplitInput
+			? REBALANCE_CONTRIBUTION_MODE_BY_CURRENCY
+			: REBALANCE_CONTRIBUTION_MODE_SINGLE;
+		let contribution = 0;
+		if (contributionMode === REBALANCE_CONTRIBUTION_MODE_BY_CURRENCY) {
+			if (contributionBrlInput <= 0 && contributionUsdInput <= 0) {
+				throw new Error('amountBrl or amountUsd must be greater than zero');
+			}
+			if (contributionUsdInput > 0 && usdBrlRate <= 0) {
+				throw new Error('USD/BRL FX rate unavailable for USD simulation');
+			}
+			contribution = contributionBrlInput + (contributionUsdInput * usdBrlRate);
+		} else {
+			contribution = numeric(amount, 0);
+			if (contribution <= 0) {
+				throw new Error('amount must be greater than zero');
+			}
+		}
 		const metricsByAssetId = new Map(
 			(metrics.assets || [])
 				.filter((metric) => assetById.has(String(metric.assetId || '')))
@@ -5508,6 +5534,8 @@ class PlatformService {
 		const currentByClass = {};
 		const currentByAsset = {};
 		const assetByClass = {};
+		const assetCountryByAssetId = {};
+		const countrySetByClass = {};
 		const assetsByThesisScope = {};
 		const assetThesisScopeByAssetId = {};
 		let assetsWithoutThesisScopeCount = 0;
@@ -5539,22 +5567,27 @@ class PlatformService {
 				(fallbackPrice !== null && resolvedQuantity !== null)
 					? fallbackPrice * resolvedQuantity
 					: null;
-			const marketValue =
-				usableMetricMarketValue ??
-				snapshotCurrentValue ??
-				derivedMarketValue ??
-				0;
-			const marketValueBrl = fxRate > 0 ? marketValue * fxRate : marketValue;
-			const assetClass = String(asset.assetClass || 'unknown').toLowerCase();
-			currentByClass[assetClass] = (currentByClass[assetClass] || 0) + marketValueBrl;
-			currentByAsset[assetId] = marketValueBrl;
-			if (!assetByClass[assetClass]) assetByClass[assetClass] = [];
-			assetByClass[assetClass].push({
-				asset,
-				metric,
-				assetId,
-				market_value_brl: marketValueBrl,
-			});
+				const marketValue =
+					usableMetricMarketValue ??
+					snapshotCurrentValue ??
+					derivedMarketValue ??
+					0;
+				const marketValueBrl = fxRate > 0 ? marketValue * fxRate : marketValue;
+				const assetClass = String(asset.assetClass || 'unknown').toLowerCase();
+				const normalizedCountry = normalizeThesisCountryForRebalance(asset.country)
+					|| (currency === 'USD' ? 'US' : currency === 'CAD' ? 'CA' : 'BR');
+				currentByClass[assetClass] = (currentByClass[assetClass] || 0) + marketValueBrl;
+				currentByAsset[assetId] = marketValueBrl;
+				assetCountryByAssetId[assetId] = normalizedCountry;
+				if (!assetByClass[assetClass]) assetByClass[assetClass] = [];
+				assetByClass[assetClass].push({
+					asset,
+					metric,
+					assetId,
+					market_value_brl: marketValueBrl,
+				});
+				if (!countrySetByClass[assetClass]) countrySetByClass[assetClass] = new Set();
+				countrySetByClass[assetClass].add(normalizedCountry);
 
 			const thesisScope = resolveAssetThesisScope(asset);
 			if (!thesisScope?.scopeKey) {
@@ -5906,11 +5939,10 @@ class PlatformService {
 		}
 
 		const suggestions = [];
-		for (const [key, deficit] of Object.entries(deficits)) {
-			if (deficit <= 0) continue;
-			const allocation = positiveDeficitSum > 0
-				? (deficit / positiveDeficitSum) * contribution
-				: 0;
+		let contributionBreakdown = null;
+
+		const pushSuggestionRow = (key, allocation) => {
+			if (allocation <= 0) return;
 			if (suggestionScope === 'asset') {
 				const asset = assetById.get(key) || {};
 				suggestions.push({
@@ -5922,7 +5954,7 @@ class PlatformService {
 					current_value: numeric(currentByScope[key], 0),
 					target_value: targetTotal * numeric(targetByScope[key], 0),
 				});
-				continue;
+				return;
 			}
 
 			const cls = key;
@@ -5938,6 +5970,122 @@ class PlatformService {
 				current_value: numeric(currentByScope[cls], 0),
 				target_value: targetTotal * numeric(targetByScope[cls], 0),
 			});
+		};
+
+		if (contributionMode === REBALANCE_CONTRIBUTION_MODE_BY_CURRENCY) {
+			const suggestedAmountByScope = {};
+			const pools = [
+				{
+					currency: 'BRL',
+					countries: REBALANCE_COUNTRIES_BY_CURRENCY.BRL || [],
+					amount_native: contributionBrlInput,
+					amount_brl: contributionBrlInput,
+				},
+				{
+					currency: 'USD',
+					countries: REBALANCE_COUNTRIES_BY_CURRENCY.USD || [],
+					amount_native: contributionUsdInput,
+					amount_brl: contributionUsdInput * usdBrlRate,
+				},
+			].filter((pool) => pool.amount_brl > 0);
+
+			let unallocatedBrl = 0;
+			const poolSummaries = [];
+
+			for (const pool of pools) {
+				const keysInScope = Object.keys(targetByScope);
+				const eligibleKeys = keysInScope.filter((key) => {
+					if (suggestionScope === 'asset') {
+						const country = String(assetCountryByAssetId[key] || '').toUpperCase();
+						return pool.countries.includes(country);
+					}
+					const countries = countrySetByClass[key];
+					if (!countries || countries.size === 0) return false;
+					return pool.countries.some((country) => countries.has(country));
+				});
+
+				let strategy = 'none';
+				const poolAllocationByKey = {};
+				let poolAllocated = 0;
+
+				if (eligibleKeys.length > 0) {
+					const deficitsInPool = eligibleKeys
+						.map((key) => ({ key, deficit: numeric(deficits[key], 0) }))
+						.filter((item) => item.deficit > Number.EPSILON);
+					const deficitTotal = deficitsInPool.reduce((sum, item) => sum + item.deficit, 0);
+
+					if (deficitTotal > Number.EPSILON) {
+						strategy = 'deficit';
+						for (const item of deficitsInPool) {
+							const allocation = (item.deficit / deficitTotal) * pool.amount_brl;
+							poolAllocationByKey[item.key] = allocation;
+							poolAllocated += allocation;
+						}
+					} else {
+						const targetWeightTotal = eligibleKeys.reduce(
+							(sum, key) => sum + Math.max(0, numeric(targetByScope[key], 0)),
+							0
+						);
+						if (targetWeightTotal > Number.EPSILON) {
+							strategy = 'target_weight';
+							for (const key of eligibleKeys) {
+								const normalizedWeight = Math.max(0, numeric(targetByScope[key], 0)) / targetWeightTotal;
+								const allocation = normalizedWeight * pool.amount_brl;
+								poolAllocationByKey[key] = allocation;
+								poolAllocated += allocation;
+							}
+						} else {
+							strategy = 'equal';
+							const share = pool.amount_brl / eligibleKeys.length;
+							for (const key of eligibleKeys) {
+								poolAllocationByKey[key] = share;
+								poolAllocated += share;
+							}
+						}
+					}
+				}
+
+				for (const [key, value] of Object.entries(poolAllocationByKey)) {
+					suggestedAmountByScope[key] = (suggestedAmountByScope[key] || 0) + value;
+				}
+
+				const unallocatedForPool = Math.max(0, pool.amount_brl - poolAllocated);
+				unallocatedBrl += unallocatedForPool;
+				poolSummaries.push({
+					currency: pool.currency,
+					countries: pool.countries,
+					amount_native: pool.amount_native,
+					amount_brl: pool.amount_brl,
+					allocated_brl: poolAllocated,
+					unallocated_brl: unallocatedForPool,
+					eligible_keys: eligibleKeys.length,
+					strategy,
+				});
+			}
+
+			for (const [key, allocation] of Object.entries(suggestedAmountByScope)) {
+				pushSuggestionRow(key, allocation);
+			}
+
+			contributionBreakdown = {
+				mode: REBALANCE_CONTRIBUTION_MODE_BY_CURRENCY,
+				input: {
+					amount_brl: contributionBrlInput,
+					amount_usd: contributionUsdInput,
+					usd_brl_rate: usdBrlRate,
+					total_brl: contribution,
+				},
+				pools: poolSummaries,
+				unallocated_brl: unallocatedBrl,
+			};
+		} else {
+			for (const [key, deficit] of Object.entries(deficits)) {
+				if (deficit <= 0) continue;
+				const allocation = positiveDeficitSum > 0
+					? (deficit / positiveDeficitSum) * contribution
+					: 0;
+				pushSuggestionRow(key, allocation);
+			}
 		}
 
 		const thesisDiagnostics = {
@@ -5963,6 +6111,17 @@ class PlatformService {
 			portfolioId,
 			scope: suggestionScope,
 			contribution,
+			contribution_mode: contributionMode,
+			contribution_input:
+				contributionMode === REBALANCE_CONTRIBUTION_MODE_BY_CURRENCY
+					? {
+						amount_brl: contributionBrlInput,
+						amount_usd: contributionUsdInput,
+						usd_brl_rate: usdBrlRate,
+						total_brl: contribution,
+					}
+					: null,
+			contribution_breakdown: contributionBreakdown,
 			current_total: currentTotal,
 			target_total_after_contribution: targetTotal,
 			target_source: targetSource,

@@ -522,6 +522,68 @@ test('handler GET /portfolios/{id}/tax delegates to platform service', async () 
 	}
 });
 
+test('handler GET /portfolios/{id}/rebalance/suggestion forwards split contribution params', async () => {
+	const original = platformService.getRebalancingSuggestion;
+	const calls = [];
+	platformService.getRebalancingSuggestion = async (...args) => {
+		calls.push(args);
+		return { ok: true };
+	};
+
+	try {
+		const response = await handler(
+			makeEvent(
+				'GET',
+				'/portfolios/test-portfolio/rebalance/suggestion',
+				null,
+				null,
+				{ scope: 'assetClass', amountBrl: '1000', amountUsd: '200' }
+			)
+		);
+		assert.equal(response.statusCode, 200);
+		assert.equal(calls.length, 1);
+		const [_userId, amount, options] = calls[0];
+		assert.equal(amount, 0);
+		assert.equal(options.portfolioId, 'test-portfolio');
+		assert.equal(options.scope, 'assetClass');
+		assert.equal(options.amountBrl, '1000');
+		assert.equal(options.amountUsd, '200');
+	} finally {
+		platformService.getRebalancingSuggestion = original;
+	}
+});
+
+test('handler GET /portfolios/{id}/rebalance/suggestion accepts lowercase split contribution params', async () => {
+	const original = platformService.getRebalancingSuggestion;
+	const calls = [];
+	platformService.getRebalancingSuggestion = async (...args) => {
+		calls.push(args);
+		return { ok: true };
+	};
+
+	try {
+		const response = await handler(
+			makeEvent(
+				'GET',
+				'/portfolios/test-portfolio/rebalance/suggestion',
+				null,
+				null,
+				{ scope: 'assetClass', amountbrl: '1500', amountusd: '300' }
+			)
+		);
+		assert.equal(response.statusCode, 200);
+		assert.equal(calls.length, 1);
+		const [_userId, amount, options] = calls[0];
+		assert.equal(amount, 0);
+		assert.equal(options.portfolioId, 'test-portfolio');
+		assert.equal(options.scope, 'assetClass');
+		assert.equal(options.amountBrl, '1500');
+		assert.equal(options.amountUsd, '300');
+	} finally {
+		platformService.getRebalancingSuggestion = original;
+	}
+});
+
 test('handler GET /portfolios/{id}/event-notices delegates to platform service', async () => {
 	const original = platformService.getPortfolioEventNotices;
 	platformService.getPortfolioEventNotices = async (_userId, options) => ({
