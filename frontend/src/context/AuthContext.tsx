@@ -1,4 +1,20 @@
-import { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
+import {
+  createContext,
+  useContext,
+  useState,
+  useCallback,
+  useEffect,
+  type ReactNode,
+} from 'react';
+import {
+  fetchAuthSession,
+  getCurrentUser,
+  signInWithRedirect,
+  signOut,
+} from 'aws-amplify/auth';
+import { isAmplifyAuthConfigured } from '../aws-exports';
+import { resolveRoleFromClaims } from '../utils/authz';
+import { logger } from '../utils/logger';
 
 export interface User {
   id: string;
@@ -10,6 +26,8 @@ export interface User {
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
+  isLoading: boolean;
+  isAuthConfigured: boolean;
   login: () => Promise<void>;
   logout: () => void;
 }
@@ -22,6 +40,8 @@ export const useAuth = () => {
   return context;
 };
 
+const LOCAL_AUTH_STORAGE_KEY = 'auth_user';
+
 const MOCK_USER: User = {
   id: 'local-user-001',
   email: 'oliver@local.dev',
@@ -29,25 +49,89 @@ const MOCK_USER: User = {
   role: 'ADMIN',
 };
 
+const getLocalUser = (): User | null => {
+  const saved = localStorage.getItem(LOCAL_AUTH_STORAGE_KEY);
+  return saved ? (JSON.parse(saved) as User) : null;
+};
+
+const resolveUserFromSession = async (): Promise<User> => {
+  const currentUser = await getCurrentUser();
+  const session = await fetchAuthSession();
+  const claims = (session.tokens?.idToken?.payload || {}) as Record<string, unknown>;
+
+  const id = String(claims.sub || currentUser.userId || currentUser.username);
+  const email = String(claims.email || currentUser.signInDetails?.loginId || '').trim().toLowerCase();
+  const rawName = String(claims.name || claims.given_name || '').trim();
+  const fallbackName = email ? email.split('@')[0] : 'User';
+
+  return {
+    id,
+    email,
+    name: rawName || fallbackName,
+    role: resolveRoleFromClaims(claims),
+  };
+};
+
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(() => {
-    const saved = localStorage.getItem('auth_user');
-    return saved ? JSON.parse(saved) : null;
+    if (isAmplifyAuthConfigured) return null;
+    return getLocalUser();
   });
+  const [isLoading, setIsLoading] = useState<boolean>(isAmplifyAuthConfigured);
+
+  const syncCognitoUser = useCallback(async () => {
+    if (!isAmplifyAuthConfigured) {
+      setIsLoading(false);
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const nextUser = await resolveUserFromSession();
+      setUser(nextUser);
+    } catch {
+      setUser(null);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void syncCognitoUser();
+  }, [syncCognitoUser]);
 
   const login = useCallback(async () => {
-    // Mock login for local dev - will be replaced with Cognito
+    if (isAmplifyAuthConfigured) {
+      await signInWithRedirect({ provider: 'Google' });
+      return;
+    }
+
     setUser(MOCK_USER);
-    localStorage.setItem('auth_user', JSON.stringify(MOCK_USER));
+    localStorage.setItem(LOCAL_AUTH_STORAGE_KEY, JSON.stringify(MOCK_USER));
   }, []);
 
   const logout = useCallback(() => {
     setUser(null);
-    localStorage.removeItem('auth_user');
+    if (isAmplifyAuthConfigured) {
+      void signOut().catch((error) => {
+        logger.error('Error signing out', error);
+      });
+      return;
+    }
+    localStorage.removeItem(LOCAL_AUTH_STORAGE_KEY);
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, isAuthenticated: !!user, login, logout }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        isAuthenticated: !!user,
+        isLoading,
+        isAuthConfigured: isAmplifyAuthConfigured,
+        login,
+        logout,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

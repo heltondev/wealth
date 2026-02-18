@@ -1,14 +1,22 @@
+import { fetchAuthSession } from 'aws-amplify/auth';
+import { isAmplifyAuthConfigured } from '../aws-exports';
+import { logger } from '../utils/logger';
+
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const headers: HeadersInit = {
-    'Content-Type': 'application/json',
-    ...options.headers,
-  };
+  const headers = new Headers(options.headers);
+  headers.set('Content-Type', 'application/json');
 
-  // When Cognito is added, inject the token here:
-  // const session = await fetchAuthSession();
-  // headers['Authorization'] = session.tokens?.idToken?.toString() || '';
+  if (isAmplifyAuthConfigured) {
+    try {
+      const session = await fetchAuthSession();
+      const idToken = session.tokens?.idToken?.toString();
+      headers.set('Authorization', idToken || '');
+    } catch (error) {
+      logger.warn('Unable to resolve auth session', error);
+    }
+  }
 
   const response = await fetch(`${API_URL}${path}`, {
     ...options,

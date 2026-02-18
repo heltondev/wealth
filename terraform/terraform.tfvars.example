@@ -1,0 +1,27 @@
+# Required for Google social login
+google_client_id     = "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com"
+google_client_secret = "YOUR_GOOGLE_CLIENT_SECRET"
+
+# Update to your admin account
+owner_email = "holiver.usa@gmail.com"
+
+# Hosted UI domain prefix must be unique in the AWS region
+cognito_domain_prefix = "wealthhub-auth"
+
+# Keep these aligned with your frontend app URLs
+callback_urls = [
+  "http://localhost:5173/dashboard",
+  "https://invest.oliverapp.net/dashboard",
+  "https://investiments.oliverapp.net/dashboard",
+]
+
+logout_urls = [
+  "http://localhost:5173/login",
+  "https://invest.oliverapp.net/login",
+  "https://investiments.oliverapp.net/login",
+]
+
+# Optional: create Cognito authorizer in an existing API Gateway REST API
+# create_api_gateway_authorizer = true
+# api_gateway_rest_api_id       = "a1b2c3d4e5"
+# api_gateway_authorizer_name   = "wealthhub-cognito-authorizer"

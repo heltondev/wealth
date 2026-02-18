@@ -13,6 +13,7 @@
     "test": "node --test $(find tests -type f -name '*.test.mjs' | sort)"
   },
   "dependencies": {
+    "aws-amplify": "^6.16.2",
     "i18next": "^25.8.7",
     "i18next-browser-languagedetector": "^8.2.1",
     "react": "^19.2.4",
