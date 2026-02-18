@@ -41,6 +41,14 @@ const Layout = ({ children }: LayoutProps) => {
 
   return (
     <div className="layout">
+      <div className="layout-bg" aria-hidden="true">
+        <span className="layout-bg__orb layout-bg__orb--one" />
+        <span className="layout-bg__orb layout-bg__orb--two" />
+        <span className="layout-bg__orb layout-bg__orb--three" />
+        <span className="layout-bg__grid" />
+        <span className="layout-bg__noise" />
+      </div>
+
       <aside className="sidebar">
         <div className="sidebar__header">
           <h1 className="sidebar__logo">Invest</h1>
@@ -76,10 +84,10 @@ const Layout = ({ children }: LayoutProps) => {
               <span className="sidebar__icon">{item.icon}</span>
               <span className="sidebar__label">{item.label}</span>
               {typeof item.badgeCount === 'number' && Number(item.badgeCount) > 0 ? (
-                  <span className="sidebar__badge">
-                    {item.badgeCount}
-                  </span>
-                ) : null}
+                <span className="sidebar__badge">
+                  {item.badgeCount}
+                </span>
+              ) : null}
             </NavLink>
           ))}
         </nav>
@@ -98,7 +106,9 @@ const Layout = ({ children }: LayoutProps) => {
       </aside>
 
       <main className="layout__content">
-        {children}
+        <div className="layout__content-shell">
+          {children}
+        </div>
       </main>
     </div>
   );

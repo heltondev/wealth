@@ -12,7 +12,7 @@ const ProtectedRoute = ({ children, allowedRoles }: ProtectedRouteProps) => {
 
   if (isLoading) {
     return (
-      <div style={{ padding: '24px', color: 'var(--text-secondary)' }}>
+      <div className="app-loading-state">
         Loading...
       </div>
     );
