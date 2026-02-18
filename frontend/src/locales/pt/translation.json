@@ -1030,6 +1030,8 @@
     },
     "classes": {
       "stock": "Ação",
+      "etf": "ETF",
+      "reit": "REIT",
       "fii": "FII",
       "bond": "Renda Fixa",
       "crypto": "Cripto",

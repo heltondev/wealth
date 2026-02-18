@@ -1030,6 +1030,8 @@
     },
     "classes": {
       "stock": "Stock",
+      "etf": "ETF",
+      "reit": "REIT",
       "fii": "FII",
       "bond": "Bond",
       "crypto": "Crypto",

@@ -127,6 +127,11 @@ const normalizeText = (value: unknown): string =>
     .replace(/[\u0300-\u036f]/g, '')
     .toUpperCase();
 
+const normalizeAssetClassKey = (value: unknown): string => {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized || 'unknown';
+};
+
 const summarizeSourceValue = (value: unknown): string | null => {
   const normalized = normalizeText(value);
   if (!normalized) return null;
@@ -1168,12 +1173,15 @@ const AssetsPage = () => {
       key: 'assetClass',
       label: t('assets.class'),
       sortable: true,
-      sortValue: (asset) => asset.assetClass,
-      render: (asset) => (
-        <span className={`badge badge--${asset.assetClass}`}>
-          {t(`assets.classes.${asset.assetClass}`)}
-        </span>
-      ),
+      sortValue: (asset) => normalizeAssetClassKey(asset.assetClass),
+      render: (asset) => {
+        const classKey = normalizeAssetClassKey(asset.assetClass);
+        return (
+          <span className={`badge badge--${classKey}`}>
+            {t(`assets.classes.${classKey}`, { defaultValue: asset.assetClass || classKey.toUpperCase() })}
+          </span>
+        );
+      },
     },
     {
       key: 'country',
@@ -1360,7 +1368,7 @@ const AssetsPage = () => {
           {
             key: 'assetClass',
             label: t('assets.modal.fields.class'),
-            value: t(`assets.classes.${selectedAsset.assetClass}`, { defaultValue: selectedAsset.assetClass }),
+            value: t(`assets.classes.${normalizeAssetClassKey(selectedAsset.assetClass)}`, { defaultValue: selectedAsset.assetClass }),
           },
           {
             key: 'status',
@@ -1507,8 +1515,9 @@ const AssetsPage = () => {
     const selectedCurrentValue = currentValueByAssetId[selectedAsset.assetId];
     const normalizedSelectedValue = (typeof selectedCurrentValue === 'number' && Number.isFinite(selectedCurrentValue)) ? selectedCurrentValue : 0;
     const portfolioWeight = portfolioCurrentTotal > 0 ? normalizedSelectedValue / portfolioCurrentTotal : 0;
+    const selectedAssetClass = normalizeAssetClassKey(selectedAsset.assetClass);
     const classTotal = assetRows
-      .filter((row) => row.assetClass === selectedAsset.assetClass)
+      .filter((row) => normalizeAssetClassKey(row.assetClass) === selectedAssetClass)
       .reduce((sum, row) => {
         const value = currentValueByAssetId[row.assetId];
         return (typeof value === 'number' && Number.isFinite(value)) ? sum + value : sum;
@@ -1681,7 +1690,7 @@ const AssetsPage = () => {
               </article>
 
               <article className="assets-page__weight-card">
-                <h4>{t('assets.modal.weights.class', { className: t(`assets.classes.${selectedAsset.assetClass}`, { defaultValue: selectedAsset.assetClass }) })}</h4>
+                <h4>{t('assets.modal.weights.class', { className: t(`assets.classes.${normalizeAssetClassKey(selectedAsset.assetClass)}`, { defaultValue: selectedAsset.assetClass }) })}</h4>
                 <div className="assets-page__weight-chart">
                   <svg viewBox="0 0 120 120" aria-hidden="true">
                     <circle className="assets-page__weight-ring-bg" cx="60" cy="60" r={ringRadius} />
@@ -2074,7 +2083,7 @@ const AssetsPage = () => {
             >
               {assetClassOptions.map((option) => (
                 <option key={option.value} value={option.value}>
-                  {t(`assets.classes.${option.value}`, { defaultValue: option.label })}
+                  {t(`assets.classes.${normalizeAssetClassKey(option.value)}`, { defaultValue: option.label })}
                 </option>
               ))}
             </select>

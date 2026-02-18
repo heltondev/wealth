@@ -671,11 +671,13 @@
   font-size: 0.75rem;
   font-weight: 600;
 
-  &--stock { background: rgba(99, 102, 241, 0.15); color: #818cf8; }
-  &--fii { background: rgba(6, 182, 212, 0.15); color: #06b6d4; }
-  &--bond { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
-  &--crypto { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
-  &--rsu { background: rgba(168, 85, 247, 0.15); color: #a855f7; }
+  &--stock { background: rgba(99, 102, 241, 0.15); color: #818cf8; }   // Indigo
+  &--etf { background: rgba(14, 165, 233, 0.15); color: #38bdf8; }     // Sky
+  &--reit { background: rgba(249, 115, 22, 0.15); color: #fb923c; }    // Orange
+  &--fii { background: rgba(168, 85, 247, 0.15); color: #c084fc; }     // Violet
+  &--bond { background: rgba(34, 197, 94, 0.15); color: #4ade80; }     // Green
+  &--crypto { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }  // Amber
+  &--rsu { background: rgba(244, 63, 94, 0.15); color: #fb7185; }      // Rose
 }
 
 @media (max-width: $breakpoint-tablet) {
