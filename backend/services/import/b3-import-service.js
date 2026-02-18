@@ -8,7 +8,7 @@ const BaseParser = require('../../parsers/base-parser');
 
 const RELATORIO_TRADE_TYPES = new Set(['buy', 'sell', 'subscription']);
 const RELATORIO_INCOME_TYPES = new Set(['dividend', 'jcp', 'reimbursement']);
-const AUTHORITATIVE_SNAPSHOT_PARSERS = new Set(['b3-posicao', 'robinhood-activity']);
+const AUTHORITATIVE_SNAPSHOT_PARSERS = new Set(['b3-posicao', 'robinhood-activity', 'cold-wallet-crypto']);
 const TRANSACTION_QUANTITY_PRECISION = 6;
 const POSITION_QUANTITY_EPSILON = 1e-5;
 

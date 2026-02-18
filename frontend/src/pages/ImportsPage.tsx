@@ -50,6 +50,7 @@ const ALIAS_SECTIONS: AliasSectionConfig[] = [
 
 const FALLBACK_PARSERS: ParserDescriptor[] = [
   { id: 'robinhood-activity', provider: 'robinhood' },
+  { id: 'cold-wallet-crypto', provider: 'cold-wallet' },
   { id: 'computershare-espp', provider: 'computershare' },
   { id: 'computershare-holdings-pdf', provider: 'computershare' },
 ];

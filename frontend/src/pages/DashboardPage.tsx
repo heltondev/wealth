@@ -53,6 +53,13 @@ interface AllocationChartDatum {
   weightPct: number;
 }
 
+interface DashboardSummaryTile {
+  key: string;
+  label: string;
+  amount: number;
+  currency: string;
+}
+
 const normalizeAllocation = (
   rows: DashboardAllocationItem[] | undefined,
   labelResolver: (key: string) => string
@@ -246,6 +253,27 @@ const DashboardPage = () => {
       })
       .sort((left, right) => right.amount - left.amount);
   }, [assets, t]);
+
+  const summaryTiles = useMemo<DashboardSummaryTile[]>(() => {
+    const tiles: DashboardSummaryTile[] = currencyBalanceTiles.map((tile) => ({
+      key: `currency-${tile.currency}`,
+      label: `${tile.flag} ${tile.label}`,
+      amount: tile.amount,
+      currency: tile.currency,
+    }));
+
+    const cryptoAllocation = classAllocation.find((item) => String(item.key || '').toLowerCase() === 'crypto');
+    if (cryptoAllocation && Number.isFinite(cryptoAllocation.value) && cryptoAllocation.value > EPSILON) {
+      tiles.push({
+        key: 'asset-class-crypto',
+        label: `🪙 ${t('dashboard.cryptoTile', { defaultValue: 'Crypto' })}`,
+        amount: Number(cryptoAllocation.value),
+        currency: 'BRL',
+      });
+    }
+
+    return tiles;
+  }, [classAllocation, currencyBalanceTiles, t]);
 
   const evolutionData = useMemo(() => {
     if (!Array.isArray(dashboard?.evolution)) return [];
@@ -728,15 +756,15 @@ const DashboardPage = () => {
               </article>
             </div>
 
-            {currencyBalanceTiles.length > 0 && (
+            {summaryTiles.length > 0 && (
               <div
                 className="dashboard__currency-grid"
-                style={{ '--dashboard-currency-columns': String(currencyBalanceTiles.length) } as CSSProperties}
+                style={{ '--dashboard-currency-columns': String(summaryTiles.length) } as CSSProperties}
               >
-                {currencyBalanceTiles.map((tile) => (
-                  <article key={`currency-tile-${tile.currency}`} className="kpi-card kpi-card--currency">
+                {summaryTiles.map((tile) => (
+                  <article key={`dashboard-summary-tile-${tile.key}`} className="kpi-card kpi-card--currency">
                     <span className="kpi-card__label kpi-card__label--currency">
-                      {`${tile.flag} ${tile.label}`}
+                      {tile.label}
                     </span>
                     <span className="kpi-card__value">
                       {formatCurrency(tile.amount, tile.currency, numberLocale)}

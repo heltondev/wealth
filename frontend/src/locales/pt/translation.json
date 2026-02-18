@@ -34,6 +34,7 @@
     "allocationByClass": "Alocação por Classe",
     "allocationByCurrency": "Alocação por Moeda",
     "allocationBySector": "Alocação por Setor",
+    "cryptoTile": "Cripto",
     "currencyNames": {
       "BRL": "Real Brasileiro",
       "USD": "Dólar Americano",
@@ -1188,7 +1189,7 @@
     "exportCsv": "Exportar Extrato CSV",
     "import": {
       "title": "Importar arquivo de portfólio",
-      "hint": "Envie um arquivo Excel da B3, CSV de atividade da Robinhood, CSV ESPP da Computershare ou PDF de holdings da Computershare para identificar o parser automaticamente e atualizar ativos, transações e aliases sem duplicar registros.",
+      "hint": "Envie um arquivo Excel da B3, CSV de atividade da Robinhood, CSV de carteira cripto cold-wallet, CSV ESPP da Computershare ou PDF de holdings da Computershare para identificar o parser automaticamente e atualizar ativos, transações e aliases sem duplicar registros.",
       "pickFile": "Selecionar arquivo .xlsx, .csv ou .pdf",
       "selectParser": "Selecionar parser",
       "previewAction": "Pré-visualizar importação",
@@ -1222,6 +1223,7 @@
         "b3-posicao": "B3 Posição (snapshot)",
         "b3-relatorio": "B3 Relatório consolidado",
         "robinhood-activity": "Robinhood Activity CSV",
+        "cold-wallet-crypto": "Cold Wallet Crypto CSV",
         "computershare-espp": "Computershare ESPP CSV",
         "computershare-holdings-pdf": "Computershare Holdings PDF"
       },

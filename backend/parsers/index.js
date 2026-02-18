@@ -12,6 +12,7 @@ const parsers = [
 	require('./b3/b3-posicao'),
 	require('./b3/b3-relatorio'),
 	require('./robinhood/robinhood-activity'),
+	require('./crypto/cold-wallet-crypto'),
 	require('./computershare/computershare-espp'),
 	require('./computershare/computershare-holdings-pdf'),
 ];
