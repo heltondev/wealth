@@ -13,6 +13,8 @@ import { Link } from 'react-router';
 import Layout from '../components/Layout';
 import {
   api,
+  type DividendCalendarEvent,
+  type DividendCalendarMonthResponse,
   type DividendsResponse,
   type DropdownConfigMap,
 } from '../services/api';
@@ -96,6 +98,7 @@ type ProventEvent = {
   revisionNoteKey: string | null;
   yieldCurrentPct: number | null;
   yieldOnCostPct: number | null;
+  currency: string;
 };
 
 const toRecord = (value: unknown): Record<string, unknown> => (
@@ -234,6 +237,9 @@ const DividendsPage = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [payload, setPayload] = useState<DividendsResponse | null>(null);
+  const [calendarLoading, setCalendarLoading] = useState(false);
+  const calendarCacheRef = useRef(new Map<string, DividendCalendarEvent[]>());
+  const [calendarRawEvents, setCalendarRawEvents] = useState<DividendCalendarEvent[]>([]);
   const numberLocale = i18n.language?.startsWith('pt') ? 'pt-BR' : 'en-US';
   const portfolioOptions = useMemo(
     () =>
@@ -395,6 +401,19 @@ const DividendsPage = () => {
     return map;
   }, [metrics?.currentQuotes, portfolioAssets]);
 
+  const currencyByTicker = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const asset of portfolioAssets) {
+      const status = String(asset.status || '').toLowerCase();
+      if (status && status !== 'active') continue;
+      const ticker = String(asset.ticker || '').toUpperCase();
+      if (!ticker || map.has(ticker)) continue;
+      const cur = String(asset.currency || '').toUpperCase();
+      if (cur) map.set(ticker, cur);
+    }
+    return map;
+  }, [portfolioAssets]);
+
   const averageCostByTicker = useMemo(() => {
     const accum = new Map<string, {
       weightedCost: number;
@@ -439,10 +458,7 @@ const DividendsPage = () => {
   }, [metrics?.averageCosts, portfolioAssets]);
 
   const normalizedRawEvents = useMemo<ProventEvent[]>(() => {
-    const combined = [
-      ...(payload?.calendar || []),
-      ...(payload?.calendar_upcoming || []),
-    ];
+    const combined = calendarRawEvents;
     const normalized: ProventEvent[] = [];
     combined.forEach((event, index) => {
       const details = toRecord(event.details);
@@ -469,15 +485,38 @@ const DividendsPage = () => {
       );
       const amountPerUnit = toAmount(details.value);
       const quantity = quantityByTicker.get(ticker) ?? null;
-      const expectedGross = incomeEvent && amountPerUnit !== null && quantity !== null
+      const transactionTotalAmount = toAmount(
+        details.totalAmount
+        ?? details.total_amount
+        ?? details.totalGross
+        ?? details.total_gross
+      );
+      const explicitNetAmount = toAmount(
+        details.netAmount
+        ?? details.net_amount
+        ?? details.totalNet
+        ?? details.total_net
+      );
+      const expectedGrossFromUnit = incomeEvent && amountPerUnit !== null && amountPerUnit > 0 && quantity !== null && quantity > 0
         ? amountPerUnit * quantity
         : null;
-      const expectedNet = expectedGross === null
+      const expectedGross = incomeEvent
+        ? expectedGrossFromUnit ?? transactionTotalAmount
+        : null;
+      const expectedNet = !incomeEvent
         ? null
-        : category === 'jcp'
-          ? expectedGross * 0.85
-          : expectedGross;
-      const netIsEstimated = incomeEvent && category === 'jcp' && expectedGross !== null;
+        : explicitNetAmount ?? (
+          expectedGross === null
+            ? null
+            : category === 'jcp'
+              ? expectedGross * 0.85
+              : expectedGross
+        );
+      const netIsEstimated =
+        incomeEvent
+        && explicitNetAmount === null
+        && category === 'jcp'
+        && expectedGross !== null;
       const taxHintKey = incomeEvent && category === 'jcp' ? 'dividends.hints.jcpWithholding' : null;
       const currentPrice = currentPriceByTicker.get(ticker) ?? null;
       const averageCost = averageCostByTicker.get(ticker) ?? null;
@@ -489,6 +528,9 @@ const DividendsPage = () => {
         incomeEvent && amountPerUnit !== null && averageCost !== null && averageCost > 0
           ? (amountPerUnit / averageCost) * 100
           : null;
+      const resolvedCurrency = String(details.currency || '').toUpperCase()
+        || currencyByTicker.get(ticker)
+        || 'BRL';
       const source = String(event.data_source || '').trim() || null;
       const sourceUrl = String(details.url || '').trim() || null;
       const valueSource = String(details.value_source || '').trim() || null;
@@ -519,6 +561,7 @@ const DividendsPage = () => {
         revisionNoteKey: details.revised ? 'dividends.hints.mergedSources' : null,
         yieldCurrentPct,
         yieldOnCostPct,
+        currency: resolvedCurrency,
       });
     });
     return normalized.sort((left, right) => (
@@ -526,11 +569,11 @@ const DividendsPage = () => {
       || left.ticker.localeCompare(right.ticker)
     ));
   }, [
-    payload?.calendar,
-    payload?.calendar_upcoming,
+    calendarRawEvents,
     quantityByTicker,
     assetIdByTicker,
     currentPriceByTicker,
+    currencyByTicker,
     averageCostByTicker,
     todayIso,
   ]);
@@ -550,7 +593,9 @@ const DividendsPage = () => {
         sources: new Set<string>(),
         overriddenBySource: false,
       };
-      current.values.add(event.amountPerUnit === null ? '<null>' : event.amountPerUnit.toFixed(8));
+      if (event.amountPerUnit !== null) {
+        current.values.add(event.amountPerUnit.toFixed(8));
+      }
       if (event.source) current.sources.add(event.source);
       if (event.valueSource && event.source && event.valueSource !== event.source) {
         current.overriddenBySource = true;
@@ -600,19 +645,27 @@ const DividendsPage = () => {
   }, [normalizedRawEvents, revisionFlagsByKey]);
 
   const calendarMonthOptions = useMemo(() => {
-    const months = new Set(calendarEvents.map((event) => event.eventDate.slice(0, 7)));
-    months.add(todayIso.slice(0, 7));
-    return Array.from(months)
-      .sort()
-      .map((month) => ({
-        value: month,
-        label: formatMonthLabel(month, numberLocale),
-      }));
-  }, [calendarEvents, numberLocale, todayIso]);
+    const base = new Date(`${todayIso}T00:00:00Z`);
+    if (Number.isNaN(base.getTime())) return [];
+    const months: string[] = [];
+    for (let offset = -12; offset <= 2; offset += 1) {
+      const d = new Date(base.getTime());
+      d.setUTCDate(1);
+      d.setUTCMonth(d.getUTCMonth() + offset);
+      const y = d.getUTCFullYear();
+      const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+      months.push(`${y}-${m}`);
+    }
+    return months.map((month) => ({
+      value: month,
+      label: formatMonthLabel(month, numberLocale),
+    }));
+  }, [numberLocale, todayIso]);
 
   useEffect(() => {
     const currentMonth = todayIso.slice(0, 7);
     setCalendarMonth((previous) => (previous === currentMonth ? previous : currentMonth));
+    calendarCacheRef.current.clear();
   }, [selectedPortfolio, todayIso]);
 
   useEffect(() => {
@@ -623,6 +676,37 @@ const DividendsPage = () => {
     );
     if (nextMonth !== calendarMonth) setCalendarMonth(nextMonth);
   }, [calendarMonth, calendarMonthOptions, todayIso]);
+
+  useEffect(() => {
+    if (!selectedPortfolio || !calendarMonth) {
+      setCalendarRawEvents([]);
+      setCalendarLoading(false);
+      return;
+    }
+    const cacheKeyCalendar = `${selectedPortfolio}::${calendarMonth}`;
+    const cached = calendarCacheRef.current.get(cacheKeyCalendar);
+    if (cached) {
+      setCalendarRawEvents(cached);
+      setCalendarLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setCalendarLoading(true);
+    api.getDividendCalendar(selectedPortfolio, calendarMonth)
+      .then((response: DividendCalendarMonthResponse) => {
+        if (cancelled) return;
+        calendarCacheRef.current.set(cacheKeyCalendar, response.events);
+        setCalendarRawEvents(response.events);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setCalendarRawEvents([]);
+      })
+      .finally(() => {
+        if (!cancelled) setCalendarLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [selectedPortfolio, calendarMonth]);
 
   const calendarMonthEvents = useMemo(() => (
     calendarEvents.filter((event) => (
@@ -1058,7 +1142,11 @@ const DividendsPage = () => {
                   </button>
                 </div>
 
-                {calendarMonthEvents.length === 0 && (
+                {calendarLoading && (
+                  <p className="dividends-card__empty">{t('common.loading')}</p>
+                )}
+
+                {!calendarLoading && calendarMonthEvents.length === 0 && (
                   <p className="dividends-card__empty">{t('dividends.noCalendarEvents', { defaultValue: 'No provents in selected month.' })}</p>
                 )}
 
@@ -1104,11 +1192,14 @@ const DividendsPage = () => {
                                 }}
                               >
                                 <span className="provents-calendar__event-ticker">{entry.ticker}</span>
-                                {entry.amountPerUnit !== null && (
-                                  <span className="provents-calendar__event-amount">
-                                    {formatCurrency(entry.amountPerUnit, 'BRL', numberLocale)}
-                                  </span>
-                                )}
+                                {(() => {
+                                  const amt = entry.expectedGross ?? entry.amountPerUnit ?? null;
+                                  return amt !== null && Math.abs(amt) >= 0.005 ? (
+                                    <span className="provents-calendar__event-amount">
+                                      {formatCurrency(amt, entry.currency, numberLocale)}
+                                    </span>
+                                  ) : null;
+                                })()}
                               </button>
                             ))}
                             {cell.events.length > 3 && (
@@ -1195,10 +1286,10 @@ const DividendsPage = () => {
                             <section className="dividends-list__group">
                               <h3 className="dividends-list__group-title">{t('dividends.groups.cashYield')}</h3>
                               <div className="dividends-list__group-items">
-                                <div className="dividends-list__kv"><span>{t('dividends.perUnit')}</span><strong>{event.amountPerUnit !== null ? formatCurrency(event.amountPerUnit, 'BRL', numberLocale) : '-'}</strong></div>
+                                <div className="dividends-list__kv"><span>{t('dividends.perUnit')}</span><strong>{event.amountPerUnit !== null ? formatCurrency(event.amountPerUnit, event.currency, numberLocale) : '-'}</strong></div>
                                 <div className="dividends-list__kv"><span>{t('dividends.quantity')}</span><strong>{event.quantity !== null ? event.quantity.toLocaleString(numberLocale) : '-'}</strong></div>
-                                <div className="dividends-list__kv"><span>{t('dividends.grossReceive')}</span><strong>{event.expectedGross !== null ? formatCurrency(event.expectedGross, 'BRL', numberLocale) : '-'}</strong></div>
-                                <div className="dividends-list__kv"><span>{t('dividends.netReceive')}</span><strong>{event.expectedNet !== null ? formatCurrency(event.expectedNet, 'BRL', numberLocale) : '-'}</strong></div>
+                                <div className="dividends-list__kv"><span>{t('dividends.grossReceive')}</span><strong>{event.expectedGross !== null ? formatCurrency(event.expectedGross, event.currency, numberLocale) : '-'}</strong></div>
+                                <div className="dividends-list__kv"><span>{t('dividends.netReceive')}</span><strong>{event.expectedNet !== null ? formatCurrency(event.expectedNet, event.currency, numberLocale) : '-'}</strong></div>
                                 <div className="dividends-list__kv"><span>{t('dividends.yieldCurrentEvent')}</span><strong>{formatPercent(event.yieldCurrentPct, numberLocale)}</strong></div>
                                 <div className="dividends-list__kv"><span>{t('dividends.yieldOnCostEvent')}</span><strong>{formatPercent(event.yieldOnCostPct, numberLocale)}</strong></div>
                               </div>
@@ -1208,7 +1299,7 @@ const DividendsPage = () => {
                               <h3 className="dividends-list__group-title">{t('dividends.groups.ticker12m')}</h3>
                               <div className="dividends-list__group-items">
                                 <div className="dividends-list__kv"><span>{t('dividends.frequency')}</span><strong>{tickerInsight ? t(tickerInsight.frequencyKey) : '-'}</strong></div>
-                                <div className="dividends-list__kv"><span>{t('dividends.gross12m')}</span><strong>{tickerInsight ? formatCurrency(tickerInsight.totalGross12m, 'BRL', numberLocale) : '-'}</strong></div>
+                                <div className="dividends-list__kv"><span>{t('dividends.gross12m')}</span><strong>{tickerInsight ? formatCurrency(tickerInsight.totalGross12m, event.currency, numberLocale) : '-'}</strong></div>
                                 <div className="dividends-list__kv"><span>{t('dividends.events12m')}</span><strong>{tickerInsight ? tickerInsight.paidCount12m.toLocaleString(numberLocale) : '-'}</strong></div>
                                 <div className="dividends-list__kv"><span>{t('dividends.yieldCurrent12m')}</span><strong>{tickerInsight ? formatPercent(tickerInsight.yieldCurrent12mPct, numberLocale) : '-'}</strong></div>
                                 <div className="dividends-list__kv"><span>{t('dividends.yieldCost12m')}</span><strong>{tickerInsight ? formatPercent(tickerInsight.yieldOnCost12mPct, numberLocale) : '-'}</strong></div>

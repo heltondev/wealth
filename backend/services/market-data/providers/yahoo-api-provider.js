@@ -16,6 +16,8 @@ const QUOTE_SUMMARY_MODULES = [
 	'balanceSheetHistoryQuarterly',
 	'cashflowStatementHistory',
 	'cashflowStatementHistoryQuarterly',
+	'calendarEvents',
+	'summaryDetail',
 ];
 
 const toIsoDate = (epochSeconds) => {
@@ -131,6 +133,41 @@ const parseQuoteSummaryFinancialStatements = (result) => {
 		quarterly_balance_sheet: quarterlyBalance,
 		cashflow: annualCashflow,
 		quarterly_cashflow: quarterlyCashflow,
+	};
+};
+
+const parseCalendarFromQuoteSummary = (result) => {
+	const safeResult = result && typeof result === 'object' ? result : {};
+	const cal = safeResult.calendarEvents || {};
+	const summary = safeResult.summaryDetail || {};
+
+	const exDividendDate =
+		toIsoDateFromUnknown(cal.exDividendDate) ||
+		toIsoDateFromUnknown(summary.exDividendDate) ||
+		null;
+	const dividendDate = toIsoDateFromUnknown(cal.dividendDate) || null;
+	const dividendRate =
+		toFinancialNumber(summary.dividendRate) ??
+		toFinancialNumber(cal.dividendRate) ??
+		null;
+	const dividendYield =
+		toFinancialNumber(summary.dividendYield) ??
+		toFinancialNumber(cal.dividendYield) ??
+		null;
+	const trailingAnnualDividendRate =
+		toFinancialNumber(summary.trailingAnnualDividendRate) ?? null;
+	const trailingAnnualDividendYield =
+		toFinancialNumber(summary.trailingAnnualDividendYield) ?? null;
+
+	if (!exDividendDate && !dividendDate && dividendRate === null) return null;
+
+	return {
+		exDividendDate,
+		dividendDate,
+		dividendRate,
+		dividendYield,
+		trailingAnnualDividendRate,
+		trailingAnnualDividendYield,
 	};
 };
 
@@ -272,7 +309,7 @@ class YahooApiProvider {
 				recommendations: null,
 				institutional_holders: null,
 				major_holders: null,
-				calendar: null,
+				calendar: financialStatements.calendar || null,
 			},
 			historical: {
 				history_30d: chartPayload.rows,
@@ -291,6 +328,8 @@ class YahooApiProvider {
 				quarterly_cashflow: financialStatements.quarterly_cashflow,
 				quote_summary: financialStatements.raw,
 				quote_summary_error: financialStatements.error,
+				calendar_events: financialStatements.raw?.calendarEvents || null,
+				summary_detail: financialStatements.raw?.summaryDetail || null,
 			},
 		};
 	}
@@ -427,6 +466,7 @@ class YahooApiProvider {
 				quarterly_balance_sheet: null,
 				cashflow: null,
 				quarterly_cashflow: null,
+				calendar: null,
 				raw: payload?.quoteSummary || null,
 				error: null,
 			};
@@ -434,6 +474,7 @@ class YahooApiProvider {
 
 		return {
 			...parseQuoteSummaryFinancialStatements(result),
+			calendar: parseCalendarFromQuoteSummary(result),
 			raw: result,
 			error: null,
 		};
@@ -442,4 +483,5 @@ class YahooApiProvider {
 
 module.exports = {
 	YahooApiProvider,
+	parseCalendarFromQuoteSummary,
 };

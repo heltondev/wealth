@@ -60,9 +60,10 @@ class AssetMarketDataService {
 	 * Returns normalized sections (quote/fundamentals/historical), while preserving
 	 * all provider fields under `raw` to avoid data loss when new fields appear.
 	 */
-	async fetchAssetData(ticker, market, context = {}) {
+	async fetchAssetData(ticker, market, context = {}, options = {}) {
 		const fetchedAt = nowIso();
 		const normalizedMarket = String(market || 'US').toUpperCase();
+		const historyDays = Number(options.historyDays) || 30;
 
 		let primarySource = null;
 		let primaryError = null;
@@ -73,7 +74,7 @@ class AssetMarketDataService {
 			} else {
 				const yahooSymbol = resolveYahooSymbol(ticker, normalizedMarket);
 				primarySource = await this.yahooProvider.fetch(yahooSymbol, {
-					historyDays: 30,
+					historyDays,
 				});
 			}
 		} catch (error) {

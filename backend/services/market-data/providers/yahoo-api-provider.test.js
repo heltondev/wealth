@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { YahooApiProvider } = require('./yahoo-api-provider');
+const { YahooApiProvider, parseCalendarFromQuoteSummary } = require('./yahoo-api-provider');
 
 const withMockedFetch = async (fetchImpl, task) => {
 	const originalFetch = global.fetch;
@@ -149,4 +149,127 @@ test('YahooApiProvider falls back to chart close when quote endpoint fails', asy
 	const payload = await withMockedFetch(fetchImpl, () => provider.fetch('BTLG11.SA'));
 	assert.equal(payload.quote.currentPrice, 55);
 	assert.equal(payload.raw.quote_error.message, 'Yahoo quote endpoint responded with 401');
+});
+
+test('parseCalendarFromQuoteSummary parses full calendarEvents and summaryDetail', () => {
+	const result = parseCalendarFromQuoteSummary({
+		calendarEvents: {
+			exDividendDate: { raw: 1700006400, fmt: '2023-11-15' },
+			dividendDate: { raw: 1700524800, fmt: '2023-11-21' },
+		},
+		summaryDetail: {
+			dividendRate: { raw: 0.96, fmt: '0.96' },
+			dividendYield: { raw: 0.0052, fmt: '0.52%' },
+			trailingAnnualDividendRate: { raw: 0.95, fmt: '0.95' },
+			trailingAnnualDividendYield: { raw: 0.0051, fmt: '0.51%' },
+		},
+	});
+	assert.equal(result.exDividendDate, '2023-11-15');
+	assert.equal(result.dividendDate, '2023-11-21');
+	assert.equal(result.dividendRate, 0.96);
+	assert.equal(result.dividendYield, 0.0052);
+	assert.equal(result.trailingAnnualDividendRate, 0.95);
+	assert.equal(result.trailingAnnualDividendYield, 0.0051);
+});
+
+test('parseCalendarFromQuoteSummary parses summaryDetail only', () => {
+	const result = parseCalendarFromQuoteSummary({
+		summaryDetail: {
+			exDividendDate: { raw: 1700006400, fmt: '2023-11-15' },
+			dividendRate: { raw: 1.5, fmt: '1.50' },
+			dividendYield: { raw: 0.025, fmt: '2.50%' },
+		},
+	});
+	assert.equal(result.exDividendDate, '2023-11-15');
+	assert.equal(result.dividendDate, null);
+	assert.equal(result.dividendRate, 1.5);
+	assert.equal(result.dividendYield, 0.025);
+	assert.equal(result.trailingAnnualDividendRate, null);
+});
+
+test('parseCalendarFromQuoteSummary returns null for empty input', () => {
+	assert.equal(parseCalendarFromQuoteSummary({}), null);
+	assert.equal(parseCalendarFromQuoteSummary(null), null);
+	assert.equal(parseCalendarFromQuoteSummary(undefined), null);
+});
+
+test('parseCalendarFromQuoteSummary handles plain epoch numbers', () => {
+	const result = parseCalendarFromQuoteSummary({
+		calendarEvents: {
+			exDividendDate: 1700006400,
+		},
+		summaryDetail: {
+			dividendRate: 2.0,
+		},
+	});
+	assert.equal(result.exDividendDate, '2023-11-15');
+	assert.equal(result.dividendDate, null);
+	assert.equal(result.dividendRate, 2.0);
+});
+
+test('YahooApiProvider fetch returns calendar from calendarEvents module', async () => {
+	const provider = new YahooApiProvider({ timeoutMs: 1000 });
+
+	const fetchImpl = async (url) => {
+		if (url.includes('/v7/finance/quote')) {
+			return new Response(JSON.stringify({
+				quoteResponse: {
+					result: [{
+						regularMarketPrice: 185.5,
+						currency: 'USD',
+					}],
+				},
+			}), { status: 200, headers: { 'content-type': 'application/json' } });
+		}
+
+		if (url.includes('/v8/finance/chart/')) {
+			return new Response(JSON.stringify({
+				chart: {
+					result: [{
+						timestamp: [1700006400],
+						indicators: {
+							quote: [{
+								open: [184], high: [186], low: [183],
+								close: [185.5], volume: [50000],
+							}],
+						},
+						events: {
+							dividends: {
+								'1700006400': { amount: 0.24, date: 1700006400 },
+							},
+						},
+					}],
+				},
+			}), { status: 200, headers: { 'content-type': 'application/json' } });
+		}
+
+		if (url.includes('/v10/finance/quoteSummary/')) {
+			return new Response(JSON.stringify({
+				quoteSummary: {
+					result: [{
+						calendarEvents: {
+							exDividendDate: { raw: 1700006400, fmt: '2023-11-15' },
+							dividendDate: { raw: 1700524800, fmt: '2023-11-21' },
+						},
+						summaryDetail: {
+							dividendRate: { raw: 0.96, fmt: '0.96' },
+							dividendYield: { raw: 0.0052, fmt: '0.52%' },
+						},
+					}],
+				},
+			}), { status: 200, headers: { 'content-type': 'application/json' } });
+		}
+
+		throw new Error(`Unexpected URL in mock: ${url}`);
+	};
+
+	const payload = await withMockedFetch(fetchImpl, () => provider.fetch('AAPL'));
+	assert.ok(payload.fundamentals.calendar, 'calendar should not be null');
+	assert.equal(payload.fundamentals.calendar.exDividendDate, '2023-11-15');
+	assert.equal(payload.fundamentals.calendar.dividendDate, '2023-11-21');
+	assert.equal(payload.fundamentals.calendar.dividendRate, 0.96);
+	assert.ok(payload.raw.calendar_events, 'raw calendar_events should be present');
+	assert.ok(payload.raw.summary_detail, 'raw summary_detail should be present');
+	assert.equal(payload.historical.dividends.length, 1);
+	assert.equal(payload.historical.dividends[0].value, 0.24);
 });

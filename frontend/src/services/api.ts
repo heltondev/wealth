@@ -323,9 +323,14 @@ export interface DividendsResponse {
   projected_annual_income: number;
   yield_on_cost_realized: number;
   dividend_yield_current?: number;
-  calendar: DividendCalendarEvent[];
+  calendar?: DividendCalendarEvent[];
   calendar_upcoming?: DividendCalendarEvent[];
   fetched_at: string;
+}
+
+export interface DividendCalendarMonthResponse {
+  month: string;
+  events: DividendCalendarEvent[];
 }
 
 export interface PortfolioEventNoticeItem {
@@ -1103,6 +1108,8 @@ export const api = {
     const suffix = query.toString() ? `?${query.toString()}` : '';
     return request<DividendsResponse>(`/portfolios/${portfolioId}/dividends${suffix}`);
   },
+  getDividendCalendar: (portfolioId: string, month: string) =>
+    request<DividendCalendarMonthResponse>(`/portfolios/${portfolioId}/dividends/calendar?month=${encodeURIComponent(month)}`),
   getPortfolioEventInbox: (
     portfolioId: string,
     params?: {

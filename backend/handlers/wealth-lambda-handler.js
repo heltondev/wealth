@@ -1606,8 +1606,13 @@ async function handleDashboard(method, portfolioId, userId, query = {}) {
 	});
 }
 
-async function handleDividends(method, portfolioId, userId, query = {}) {
+async function handleDividends(method, portfolioId, userId, query = {}, subId = null) {
 	if (method !== 'GET') throw errorResponse(405, 'Method not allowed');
+	if (subId === 'calendar') {
+		const month = query.month || query.calendarMonth;
+		if (!month || !/^\d{4}-\d{2}$/.test(month)) throw errorResponse(400, 'month query param required (YYYY-MM)');
+		return platformService.getDividendCalendarMonth(userId, { portfolioId, month });
+	}
 	return platformService.getDividendAnalytics(userId, {
 		portfolioId,
 		method: query.method || 'fifo',
@@ -2324,7 +2329,7 @@ exports.handler = async (event) => {
 			} else if (subResource === 'dashboard') {
 				body = await handleDashboard(httpMethod, id, userId, queryStringParameters || {});
 			} else if (subResource === 'dividends') {
-				body = await handleDividends(httpMethod, id, userId, queryStringParameters || {});
+				body = await handleDividends(httpMethod, id, userId, queryStringParameters || {}, subId || null);
 			} else if (subResource === 'event-notices') {
 				body = await handleEventNotices(httpMethod, id, userId, queryStringParameters || {});
 			} else if (subResource === 'event-inbox') {

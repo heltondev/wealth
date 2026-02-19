@@ -3885,13 +3885,23 @@ class PlatformService {
 
 				if (normalizedEvents.length === 0 && !isBrazilianFii) {
 					const market = resolveAssetMarket(asset);
-					const payload = await this.marketDataService.fetchAssetData(asset.ticker, market, asset);
+					const payload = await this.marketDataService.fetchAssetData(asset.ticker, market, asset, { historyDays: 400 });
 					const calendar =
+						payload?.fundamentals?.calendar ||
 						payload?.raw?.final_payload?.calendar ||
-						payload?.raw?.primary_payload?.calendar ||
-						payload?.raw?.final_payload?.info?.calendarEvents ||
+						payload?.raw?.final_payload?.calendar_events ||
 						null;
-					normalizedEvents = this.#normalizeCalendarEvents(asset.ticker, calendar, payload.data_source);
+					const eventCurrency = payload?.quote?.currency || asset.currency || null;
+					const calendarNormalized = this.#normalizeCalendarEvents(
+						asset.ticker, calendar, payload.data_source, eventCurrency
+					);
+					const historicalDivs = this.#normalizeHistoricalDividendEvents(
+						asset.ticker,
+						payload?.historical?.dividends,
+						eventCurrency,
+						payload.data_source
+					);
+					normalizedEvents = [...calendarNormalized, ...historicalDivs];
 				}
 
 				for (const event of normalizedEvents) {
@@ -4827,20 +4837,20 @@ class PlatformService {
 				&& txDate <= today;
 		});
 
-		const monthly = {};
-		for (const tx of dividendTransactions) {
-			const key = monthKey(tx.date);
-			if (!key) continue;
-			const asset =
-				activeAssetById.get(tx.assetId)
-				|| activeAssetByTicker.get(String(tx.ticker || '').toUpperCase())
-				|| {};
-			const currency = String(tx.currency || asset.currency || 'BRL').toUpperCase();
-			const fxRate = currency === 'BRL' ? 1 : numeric(fxRates[`${currency}/BRL`], 0);
-			const amount = numeric(tx.amount, 0);
-			const amountBrl = fxRate > 0 ? amount * fxRate : amount;
-			monthly[key] = (monthly[key] || 0) + amountBrl;
-		}
+			const monthly = {};
+			for (const tx of dividendTransactions) {
+				const key = monthKey(tx.date);
+				if (!key) continue;
+				const asset =
+					activeAssetById.get(tx.assetId)
+					|| activeAssetByTicker.get(String(tx.ticker || '').toUpperCase())
+					|| {};
+				const currency = String(tx.currency || asset.currency || 'BRL').toUpperCase();
+				const fxRate = currency === 'BRL' ? 1 : numeric(fxRates[`${currency}/BRL`], 0);
+				const amount = numeric(tx.amount, 0);
+				const amountBrl = fxRate > 0 ? amount * fxRate : amount;
+				monthly[key] = (monthly[key] || 0) + amountBrl;
+			}
 
 		const monthsInPeriod = (() => {
 			const start = new Date(`${periodStartDate.slice(0, 7)}-01T00:00:00Z`);
@@ -4894,131 +4904,6 @@ class PlatformService {
 		const realizedYield = costTotalBrl > 0 ? (totalInPeriod / costTotalBrl) * 100 : 0;
 		const currentDividendYield = currentValueBrl > 0 ? (totalInPeriod / currentValueBrl) * 100 : 0;
 
-			const calendarByTicker = await Promise.all(
-				Array.from(activeIncomeTickers).map(async (ticker) => {
-				const events = await this.#queryAll({
-					TableName: this.tableName,
-					KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
-					ExpressionAttributeValues: {
-						':pk': `ASSET_EVENT#${ticker}`,
-						':sk': 'DATE#',
-					},
-				});
-					return events
-						.filter((event) => this.#isDividendCalendarEventType(event.eventType))
-						.map((event) => ({
-							...event,
-							ticker: String(event.ticker || ticker).toUpperCase(),
-							eventDate: normalizeDate(event.eventDate || event.date) || normalizeDate(event.fetched_at) || null,
-						}));
-				})
-			);
-			const classifyDividendFamily = (eventType) => {
-				const normalizedType = String(eventType || '').toLowerCase();
-				if (normalizedType.includes('jcp') || normalizedType.includes('juros')) return 'jcp';
-				if (normalizedType.includes('amort')) return 'amortization';
-				return 'income';
-			};
-			const sourceWeight = (source) => {
-				const normalized = String(source || '').toLowerCase();
-				if (normalized.includes('statusinvest')) return 3;
-				if (normalized.includes('fundsexplorer')) return 2;
-				if (normalized) return 1;
-				return 0;
-			};
-			const readDetails = (event) => (
-				event?.details && typeof event.details === 'object' ? { ...event.details } : {}
-			);
-			const readDetailValue = (event) => toNumberOrNull(readDetails(event).value);
-			const eventQualityScore = (event) => {
-				const details = readDetails(event);
-				const value = toNumberOrNull(details.value);
-				let score = 0;
-				if (value !== null) score += value > 0 ? 200 : 90;
-				if (normalizeDate(details.paymentDate)) score += 20;
-				if (normalizeDate(details.exDate)) score += 10;
-				if (normalizeDate(details.recordDate || details.comDate || details.dataCom)) score += 6;
-				if (normalizeDate(details.announcementDate || details.declarationDate)) score += 4;
-				if (details.value_source) score += 15;
-				score += sourceWeight(event.data_source) * 20;
-				const type = String(event.eventType || '').toLowerCase();
-				if (type.includes('payment') || type.includes('dividend') || type.includes('jcp') || type.includes('rend')) {
-					score += 8;
-				}
-				return score;
-			};
-
-			const flattenedCalendars = calendarByTicker
-				.flat()
-				.filter((event) =>
-					event.eventDate
-					&& activeIncomeTickers.has(String(event.ticker || '').toUpperCase())
-				);
-			const dedupedCalendars = new Map();
-			for (const event of flattenedCalendars) {
-				const ticker = String(event.ticker || '').toUpperCase();
-				const eventDate = normalizeDate(event.eventDate || event.date);
-				if (!ticker || !eventDate) continue;
-				const key = `${ticker}|${eventDate}|${classifyDividendFamily(event.eventType)}`;
-				const existing = dedupedCalendars.get(key);
-				const eventDetails = readDetails(event);
-
-				if (!existing) {
-					const sourceCandidates = Array.from(new Set([String(event.data_source || '').trim()].filter(Boolean)));
-					dedupedCalendars.set(key, {
-						...event,
-						eventDate,
-						details: {
-							...eventDetails,
-							source_candidates: sourceCandidates,
-						},
-					});
-					continue;
-				}
-
-				const existingDetails = readDetails(existing);
-				const existingValue = readDetailValue(existing);
-				const candidateValue = readDetailValue(event);
-				const existingSources = Array.isArray(existingDetails.source_candidates)
-					? existingDetails.source_candidates.map((value) => String(value || '').trim()).filter(Boolean)
-					: [];
-				const mergedSources = Array.from(new Set([
-					...existingSources,
-					String(existing.data_source || '').trim(),
-					String(event.data_source || '').trim(),
-				].filter(Boolean)));
-
-				const existingScore = eventQualityScore(existing);
-				const candidateScore = eventQualityScore(event);
-				const selected = candidateScore > existingScore ? event : existing;
-				const selectedDetails = readDetails(selected);
-				const selectedValue = selected === event ? candidateValue : existingValue;
-				const otherValue = selected === event ? existingValue : candidateValue;
-				const valueCandidates = Array.from(new Set(
-					[selectedValue, otherValue]
-						.filter((value) => value !== null && Number.isFinite(value))
-						.map((value) => Number(value).toFixed(8))
-				));
-
-				dedupedCalendars.set(key, {
-					...selected,
-					eventDate,
-					details: {
-						...selectedDetails,
-						source_candidates: mergedSources,
-						value_candidates: valueCandidates.length > 0 ? valueCandidates : undefined,
-						revised: valueCandidates.length > 1 || mergedSources.length > 1,
-					},
-				});
-			}
-
-			const calendars = Array.from(dedupedCalendars.values())
-				.sort((left, right) =>
-					String(left.eventDate || '').localeCompare(String(right.eventDate || ''))
-					|| String(left.ticker || '').localeCompare(String(right.ticker || ''))
-				);
-			const upcoming = calendars.filter((event) => String(event.eventDate || '') >= today);
-
 		return {
 			portfolioId,
 			monthly_dividends: monthlySeries,
@@ -5033,10 +4918,311 @@ class PlatformService {
 			projected_annual_income: projectedAnnual,
 			yield_on_cost_realized: realizedYield,
 			dividend_yield_current: currentDividendYield,
-			calendar: calendars,
-			calendar_upcoming: upcoming,
 			fetched_at: nowIso(),
 		};
+	}
+
+	async getDividendCalendarMonth(userId, options = {}) {
+		const portfolioId = await this.#resolvePortfolioId(userId, options.portfolioId);
+		const month = String(options.month || '').trim();
+		if (!/^\d{4}-\d{2}$/.test(month)) throw new Error('month must be YYYY-MM');
+		const monthStart = `${month}-01`;
+		const monthEnd = `${month}-31`;
+
+		const skRangeStart = (() => {
+			const [y, m] = month.split('-').map(Number);
+			const d = new Date(Date.UTC(y, m - 1 - 3, 1));
+			return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`;
+		})();
+		const skRangeEnd = (() => {
+			const [y, m] = month.split('-').map(Number);
+			const d = new Date(Date.UTC(y, m, 0));
+			return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+		})();
+
+		const assets = await this.#listPortfolioAssets(portfolioId);
+		const activeAssets = assets.filter((asset) =>
+			String(asset.status || 'active').toLowerCase() === 'active'
+		);
+		const activeAssetById = new Map(activeAssets.map((asset) => [asset.assetId, asset]));
+		const activeAssetByTicker = new Map(
+			activeAssets.map((asset) => [String(asset.ticker || '').toUpperCase(), asset])
+		);
+		const activeIncomeTickers = new Set(
+			activeAssets
+				.filter((asset) => {
+					const quantity = toNumberOrNull(asset.quantity);
+					const currentValue = toNumberOrNull(asset.currentValue);
+					if (quantity === null && currentValue === null) return true;
+					return (quantity ?? 0) > 0 || (currentValue ?? 0) > 0;
+				})
+				.map((asset) => String(asset.ticker || '').toUpperCase())
+				.filter(Boolean)
+		);
+		const fxRates = await this.#getLatestFxMap();
+
+		const resolveDisplayDate = (event) => {
+			const details = event?.details && typeof event.details === 'object' ? event.details : {};
+			return normalizeDate(details.paymentDate)
+				|| normalizeDate(event.eventDate || event.date)
+				|| normalizeDate(event.fetched_at)
+				|| null;
+		};
+
+		const calendarByTicker = await Promise.all(
+			Array.from(activeIncomeTickers).map(async (ticker) => {
+				const events = await this.#queryAll({
+					TableName: this.tableName,
+					KeyConditionExpression: 'PK = :pk AND SK BETWEEN :skStart AND :skEnd',
+					ExpressionAttributeValues: {
+						':pk': `ASSET_EVENT#${ticker}`,
+						':skStart': `DATE#${skRangeStart}`,
+						':skEnd': `DATE#${skRangeEnd}\uffff`,
+					},
+				});
+				return events
+					.filter((event) => {
+						if (!this.#isDividendCalendarEventType(event.eventType)) return false;
+						const rawType = String(event?.details?.rawType || '').toLowerCase();
+						if (rawType && /\b(compra|venda|resgate|desdobramento|grupamento|bonifica)\b/.test(rawType)) return false;
+						return true;
+					})
+					.map((event) => ({
+						...event,
+						ticker: String(event.ticker || ticker).toUpperCase(),
+						eventDate: normalizeDate(event.eventDate || event.date) || normalizeDate(event.fetched_at) || null,
+					}));
+			})
+		);
+
+		const transactions = await this.#listPortfolioTransactions(portfolioId);
+		const transactionDividendEvents = transactions
+			.filter((tx) => {
+				const txType = String(tx.type || '').toLowerCase();
+				const txDate = normalizeDate(tx.date);
+				return ['dividend', 'jcp'].includes(txType)
+					&& txDate
+					&& txDate >= monthStart
+					&& txDate <= monthEnd;
+			})
+			.map((tx, index) => {
+				const txDate = normalizeDate(tx.date);
+				if (!txDate) return null;
+				const txType = String(tx.type || '').toLowerCase();
+				const asset =
+					activeAssetById.get(tx.assetId)
+					|| activeAssetByTicker.get(String(tx.ticker || '').toUpperCase())
+					|| {};
+				const ticker = String(tx.ticker || asset.ticker || '').toUpperCase();
+				if (!ticker || !activeIncomeTickers.has(ticker)) return null;
+				const currency = String(tx.currency || asset.currency || 'BRL').toUpperCase();
+				const fxRate = currency === 'BRL' ? 1 : numeric(fxRates[`${currency}/BRL`], 0);
+				const amountOriginal = numeric(tx.amount, 0);
+				if (Math.abs(amountOriginal) <= Number.EPSILON) return null;
+				const amountBrl = fxRate > 0 ? amountOriginal * fxRate : amountOriginal;
+				const sourceRaw = String(tx.source || tx.institution || 'transaction').trim();
+				const sourceKey = sourceRaw
+					.toLowerCase()
+					.replace(/[^a-z0-9]+/g, '_')
+					.replace(/^_+|_+$/g, '') || 'transaction';
+				const eventType = txType === 'jcp' ? 'jcp_payment' : 'dividend_payment';
+				return {
+					eventId: hashId(
+						`${ticker}:tx-dividend:${txDate}:${eventType}:${amountOriginal}:${tx.transId || index}`
+					),
+					ticker,
+					eventType,
+					eventTitle: `${txType === 'jcp' ? 'JCP' : 'Dividend'} payment - ${ticker}`,
+					eventDate: txDate,
+					date: txDate,
+					details: {
+						ticker,
+						paymentDate: txDate,
+						value: null,
+						totalAmount: amountBrl,
+						totalAmountOriginal: amountOriginal,
+						currency,
+						value_source: 'transaction_amount',
+						rawType: txType,
+						transactionId: tx.transId || null,
+					},
+					data_source: `transaction_${sourceKey}`,
+				};
+			})
+			.filter(Boolean);
+
+		const classifyDividendFamily = (eventType) => {
+			const normalizedType = String(eventType || '').toLowerCase();
+			if (normalizedType.includes('jcp') || normalizedType.includes('juros')) return 'jcp';
+			if (normalizedType.includes('amort')) return 'amortization';
+			return 'income';
+		};
+		const sourceWeight = (source) => {
+			const normalized = String(source || '').toLowerCase();
+			if (normalized.includes('statusinvest')) return 3;
+			if (normalized.includes('fundsexplorer')) return 2;
+			if (normalized) return 1;
+			return 0;
+		};
+		const readDetails = (event) => (
+			event?.details && typeof event.details === 'object' ? { ...event.details } : {}
+		);
+		const readDetailValue = (event) => toNumberOrNull(readDetails(event).value);
+		const readDetailTotalAmount = (event) => {
+			const details = readDetails(event);
+			return toNumberOrNull(details.totalAmount ?? details.total_amount);
+		};
+		const eventQualityScore = (event) => {
+			const details = readDetails(event);
+			const value = toNumberOrNull(details.value);
+			const totalAmount = toNumberOrNull(details.totalAmount ?? details.total_amount);
+			let score = 0;
+			if (value !== null) score += value > 0 ? 200 : 90;
+			if (totalAmount !== null) score += totalAmount > 0 ? 120 : 50;
+			if (normalizeDate(details.paymentDate)) score += 20;
+			if (normalizeDate(details.exDate)) score += 10;
+			if (normalizeDate(details.recordDate || details.comDate || details.dataCom)) score += 6;
+			if (normalizeDate(details.announcementDate || details.declarationDate)) score += 4;
+			if (details.value_source) score += 15;
+			score += sourceWeight(event.data_source) * 20;
+			const type = String(event.eventType || '').toLowerCase();
+			if (type.includes('payment') || type.includes('dividend') || type.includes('jcp') || type.includes('rend')) {
+				score += 8;
+			}
+			return score;
+		};
+
+		const flattenedCalendars = calendarByTicker
+			.flat()
+			.filter((event) =>
+				event.eventDate
+				&& activeIncomeTickers.has(String(event.ticker || '').toUpperCase())
+			);
+		flattenedCalendars.push(...transactionDividendEvents);
+
+		const dedupBucket = (dateStr) => {
+			const day = parseInt(String(dateStr || '').slice(8, 10), 10) || 1;
+			return `${String(dateStr || '').slice(0, 7)}-${Math.floor((day - 1) / 10)}`;
+		};
+
+		const dedupedCalendars = new Map();
+		for (const event of flattenedCalendars) {
+			const ticker = String(event.ticker || '').toUpperCase();
+			const eventDate = normalizeDate(event.eventDate || event.date);
+			if (!ticker || !eventDate) continue;
+			const eventDetails = readDetails(event);
+			const displayDate = resolveDisplayDate(event);
+			const key = `${ticker}|${dedupBucket(displayDate || eventDate)}|${classifyDividendFamily(event.eventType)}`;
+			const existing = dedupedCalendars.get(key);
+
+			if (!existing) {
+				const sourceCandidates = Array.from(new Set([String(event.data_source || '').trim()].filter(Boolean)));
+				const bestPaymentDate = normalizeDate(eventDetails.paymentDate) || eventDate;
+				const bestExDate = normalizeDate(eventDetails.exDate || eventDetails.baseDate || eventDetails.base_date) || null;
+				dedupedCalendars.set(key, {
+					...event,
+					eventDate: bestPaymentDate,
+					details: {
+						...eventDetails,
+						paymentDate: bestPaymentDate,
+						exDate: bestExDate ?? eventDetails.exDate ?? undefined,
+						source_candidates: sourceCandidates,
+					},
+				});
+				continue;
+			}
+
+			const existingDetails = readDetails(existing);
+			const candidateDetails = readDetails(event);
+			const existingValue = readDetailValue(existing);
+			const candidateValue = readDetailValue(event);
+			const existingTotalAmount = readDetailTotalAmount(existing);
+			const candidateTotalAmount = readDetailTotalAmount(event);
+			const existingSources = Array.isArray(existingDetails.source_candidates)
+				? existingDetails.source_candidates.map((value) => String(value || '').trim()).filter(Boolean)
+				: [];
+			const mergedSources = Array.from(new Set([
+				...existingSources,
+				String(existing.data_source || '').trim(),
+				String(event.data_source || '').trim(),
+			].filter(Boolean)));
+
+			const existingScore = eventQualityScore(existing);
+			const candidateScore = eventQualityScore(event);
+			const selected = candidateScore > existingScore ? event : existing;
+			const selectedDetails = readDetails(selected);
+			const nonSelectedDetails = selected === event ? existingDetails : candidateDetails;
+			const selectedValue = selected === event ? candidateValue : existingValue;
+			const otherValue = selected === event ? existingValue : candidateValue;
+			const selectedTotalAmount = selected === event ? candidateTotalAmount : existingTotalAmount;
+			const otherTotalAmount = selected === event ? existingTotalAmount : candidateTotalAmount;
+			const valueCandidates = Array.from(new Set(
+				[selectedValue, otherValue]
+					.filter((value) => value !== null && Number.isFinite(value))
+					.map((value) => Number(value).toFixed(8))
+			));
+			const totalAmountCandidates = Array.from(new Set(
+				[selectedTotalAmount, otherTotalAmount]
+					.filter((value) => value !== null && Number.isFinite(value))
+					.map((value) => Number(value).toFixed(8))
+			));
+			const resolvedValue = selectedValue ?? otherValue ?? null;
+			const resolvedTotalAmount = selectedTotalAmount ?? otherTotalAmount ?? null;
+			const resolvedCurrency = String(
+				selectedDetails.currency
+				|| nonSelectedDetails.currency
+				|| ''
+			).toUpperCase() || null;
+			const resolvedOriginalAmount = toNumberOrNull(
+				selectedDetails.totalAmountOriginal
+				?? selectedDetails.total_amount_original
+				?? nonSelectedDetails.totalAmountOriginal
+				?? nonSelectedDetails.total_amount_original
+			);
+
+			const allDates = [
+				normalizeDate(existingDetails.paymentDate),
+				normalizeDate(candidateDetails.paymentDate),
+				normalizeDate(existing.eventDate),
+				eventDate,
+			].filter(Boolean).sort();
+			const allExDates = [
+				normalizeDate(existingDetails.exDate || existingDetails.baseDate || existingDetails.base_date),
+				normalizeDate(candidateDetails.exDate || candidateDetails.baseDate || candidateDetails.base_date),
+			].filter(Boolean).sort();
+			const bestPaymentDate = allDates[allDates.length - 1];
+			const bestExDate = allExDates[0] || null;
+
+			dedupedCalendars.set(key, {
+				...selected,
+				eventDate: bestPaymentDate,
+				details: {
+					...selectedDetails,
+					value: resolvedValue ?? selectedDetails.value ?? nonSelectedDetails.value ?? undefined,
+					paymentDate: bestPaymentDate,
+					exDate: bestExDate ?? selectedDetails.exDate ?? nonSelectedDetails.exDate ?? undefined,
+					totalAmount: resolvedTotalAmount ?? undefined,
+					totalAmountOriginal: resolvedOriginalAmount ?? undefined,
+					currency: resolvedCurrency || undefined,
+					source_candidates: mergedSources,
+					value_candidates: valueCandidates.length > 0 ? valueCandidates : undefined,
+					total_amount_candidates: totalAmountCandidates.length > 0 ? totalAmountCandidates : undefined,
+					revised: valueCandidates.length > 1 || totalAmountCandidates.length > 1 || mergedSources.length > 1,
+				},
+			});
+		}
+
+		const events = Array.from(dedupedCalendars.values())
+			.filter((event) => {
+				const displayDate = resolveDisplayDate(event);
+				return displayDate && displayDate >= monthStart && displayDate <= monthEnd;
+			})
+			.sort((left, right) =>
+				String(left.eventDate || '').localeCompare(String(right.eventDate || ''))
+				|| String(left.ticker || '').localeCompare(String(right.ticker || ''))
+			);
+
+		return { month, events };
 	}
 
 	async getTaxReport(userId, year, options = {}) {
@@ -9367,9 +9553,11 @@ class PlatformService {
 								? 'rendimento'
 								: normalizedType.includes('subscr') || normalizedType.includes('subscription')
 									? 'subscription'
-									: 'dividend';
+									: normalizedType.includes('divid') || normalizedType.includes('provent')
+										? 'dividend'
+										: null;
 
-				if (!valueText && !/divid|rend|juro|provent|amort|subscr|subscription|preferenc/i.test(normalizedType)) continue;
+				if (!eventType) continue;
 
 				parsed.push({
 					type,
@@ -9409,8 +9597,33 @@ class PlatformService {
 			.trim();
 	}
 
-	#normalizeCalendarEvents(ticker, calendar, source) {
+	#normalizeCalendarEvents(ticker, calendar, source, currency = null) {
 		if (!calendar) return [];
+
+		if (typeof calendar === 'object' && !Array.isArray(calendar)
+			&& (calendar.exDividendDate || calendar.dividendDate)) {
+			const paymentDate = normalizeDate(calendar.dividendDate) || normalizeDate(calendar.exDividendDate);
+			const exDate = normalizeDate(calendar.exDividendDate) || null;
+			if (!paymentDate) return [];
+			const details = {
+				ticker: String(ticker || '').toUpperCase(),
+				paymentDate,
+				exDate,
+				value: calendar.dividendRate || null,
+				currency: currency || null,
+				rawType: 'dividend',
+			};
+			return [{
+				eventId: hashId(`${ticker}:exDividendDate:${paymentDate}:${calendar.dividendRate ?? ''}`),
+				title: `exDividendDate - ${ticker}`,
+				eventType: 'exDividendDate',
+				date: paymentDate,
+				details,
+				data_source: source || 'yahoo_quote_api',
+				is_scraped: false,
+			}];
+		}
+
 		const events = [];
 		const pushEvent = (type, rawDateLike, details = null) => {
 			if (rawDateLike === undefined || rawDateLike === null || rawDateLike === '') return;
@@ -9473,6 +9686,34 @@ class PlatformService {
 			}
 		}
 		return events;
+	}
+
+	#normalizeHistoricalDividendEvents(ticker, dividends, currency, source) {
+		if (!Array.isArray(dividends) || dividends.length === 0) return [];
+		const normalizedTicker = String(ticker || '').toUpperCase();
+		return dividends
+			.filter((item) => item && item.date && item.value)
+			.map((item) => {
+				const paymentDate = normalizeDate(item.date);
+				if (!paymentDate) return null;
+				const details = {
+					ticker: normalizedTicker,
+					paymentDate,
+					value: item.value,
+					currency: currency || null,
+					rawType: 'dividend',
+				};
+				return {
+					eventId: hashId(`${normalizedTicker}:dividend_payment:${paymentDate}:${item.value}`),
+					title: `dividend_payment - ${normalizedTicker}`,
+					eventType: 'dividend_payment',
+					date: paymentDate,
+					details,
+					data_source: source || 'yahoo_quote_api',
+					is_scraped: false,
+				};
+			})
+			.filter(Boolean);
 	}
 
 	#isDividendEventType(value) {
