@@ -4881,11 +4881,13 @@ class PlatformService {
 			}
 			return item;
 		});
-		const totalInPeriod = monthlySeries.reduce((sum, item) => sum + numeric(item.amount, 0), 0);
-		const totalLast12 = monthlySeries
+		const todayMonth = today.slice(0, 7);
+		const historicalSeries = monthlySeries.filter((item) => item.period <= todayMonth);
+		const totalInPeriod = historicalSeries.reduce((sum, item) => sum + numeric(item.amount, 0), 0);
+		const totalLast12 = historicalSeries
 			.slice(-12)
 			.reduce((sum, item) => sum + numeric(item.amount, 0), 0);
-		const averageMonthly = monthlySeries.length > 0 ? totalInPeriod / monthlySeries.length : 0;
+		const averageMonthly = historicalSeries.length > 0 ? totalInPeriod / historicalSeries.length : 0;
 		const projectedMonthly = averageMonthly;
 		const projectedAnnual = averageMonthly * 12;
 		const activeMetrics = metrics.assets.filter((metric) => activeAssetIds.has(metric.assetId));
@@ -4923,7 +4925,7 @@ class PlatformService {
 			const curTotal = totalByCurrency[cur] || 0;
 			const curCost = costByCurrency[cur] || 0;
 			const curValue = valueByCurrency[cur] || 0;
-			const curAvg = monthlySeries.length > 0 ? curTotal / monthlySeries.length : 0;
+			const curAvg = historicalSeries.length > 0 ? curTotal / historicalSeries.length : 0;
 			byCurrency[cur] = {
 				total_in_period: curTotal,
 				average_monthly_income: curAvg,
@@ -4940,7 +4942,7 @@ class PlatformService {
 			total_in_period: totalInPeriod,
 			average_monthly_income: averageMonthly,
 			annualized_income: projectedAnnual,
-			period_months: monthlySeries.length,
+			period_months: historicalSeries.length,
 			period_from: periodStartDate,
 			period_to: today,
 			projected_monthly_income: projectedMonthly,
