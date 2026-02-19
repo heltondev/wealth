@@ -298,6 +298,15 @@ export interface DashboardResponse {
 export interface DividendMonthlyItem {
   period: string;
   amount: number;
+  [currency: string]: string | number;
+}
+
+export interface DividendCurrencyKpis {
+  total_in_period: number;
+  average_monthly_income: number;
+  annualized_income: number;
+  yield_on_cost_realized: number;
+  dividend_yield_current: number;
 }
 
 export interface DividendCalendarEvent {
@@ -323,6 +332,8 @@ export interface DividendsResponse {
   projected_annual_income: number;
   yield_on_cost_realized: number;
   dividend_yield_current?: number;
+  by_currency?: Record<string, DividendCurrencyKpis>;
+  currencies?: string[];
   calendar?: DividendCalendarEvent[];
   calendar_upcoming?: DividendCalendarEvent[];
   fetched_at: string;

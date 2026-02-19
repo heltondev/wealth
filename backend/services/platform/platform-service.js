@@ -4838,6 +4838,8 @@ class PlatformService {
 		});
 
 			const monthly = {};
+			const monthlyByCurrency = {};
+			const totalByCurrency = {};
 			for (const tx of dividendTransactions) {
 				const key = monthKey(tx.date);
 				if (!key) continue;
@@ -4850,6 +4852,9 @@ class PlatformService {
 				const amount = numeric(tx.amount, 0);
 				const amountBrl = fxRate > 0 ? amount * fxRate : amount;
 				monthly[key] = (monthly[key] || 0) + amountBrl;
+				if (!monthlyByCurrency[key]) monthlyByCurrency[key] = {};
+				monthlyByCurrency[key][currency] = (monthlyByCurrency[key][currency] || 0) + amount;
+				totalByCurrency[currency] = (totalByCurrency[currency] || 0) + amount;
 			}
 
 		const monthsInPeriod = (() => {
@@ -4867,10 +4872,15 @@ class PlatformService {
 			return range;
 		})();
 
-		const monthlySeries = monthsInPeriod.map((period) => ({
-			period,
-			amount: numeric(monthly[period], 0),
-		}));
+		const currencies = Object.keys(totalByCurrency).sort((a, b) => a === 'BRL' ? -1 : b === 'BRL' ? 1 : a.localeCompare(b));
+		const monthlySeries = monthsInPeriod.map((period) => {
+			const item = { period, amount: numeric(monthly[period], 0) };
+			const currencyData = monthlyByCurrency[period] || {};
+			for (const cur of currencies) {
+				item[cur] = numeric(currencyData[cur], 0);
+			}
+			return item;
+		});
 		const totalInPeriod = monthlySeries.reduce((sum, item) => sum + numeric(item.amount, 0), 0);
 		const totalLast12 = monthlySeries
 			.slice(-12)
@@ -4881,6 +4891,8 @@ class PlatformService {
 		const activeMetrics = metrics.assets.filter((metric) => activeAssetIds.has(metric.assetId));
 		let costTotalBrl = 0;
 		let currentValueBrl = 0;
+		const costByCurrency = {};
+		const valueByCurrency = {};
 		for (const metric of activeMetrics) {
 			const asset = activeAssetById.get(metric.assetId) || {};
 			const currency = String(metric.currency || asset.currency || 'BRL').toUpperCase();
@@ -4900,9 +4912,26 @@ class PlatformService {
 			const costTotal = metricCostTotal ?? 0;
 			currentValueBrl += fxRate > 0 ? marketValue * fxRate : marketValue;
 			costTotalBrl += fxRate > 0 ? costTotal * fxRate : costTotal;
+			costByCurrency[currency] = (costByCurrency[currency] || 0) + costTotal;
+			valueByCurrency[currency] = (valueByCurrency[currency] || 0) + marketValue;
 		}
 		const realizedYield = costTotalBrl > 0 ? (totalInPeriod / costTotalBrl) * 100 : 0;
 		const currentDividendYield = currentValueBrl > 0 ? (totalInPeriod / currentValueBrl) * 100 : 0;
+
+		const byCurrency = {};
+		for (const cur of currencies) {
+			const curTotal = totalByCurrency[cur] || 0;
+			const curCost = costByCurrency[cur] || 0;
+			const curValue = valueByCurrency[cur] || 0;
+			const curAvg = monthlySeries.length > 0 ? curTotal / monthlySeries.length : 0;
+			byCurrency[cur] = {
+				total_in_period: curTotal,
+				average_monthly_income: curAvg,
+				annualized_income: curAvg * 12,
+				yield_on_cost_realized: curCost > 0 ? (curTotal / curCost) * 100 : 0,
+				dividend_yield_current: curValue > 0 ? (curTotal / curValue) * 100 : 0,
+			};
+		}
 
 		return {
 			portfolioId,
@@ -4918,6 +4947,8 @@ class PlatformService {
 			projected_annual_income: projectedAnnual,
 			yield_on_cost_realized: realizedYield,
 			dividend_yield_current: currentDividendYield,
+			by_currency: byCurrency,
+			currencies,
 			fetched_at: nowIso(),
 		};
 	}

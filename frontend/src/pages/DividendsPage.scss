@@ -122,6 +122,18 @@
     color: var(--text-primary);
     font-variant-numeric: tabular-nums;
   }
+
+  &__breakdown {
+    display: flex;
+    gap: 0.75rem;
+    margin-top: 0.25rem;
+  }
+
+  &__sub-value {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+  }
 }
 
 .dividends-card {

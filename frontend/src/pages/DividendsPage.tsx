@@ -4,6 +4,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Legend,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -211,6 +212,9 @@ const formatSource = (value: string | null) => {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 };
 
+const CURRENCY_COLORS: Record<string, string> = { BRL: '#34d399', USD: '#60a5fa' };
+const getCurrencyColor = (currency: string) => CURRENCY_COLORS[currency] || '#a78bfa';
+
 const DividendsPage = () => {
   const { t, i18n } = useTranslation();
   const {
@@ -342,9 +346,12 @@ const DividendsPage = () => {
     return () => { cancelled = true; };
   }, [cacheKey, fromDate, method, selectedPeriodMonths, selectedPortfolio]);
 
+  const currencies = useMemo(() => payload?.currencies || ['BRL'], [payload?.currencies]);
+  const byCurrency = useMemo(() => payload?.by_currency || {}, [payload?.by_currency]);
+
   const monthlySeries = useMemo(() => (
     (payload?.monthly_dividends || []).map((item) => ({
-      period: item.period,
+      ...item,
       amount: Number(item.amount || 0),
     }))
   ), [payload?.monthly_dividends]);
@@ -1042,6 +1049,15 @@ const DividendsPage = () => {
                 <span className="dividends-kpi__value">
                   {formatCurrency(totalInPeriod, 'BRL', numberLocale)}
                 </span>
+                {currencies.length > 1 && (
+                  <div className="dividends-kpi__breakdown">
+                    {currencies.map((c) => (
+                      <span key={c} className="dividends-kpi__sub-value">
+                        {formatCurrency(byCurrency[c]?.total_in_period || 0, c, numberLocale)}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </article>
               <article className="dividends-kpi">
                 <span className="dividends-kpi__label">
@@ -1050,12 +1066,30 @@ const DividendsPage = () => {
                 <span className="dividends-kpi__value">
                   {formatCurrency(averageMonthlyIncome, 'BRL', numberLocale)}
                 </span>
+                {currencies.length > 1 && (
+                  <div className="dividends-kpi__breakdown">
+                    {currencies.map((c) => (
+                      <span key={c} className="dividends-kpi__sub-value">
+                        {formatCurrency(byCurrency[c]?.average_monthly_income || 0, c, numberLocale)}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </article>
               <article className="dividends-kpi">
                 <span className="dividends-kpi__label">{t('dividends.projectedAnnual', { defaultValue: 'Projected Annual Income' })}</span>
                 <span className="dividends-kpi__value">
                   {formatCurrency(annualizedIncome, 'BRL', numberLocale)}
                 </span>
+                {currencies.length > 1 && (
+                  <div className="dividends-kpi__breakdown">
+                    {currencies.map((c) => (
+                      <span key={c} className="dividends-kpi__sub-value">
+                        {formatCurrency(byCurrency[c]?.annualized_income || 0, c, numberLocale)}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </article>
               <article className="dividends-kpi">
                 <span className="dividends-kpi__label">
@@ -1064,6 +1098,15 @@ const DividendsPage = () => {
                 <span className="dividends-kpi__value">
                   {`${yieldOnCostPeriod.toLocaleString(numberLocale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`}
                 </span>
+                {currencies.length > 1 && (
+                  <div className="dividends-kpi__breakdown">
+                    {currencies.map((c) => (
+                      <span key={c} className="dividends-kpi__sub-value">
+                        {`${(byCurrency[c]?.yield_on_cost_realized || 0).toLocaleString(numberLocale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}% ${c}`}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </article>
               <article className="dividends-kpi">
                 <span className="dividends-kpi__label">
@@ -1072,6 +1115,15 @@ const DividendsPage = () => {
                 <span className="dividends-kpi__value">
                   {`${currentDividendYieldPeriod.toLocaleString(numberLocale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`}
                 </span>
+                {currencies.length > 1 && (
+                  <div className="dividends-kpi__breakdown">
+                    {currencies.map((c) => (
+                      <span key={c} className="dividends-kpi__sub-value">
+                        {`${(byCurrency[c]?.dividend_yield_current || 0).toLocaleString(numberLocale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}% ${c}`}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </article>
             </div>
 
@@ -1093,11 +1145,21 @@ const DividendsPage = () => {
                         width={110}
                       />
                       <Tooltip
-                        formatter={(value: number | string | undefined) =>
-                          formatCurrency(Number(value || 0), 'BRL', numberLocale)
+                        formatter={(value: number | string | undefined, name: string) =>
+                          formatCurrency(Number(value || 0), name, numberLocale)
                         }
                       />
-                      <Bar dataKey="amount" fill="#34d399" radius={[4, 4, 0, 0]} />
+                      {currencies.length > 1 && <Legend />}
+                      {currencies.map((currency, idx) => (
+                        <Bar
+                          key={currency}
+                          dataKey={currency}
+                          stackId="dividends"
+                          name={currency}
+                          fill={getCurrencyColor(currency)}
+                          radius={idx === currencies.length - 1 ? [4, 4, 0, 0] : undefined}
+                        />
+                      ))}
                     </BarChart>
                   </ResponsiveContainer>
                 )}
