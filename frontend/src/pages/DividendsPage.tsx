@@ -1145,8 +1145,8 @@ const DividendsPage = () => {
                         width={110}
                       />
                       <Tooltip
-                        formatter={(value: number | string | undefined, name: string) =>
-                          formatCurrency(Number(value || 0), name, numberLocale)
+                        formatter={(value: number | string | undefined, name?: string) =>
+                          formatCurrency(Number(value || 0), name ?? 'BRL', numberLocale)
                         }
                       />
                       {currencies.length > 1 && <Legend />}
