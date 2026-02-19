@@ -1189,7 +1189,7 @@
     "exportCsv": "Export CSV Statement",
     "import": {
       "title": "Import Portfolio File",
-      "hint": "Upload a B3 Excel file, Robinhood activity CSV, cold-wallet crypto CSV, Computershare ESPP CSV, or Computershare plan holdings PDF to auto-detect the parser and update assets, transactions, and aliases with duplicate-safe writes.",
+      "hint": "Upload a B3 Excel file, XP brokerage note PDF, Robinhood activity CSV, cold-wallet crypto CSV, Computershare ESPP CSV, or Computershare plan holdings PDF to auto-detect the parser and update assets, transactions, and aliases with duplicate-safe writes.",
       "pickFile": "Select .xlsx, .csv, or .pdf file",
       "selectParser": "Select parser",
       "previewAction": "Preview import",
@@ -1222,6 +1222,7 @@
         "b3-movimentacao": "B3 Movements",
         "b3-posicao": "B3 Positions (snapshot)",
         "b3-relatorio": "B3 Consolidated report",
+        "xp-nota-negociacao-pdf": "XP Brokerage Note PDF",
         "robinhood-activity": "Robinhood Activity CSV",
         "cold-wallet-crypto": "Cold Wallet Crypto CSV",
         "computershare-espp": "Computershare ESPP CSV",

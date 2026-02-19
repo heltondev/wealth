@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import Layout from '../components/Layout';
 import SharedDropdown from '../components/SharedDropdown';
@@ -49,6 +49,7 @@ const ALIAS_SECTIONS: AliasSectionConfig[] = [
 ];
 
 const FALLBACK_PARSERS: ParserDescriptor[] = [
+  { id: 'xp-nota-negociacao-pdf', provider: 'xp' },
   { id: 'robinhood-activity', provider: 'robinhood' },
   { id: 'cold-wallet-crypto', provider: 'cold-wallet' },
   { id: 'computershare-espp', provider: 'computershare' },
@@ -74,6 +75,23 @@ const ImportsPage = () => {
   const [importSummary, setImportSummary] = useState<ImportB3Response | null>(null);
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [confirmImportModalOpen, setConfirmImportModalOpen] = useState(false);
+  const importFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const resetImportForm = useCallback((options?: { keepMessage?: boolean; keepSummary?: boolean }) => {
+    setSelectedImportParser('auto');
+    setImportFile(null);
+    setImportPreview(null);
+    setConfirmImportModalOpen(false);
+    if (!options?.keepSummary) {
+      setImportSummary(null);
+    }
+    if (!options?.keepMessage) {
+      setImportMessage(null);
+    }
+    if (importFileInputRef.current) {
+      importFileInputRef.current.value = '';
+    }
+  }, []);
 
   const numberLocale = i18n.language?.startsWith('pt') ? 'pt-BR' : 'en-US';
 
@@ -178,6 +196,7 @@ const ImportsPage = () => {
       await refreshPortfolioData();
       refreshMetrics();
       setImportMessage(t('documents.import.success'));
+      resetImportForm({ keepMessage: true, keepSummary: true });
     } catch (reason) {
       setImportMessage(reason instanceof Error ? reason.message : t('documents.import.error'));
     } finally {
@@ -187,6 +206,7 @@ const ImportsPage = () => {
     importFile,
     refreshMetrics,
     refreshPortfolioData,
+    resetImportForm,
     selectedImportParser,
     selectedPortfolio,
     t,
@@ -436,6 +456,7 @@ const ImportsPage = () => {
             />
             <label className="documents-page__file-picker">
               <input
+                ref={importFileInputRef}
                 type="file"
                 accept=".xlsx,.xlsm,.xls,.csv,text/csv,.pdf,application/pdf"
                 className="documents-page__file-input"

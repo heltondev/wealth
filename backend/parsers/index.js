@@ -11,6 +11,7 @@ const parsers = [
 	require('./b3/b3-movimentacao'),
 	require('./b3/b3-posicao'),
 	require('./b3/b3-relatorio'),
+	require('./xp/xp-nota-negociacao-pdf'),
 	require('./robinhood/robinhood-activity'),
 	require('./crypto/cold-wallet-crypto'),
 	require('./computershare/computershare-espp'),
@@ -19,6 +20,18 @@ const parsers = [
 
 const PDF_SAMPLE_LINE_LIMIT = 220;
 const PDF_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
+const PDF_PASSWORD_ENV_KEYS = ['XP_PDF_PASSWORD', 'PDF_IMPORT_PASSWORD', 'PDF_PASSWORD'];
+
+function resolvePdfPasswordCandidates() {
+	const values = [];
+	for (const key of PDF_PASSWORD_ENV_KEYS) {
+		const candidate = String(process.env[key] || '').trim();
+		if (!candidate) continue;
+		if (values.includes(candidate)) continue;
+		values.push(candidate);
+	}
+	return values;
+}
 
 /**
  * Build a pseudo-workbook from PDF bytes.
@@ -26,15 +39,25 @@ const PDF_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
  */
 function buildPdfWorkbookFromBuffer(fileName, pdfBuffer) {
 	if (!pdfBuffer || pdfBuffer.length === 0) return null;
+	const attempts = [
+		['-layout', '-', '-'],
+		...resolvePdfPasswordCandidates().map((password) => ['-layout', '-upw', password, '-', '-']),
+	];
 
-	const extraction = spawnSync('pdftotext', ['-layout', '-', '-'], {
-		input: pdfBuffer,
-		encoding: 'utf8',
-		maxBuffer: PDF_MAX_BUFFER_BYTES,
-	});
+	let text = '';
+	for (const args of attempts) {
+		const extraction = spawnSync('pdftotext', args, {
+			input: pdfBuffer,
+			encoding: 'utf8',
+			maxBuffer: PDF_MAX_BUFFER_BYTES,
+		});
+		if (extraction.error || extraction.status !== 0) continue;
+		const extractedText = String(extraction.stdout || '').replace(/\u0000/g, '').trim();
+		if (!extractedText) continue;
+		text = extractedText;
+		break;
+	}
 
-	if (extraction.error || extraction.status !== 0) return null;
-	const text = String(extraction.stdout || '').replace(/\u0000/g, '').trim();
 	if (!text) return null;
 
 	const lines = text
