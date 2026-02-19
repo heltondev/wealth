@@ -545,7 +545,6 @@ const DashboardPage = () => {
         title: t('dashboard.eventsNotice.modal.sections.details', { defaultValue: 'Event Details' }),
         fields: detailFields,
         columns: 2,
-        fullWidth: true,
       },
     ];
   })();
