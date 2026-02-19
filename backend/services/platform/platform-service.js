@@ -457,11 +457,11 @@ const REBALANCE_CONTRIBUTION_MODE_SINGLE = 'single';
 const REBALANCE_CONTRIBUTION_MODE_BY_CURRENCY = 'by_currency';
 const REBALANCE_COUNTRIES_BY_CURRENCY = {
 	BRL: ['BR'],
-	USD: ['US'],
+	USD: ['US', 'GLOBAL'],
 };
 
 const THESIS_ACTIVE_STATUS = 'active';
-const THESIS_COUNTRY_SET = new Set(['BR', 'US', 'CA']);
+const THESIS_COUNTRY_SET = new Set(['BR', 'US', 'CA', 'GLOBAL']);
 const THESIS_ASSET_CLASS_TO_PORTFOLIO_CLASS = {
 	FII: 'fii',
 	TESOURO: 'bond',
@@ -5570,11 +5570,13 @@ class PlatformService {
 				(fallbackPrice !== null && resolvedQuantity !== null)
 					? fallbackPrice * resolvedQuantity
 					: null;
-				const marketValue =
-					usableMetricMarketValue ??
-					snapshotCurrentValue ??
-					derivedMarketValue ??
-					0;
+			// Keep rebalance valuation aligned with dashboard valuation.
+			// Snapshot value is more stable than opportunistic scraped market_value.
+			const marketValue =
+				snapshotCurrentValue ??
+				usableMetricMarketValue ??
+				derivedMarketValue ??
+				0;
 				const marketValueBrl = fxRate > 0 ? marketValue * fxRate : marketValue;
 				const assetClass = String(asset.assetClass || 'unknown').toLowerCase();
 				const normalizedCountry = normalizeThesisCountryForRebalance(asset.country)
@@ -6999,9 +7001,11 @@ class PlatformService {
 				(fallbackPrice !== null && metricQuantity !== null)
 					? fallbackPrice * metricQuantity
 					: null;
+			// Keep rebalance valuation consistent with dashboard valuation.
+			// Snapshot currentValue is curated/stable and should override noisy scraped metrics.
 			const marketValue =
-				usableMetricMarketValue ??
 				snapshotCurrentValue ??
+				usableMetricMarketValue ??
 				derivedMarketValue ??
 				0;
 			const marketValueBrl = fxRate > 0 ? marketValue * fxRate : marketValue;

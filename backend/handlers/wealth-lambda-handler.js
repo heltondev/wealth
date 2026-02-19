@@ -163,7 +163,7 @@ const responseCache = new ApiResponseCache({
 	maxBodyBytes: RESPONSE_CACHE_MAX_BODY_BYTES,
 });
 
-const THESIS_SUPPORTED_COUNTRIES = ['BR', 'US', 'CA'];
+const THESIS_SUPPORTED_COUNTRIES = ['BR', 'US', 'CA', 'GLOBAL'];
 const THESIS_SUPPORTED_ASSET_CLASSES = [
 	'FII',
 	'TESOURO',

@@ -920,26 +920,12 @@ const AssetsPage = () => {
   }, [currentQuotesByAssetId]);
 
   const resolveAssetCurrentValue = useCallback((asset: AssetRow): number | null => {
-    const metricCurrentValue = portfolioMarketValueByAssetId[asset.assetId];
-    if (typeof metricCurrentValue === 'number' && Number.isFinite(metricCurrentValue)) {
-      return metricCurrentValue;
-    }
-
     const quantity = Number(asset.quantity);
     const hasOpenPosition = Number.isFinite(quantity) && Math.abs(quantity) > Number.EPSILON;
-    const cachedCurrentPrice = currentQuotesByAssetId[asset.assetId];
-    const directCurrentPrice = Number(asset.currentPrice);
-    const resolvedCurrentPrice =
-      (typeof cachedCurrentPrice === 'number'
-        && Number.isFinite(cachedCurrentPrice)
-        && (!hasOpenPosition || Math.abs(cachedCurrentPrice) > Number.EPSILON))
-        ? cachedCurrentPrice
-        : (Number.isFinite(directCurrentPrice)
-          && (!hasOpenPosition || Math.abs(directCurrentPrice) > Number.EPSILON))
-          ? directCurrentPrice
-          : null;
+    const resolvedCurrentPrice = resolveAssetCurrentPrice(asset);
 
-    if (resolvedCurrentPrice !== null && Number.isFinite(quantity)) {
+    // Keep value coherent with quote and position whenever both are available.
+    if (resolvedCurrentPrice !== null && hasOpenPosition) {
       return resolvedCurrentPrice * quantity;
     }
 
@@ -951,8 +937,13 @@ const AssetsPage = () => {
       return directCurrentValue;
     }
 
+    const metricCurrentValue = portfolioMarketValueByAssetId[asset.assetId];
+    if (typeof metricCurrentValue === 'number' && Number.isFinite(metricCurrentValue)) {
+      return metricCurrentValue;
+    }
+
     return null;
-  }, [currentQuotesByAssetId, portfolioMarketValueByAssetId]);
+  }, [portfolioMarketValueByAssetId, resolveAssetCurrentPrice]);
 
   const resolveAssetAverageCost = useCallback((asset: AssetRow): number | null => {
     const cachedAverageCost = averageCostByAssetId[asset.assetId];
@@ -1246,24 +1237,32 @@ const AssetsPage = () => {
       return currentValue / quantity;
     })();
     const resolvedCurrentPrice =
-      Number.isFinite(directCurrentPrice)
-        ? directCurrentPrice
-        : (typeof cachedCurrentPrice === 'number' && Number.isFinite(cachedCurrentPrice))
-          ? cachedCurrentPrice
+      (typeof cachedCurrentPrice === 'number' && Number.isFinite(cachedCurrentPrice))
+        ? cachedCurrentPrice
+        : Number.isFinite(directCurrentPrice)
+          ? directCurrentPrice
           : derivedCurrentPrice;
     const resolvedCurrentValue = (() => {
+      const quantity = Number(selectedAsset.quantity);
+      if (
+        resolvedCurrentPrice !== null
+        && Number.isFinite(quantity)
+        && Math.abs(quantity) > Number.EPSILON
+      ) {
+        return quantity * resolvedCurrentPrice;
+      }
+
+      const directCurrentValue = Number(selectedAsset.currentValue);
+      if (Number.isFinite(directCurrentValue)) {
+        return directCurrentValue;
+      }
+
       const metricCurrentValue = portfolioMarketValueByAssetId[selectedAsset.assetId];
       if (typeof metricCurrentValue === 'number' && Number.isFinite(metricCurrentValue)) {
         return metricCurrentValue;
       }
 
-      const quantity = Number(selectedAsset.quantity);
-      if (resolvedCurrentPrice !== null && Number.isFinite(quantity)) {
-        return quantity * resolvedCurrentPrice;
-      }
-
-      const directCurrentValue = Number(selectedAsset.currentValue);
-      return Number.isFinite(directCurrentValue) ? directCurrentValue : null;
+      return null;
     })();
     const resolvedAverageCost = (() => {
       const cachedAverageCost = averageCostByAssetId[selectedAsset.assetId];
