@@ -89,6 +89,24 @@
     flex-shrink: 0;
   }
 
+  &__tooltip {
+    display: flex;
+    flex-direction: column;
+    gap: 0.18rem;
+    padding: 0.48rem 0.58rem;
+    border-radius: 10px;
+    border: 1px solid rgba(148, 163, 184, 0.32);
+    background: rgba(2, 6, 23, 0.88);
+    color: #e2e8f0;
+    font-size: 0.74rem;
+    line-height: 1.3;
+
+    strong {
+      font-size: 0.82rem;
+      color: #f8fafc;
+    }
+  }
+
   &__charts-grid {
     display: grid;
     grid-template-columns: repeat(12, minmax(0, 1fr));
@@ -504,5 +522,33 @@
     font-size: 0.9rem;
     margin: auto 0;
     text-align: center;
+  }
+
+  &__subchart {
+    margin-top: $spacing-md;
+    padding-top: $spacing-md;
+    border-top: 1px solid rgba(148, 163, 184, 0.2);
+    display: flex;
+    flex-direction: column;
+    gap: $spacing-sm;
+
+    h3 {
+      margin: 0;
+      font-size: 0.9rem;
+      color: var(--text-primary);
+      letter-spacing: 0.2px;
+    }
+  }
+
+  &__asset-chart-scroll {
+    max-height: 640px;
+    overflow: auto;
+    padding-right: 0.2rem;
+    padding-bottom: 0.2rem;
+  }
+
+  &__asset-label {
+    fill: var(--text-secondary);
+    font-size: 0.7rem;
   }
 }

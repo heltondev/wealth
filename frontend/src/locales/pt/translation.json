@@ -34,6 +34,7 @@
     "allocationByClass": "Alocação por Classe",
     "allocationByCurrency": "Alocação por Moeda",
     "allocationBySector": "Alocação por Setor",
+    "allocationByAsset": "Alocação por Ativo (Ativos Ativos)",
     "cryptoTile": "Cripto",
     "currencyNames": {
       "BRL": "Real Brasileiro",

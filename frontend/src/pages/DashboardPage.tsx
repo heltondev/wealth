@@ -3,8 +3,11 @@ import { useCallback, useEffect, useMemo, useState, type CSSProperties, type Rea
 import {
   Area,
   AreaChart,
+  Bar,
+  BarChart,
   CartesianGrid,
   Cell,
+  LabelList,
   Legend,
   Pie,
   PieChart,
@@ -53,6 +56,18 @@ interface AllocationChartDatum {
   weightPct: number;
 }
 
+interface ActiveAssetAllocationDatum {
+  assetId: string;
+  ticker: string;
+  name: string;
+  currency: string;
+  amountNative: number;
+  amountLabel: string;
+  amountBrl: number;
+  weightPct: number;
+  barColor: string;
+}
+
 interface DashboardSummaryTile {
   key: string;
   label: ReactNode;
@@ -91,6 +106,17 @@ const toTitleLabel = (value: string): string => value
 const toFiniteNumber = (value: unknown): number => {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : 0;
+};
+
+const resolveAssetBarColor = (index: number, total: number): string => {
+  const safeIndex = Math.max(0, Math.trunc(index));
+  const safeTotal = Math.max(1, Math.trunc(total));
+  const hue = (210 + (safeIndex * 47)) % 360;
+  const saturation = 44 + ((safeIndex * 9) % 18);
+  const spreadBucket = Math.min(safeTotal, 7);
+  const lightnessStep = spreadBucket > 1 ? (safeIndex % spreadBucket) : 0;
+  const lightness = 43 + (lightnessStep * 2) + ((safeIndex * 7) % 3);
+  return `hsla(${hue.toFixed(1)}, ${saturation}%, ${lightness}%, 0.96)`;
 };
 
 const normalizeEventTypeLabel = (value: string): string => toTitleLabel(
@@ -302,6 +328,103 @@ const DashboardPage = () => {
       }))
       .filter((point) => point.date && Number.isFinite(point.value));
   }, [dashboard?.evolution]);
+
+  const currencyNativeTotals = useMemo(() => (
+    new Map(currencyBalanceTiles.map((tile) => [tile.currency, tile.amount]))
+  ), [currencyBalanceTiles]);
+
+  const activeAssetAllocationData = useMemo<ActiveAssetAllocationDatum[]>(() => {
+    const activeAssets = assets.filter((asset) => String(asset.status || 'active').toLowerCase() === 'active');
+    if (activeAssets.length === 0) return [];
+
+    const brlTotalByCurrency = new Map<string, number>();
+    for (const row of currencyAllocation) {
+      const currency = String(row.key || '').trim().toUpperCase();
+      if (!currency) continue;
+      brlTotalByCurrency.set(currency, toFiniteNumber(row.value));
+    }
+
+    const fxRateByCurrency = new Map<string, number>();
+    for (const [currency, nativeTotal] of currencyNativeTotals.entries()) {
+      if (currency === 'BRL') {
+        fxRateByCurrency.set(currency, 1);
+        continue;
+      }
+      const brlTotal = toFiniteNumber(brlTotalByCurrency.get(currency));
+      if (nativeTotal > EPSILON && brlTotal > EPSILON) {
+        fxRateByCurrency.set(currency, brlTotal / nativeTotal);
+      }
+    }
+
+    const rows: ActiveAssetAllocationDatum[] = [];
+    for (const asset of activeAssets) {
+      const currency = String(asset.currency || 'BRL').trim().toUpperCase() || 'BRL';
+      const currentValue = toFiniteNumber(asset.currentValue);
+      const fallbackValue = toFiniteNumber(asset.currentPrice) * toFiniteNumber(asset.quantity);
+      const amountNative = Math.abs(currentValue) > EPSILON ? currentValue : fallbackValue;
+      if (Math.abs(amountNative) <= EPSILON) continue;
+
+      const fxRate = fxRateByCurrency.get(currency) || (currency === 'BRL' ? 1 : 0);
+      const amountBrl = amountNative * fxRate;
+      if (!Number.isFinite(amountBrl) || amountBrl <= EPSILON) continue;
+
+      rows.push({
+        assetId: asset.assetId,
+        ticker: asset.ticker,
+        name: asset.name,
+        currency,
+        amountNative,
+        amountLabel: '',
+        amountBrl,
+        weightPct: 0,
+        barColor: '',
+      });
+    }
+
+    const denominator = toFiniteNumber(dashboard?.total_value_brl) > EPSILON
+      ? toFiniteNumber(dashboard?.total_value_brl)
+      : rows.reduce((sum, row) => sum + row.amountBrl, 0);
+    if (denominator <= EPSILON) return [];
+
+    const rowsWithWeight = rows
+      .map((row) => ({
+        ...row,
+        weightPct: (row.amountBrl / denominator) * 100,
+        amountLabel: '',
+      }))
+      .sort((left, right) => right.amountBrl - left.amountBrl);
+
+    return rowsWithWeight.map((row, index) => {
+      const weightLabel = row.weightPct.toLocaleString(numberLocale, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
+      return {
+        ...row,
+        amountLabel: `${formatCurrency(row.amountNative, row.currency, numberLocale)} (${weightLabel}%)`,
+        barColor: resolveAssetBarColor(index, rowsWithWeight.length),
+      };
+    });
+  }, [
+    assets,
+    currencyAllocation,
+    currencyNativeTotals,
+    dashboard?.total_value_brl,
+    numberLocale,
+  ]);
+
+  const activeAssetChartHeight = useMemo(() => (
+    Math.max(320, activeAssetAllocationData.length * 34 + 44)
+  ), [activeAssetAllocationData.length]);
+  const activeAssetAxisWidth = useMemo(() => {
+    const longestLabelLength = activeAssetAllocationData.reduce((max, row) => (
+      Math.max(max, String(row.ticker || '').length)
+    ), 0);
+    return Math.min(320, Math.max(120, Math.round((longestLabelLength * 8.6) + 26)));
+  }, [activeAssetAllocationData]);
+  const activeAssetChartMinWidth = useMemo(() => (
+    Math.max(920, activeAssetAxisWidth + 560)
+  ), [activeAssetAxisWidth]);
   const todayTotalCount = Number(eventNotices?.today_count || 0);
   const weekTotalCount = Number(eventNotices?.week_count || 0);
   const unreadTodayCount = Number(eventNotices?.unread_today_count ?? 0);
@@ -929,6 +1052,85 @@ const DashboardPage = () => {
                     </AreaChart>
                   </ResponsiveContainer>
                 )}
+
+                <div className="dashboard-card__subchart">
+                  <h3>{t('dashboard.allocationByAsset', { defaultValue: 'Allocation by Active Asset' })}</h3>
+                  {activeAssetAllocationData.length === 0 ? (
+                    <p className="dashboard-card__empty">{t('dashboard.noSeries', { defaultValue: 'No data available.' })}</p>
+                  ) : (
+                    <div className="dashboard-card__asset-chart-scroll">
+                      <div style={{ height: `${activeAssetChartHeight}px`, minWidth: `${activeAssetChartMinWidth}px` }}>
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart
+                            data={activeAssetAllocationData}
+                            layout="vertical"
+                            margin={{ top: 8, right: 18, left: 20, bottom: 0 }}
+                          >
+                            <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.18)" />
+                            <XAxis
+                              type="number"
+                              tickFormatter={(value) => `${Number(value || 0).toLocaleString(numberLocale, {
+                                minimumFractionDigits: 1,
+                                maximumFractionDigits: 1,
+                              })}%`}
+                              stroke="var(--text-secondary)"
+                            />
+                            <YAxis
+                              type="category"
+                              dataKey="ticker"
+                              width={activeAssetAxisWidth}
+                              stroke="var(--text-secondary)"
+                            />
+                            <Tooltip
+                              cursor={{ fill: 'rgba(56, 189, 248, 0.08)' }}
+                              content={({ active, payload }) => {
+                                const datum = payload?.[0]?.payload as ActiveAssetAllocationDatum | undefined;
+                                if (!active || !datum) return null;
+                                return (
+                                  <div className="dashboard__tooltip">
+                                    <strong>{datum.ticker}</strong>
+                                    <span>{datum.name}</span>
+                                    <span>
+                                      {t('dashboard.allocation', { defaultValue: 'Allocation' })}: {datum.weightPct.toLocaleString(numberLocale, {
+                                        minimumFractionDigits: 2,
+                                        maximumFractionDigits: 2,
+                                      })}%
+                                    </span>
+                                    <span>
+                                      {formatCurrency(datum.amountNative, datum.currency, numberLocale)}
+                                    </span>
+                                    <span>
+                                      {formatCurrency(datum.amountBrl, 'BRL', numberLocale)}
+                                    </span>
+                                  </div>
+                                );
+                              }}
+                            />
+                            <Bar
+                              dataKey="weightPct"
+                              fill="#818cf8"
+                              radius={[0, 8, 8, 0]}
+                              maxBarSize={22}
+                              isAnimationActive={false}
+                            >
+                              {activeAssetAllocationData.map((entry, index) => (
+                                <Cell
+                                  key={`asset-color-${entry.assetId || entry.ticker}-${index}`}
+                                  fill={entry.barColor}
+                                />
+                              ))}
+                              <LabelList
+                                dataKey="amountLabel"
+                                position="right"
+                                className="dashboard-card__asset-label"
+                              />
+                            </Bar>
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </section>
             </div>
           </>
