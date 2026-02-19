@@ -76,20 +76,26 @@ variable "create_initial_admin_user" {
   default     = true
 }
 
-variable "create_api_gateway_authorizer" {
-  description = "Whether to create a Cognito authorizer on an existing API Gateway REST API."
-  type        = bool
-  default     = false
-}
-
-variable "api_gateway_rest_api_id" {
-  description = "Existing API Gateway REST API ID where the Cognito authorizer will be created."
+variable "primary_domain" {
+  description = "Primary domain name for the application."
   type        = string
-  default     = ""
+  default     = "invest.oliverapp.net"
 }
 
-variable "api_gateway_authorizer_name" {
-  description = "Optional custom name for the API Gateway Cognito authorizer."
+variable "alternative_domains" {
+  description = "Alternative domain names (SANs) for the application."
+  type        = list(string)
+  default     = ["investiments.oliverapp.net"]
+}
+
+variable "hosted_zone_name" {
+  description = "Route 53 hosted zone name for DNS records."
+  type        = string
+  default     = "oliverapp.net"
+}
+
+variable "github_repo" {
+  description = "GitHub repository (owner/repo) for OIDC federation. Empty string disables OIDC resources."
   type        = string
   default     = ""
 }

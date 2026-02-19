@@ -39,7 +39,47 @@ output "frontend_auth_env" {
   }
 }
 
-output "api_gateway_cognito_authorizer_id" {
-  description = "Created API Gateway Cognito authorizer ID (null when disabled)."
-  value       = try(aws_api_gateway_authorizer.cognito[0].id, null)
+output "api_gateway_url" {
+  description = "API Gateway invoke URL."
+  value       = aws_api_gateway_stage.prod.invoke_url
+}
+
+output "cloudfront_distribution_id" {
+  description = "CloudFront distribution ID for cache invalidation."
+  value       = aws_cloudfront_distribution.main.id
+}
+
+output "cloudfront_domain_name" {
+  description = "CloudFront distribution domain name."
+  value       = aws_cloudfront_distribution.main.domain_name
+}
+
+output "frontend_bucket" {
+  description = "S3 bucket for frontend static files."
+  value       = aws_s3_bucket.frontend.id
+}
+
+output "data_bucket" {
+  description = "S3 bucket for application data (reports, PDFs)."
+  value       = aws_s3_bucket.data.id
+}
+
+output "lambda_function_name" {
+  description = "Lambda function name."
+  value       = aws_lambda_function.api.function_name
+}
+
+output "dynamodb_table_name" {
+  description = "DynamoDB table name."
+  value       = aws_dynamodb_table.main.name
+}
+
+output "lambda_artifacts_bucket" {
+  description = "S3 bucket for Lambda deployment artifacts."
+  value       = aws_s3_bucket.lambda_artifacts.id
+}
+
+output "github_actions_role_arn" {
+  description = "IAM role ARN for GitHub Actions OIDC (null when disabled)."
+  value       = try(aws_iam_role.github_actions[0].arn, null)
 }

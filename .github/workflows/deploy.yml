@@ -5,6 +5,10 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
   deploy:
     name: Build & Deploy
@@ -22,15 +26,43 @@ jobs:
             package-lock.json
             frontend/package-lock.json
 
-      - name: Install root deps
-        run: npm ci
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Package Lambda
+        run: bash scripts/package-lambda.sh
+
+      - name: Upload Lambda artifact to S3
+        run: aws s3 cp lambda.zip s3://${{ secrets.LAMBDA_ARTIFACTS_BUCKET }}/lambda.zip
+
+      - name: Update Lambda function code
+        run: |
+          aws lambda update-function-code \
+            --function-name ${{ secrets.LAMBDA_FUNCTION_NAME }} \
+            --s3-bucket ${{ secrets.LAMBDA_ARTIFACTS_BUCKET }} \
+            --s3-key lambda.zip
 
       - name: Install frontend deps
         run: npm --prefix frontend ci
 
       - name: Build frontend
         run: npm --prefix frontend run build
+        env:
+          VITE_API_URL: /api
+          VITE_USER_POOL_ID: ${{ secrets.VITE_USER_POOL_ID }}
+          VITE_APP_CLIENT_ID: ${{ secrets.VITE_APP_CLIENT_ID }}
+          VITE_COGNITO_DOMAIN: ${{ secrets.VITE_COGNITO_DOMAIN }}
+          VITE_REDIRECT_SIGN_IN: https://invest.oliverapp.net/dashboard
+          VITE_REDIRECT_SIGN_OUT: https://invest.oliverapp.net/login
 
-      # AWS deployment steps will be added in a later phase
-      - name: Placeholder - Deploy to AWS
-        run: echo "AWS deployment will be configured in a later phase"
+      - name: Sync frontend to S3
+        run: aws s3 sync frontend/dist/ s3://${{ secrets.FRONTEND_BUCKET }}/ --delete
+
+      - name: Invalidate CloudFront cache
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} \
+            --paths "/*"

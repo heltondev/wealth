@@ -21,7 +21,10 @@ logout_urls = [
   "https://investiments.oliverapp.net/login",
 ]
 
-# Optional: create Cognito authorizer in an existing API Gateway REST API
-# create_api_gateway_authorizer = true
-# api_gateway_rest_api_id       = "a1b2c3d4e5"
-# api_gateway_authorizer_name   = "wealthhub-cognito-authorizer"
+# Domain configuration
+primary_domain      = "invest.oliverapp.net"
+alternative_domains = ["investiments.oliverapp.net"]
+hosted_zone_name    = "oliverapp.net"
+
+# GitHub OIDC (set to "owner/repo" to enable CI/CD role)
+# github_repo = "your-org/wealth"
