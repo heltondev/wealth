@@ -37,13 +37,14 @@
     "@aws-sdk/client-dynamodb": "^3.990.0",
     "@aws-sdk/client-s3": "^3.990.0",
     "@aws-sdk/lib-dynamodb": "^3.990.0",
-    "@aws-sdk/s3-request-presigner": "^3.990.0"
+    "@aws-sdk/client-lambda": "^3.990.0",
+    "@aws-sdk/s3-request-presigner": "^3.990.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
-    "express": "^5.2.1",
-    "xlsx": "^0.18.5"
+    "express": "^5.2.1"
   }
 }
