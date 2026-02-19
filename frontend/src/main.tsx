@@ -1,3 +1,11 @@
+if (import.meta.env.PROD) {
+  const noop = () => {};
+  console.log = noop;
+  console.warn = noop;
+  console.info = noop;
+  console.debug = noop;
+}
+
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles/main.scss';

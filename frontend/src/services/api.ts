@@ -61,6 +61,15 @@ const clearServiceWorkerCache = () => {
   }
 };
 
+const safeParseJsonPayload = (rawPayload: string): unknown => {
+  if (!rawPayload) return null;
+  try {
+    return JSON.parse(rawPayload);
+  } catch {
+    return { __nonJsonBody: rawPayload };
+  }
+};
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const method = normalizeMethod(options.method);
   const cacheKey = normalizeGetCacheKey(path);
@@ -101,12 +110,34 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       headers,
     });
 
+    const rawPayload = await response.text();
+    const parsedPayload = safeParseJsonPayload(rawPayload);
+
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || `API error: ${response.statusText}`);
+      const payloadObject = parsedPayload && typeof parsedPayload === 'object'
+        ? parsedPayload as Record<string, unknown>
+        : {};
+      const bodySnippet = String(payloadObject.__nonJsonBody || '').replace(/\s+/g, ' ').trim();
+      const message = String(payloadObject.error || payloadObject.message || '').trim();
+      if (message) {
+        throw new Error(message);
+      }
+      if (bodySnippet) {
+        throw new Error(`API error ${response.status}: ${bodySnippet.slice(0, 220)}`);
+      }
+      throw new Error(`API error: ${response.status} ${response.statusText}`);
     }
 
-    const parsed = await response.json();
+    if (parsedPayload && typeof parsedPayload === 'object' && '__nonJsonBody' in parsedPayload) {
+      const bodySnippet = String((parsedPayload as Record<string, unknown>).__nonJsonBody || '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      throw new Error(
+        `Unexpected API response format for ${method} ${path}${bodySnippet ? `: ${bodySnippet.slice(0, 120)}` : ''}`
+      );
+    }
+
+    const parsed = (parsedPayload ?? {}) as T;
 
     if (useGetCache) {
       const ttlMs = Number.isFinite(API_GET_CACHE_TTL_MS) && API_GET_CACHE_TTL_MS > 0
@@ -1018,6 +1049,62 @@ export interface SimulationPayload {
 
 // --- API Methods ---
 
+type BackupImportJobStatusResponse = {
+  jobId: string;
+  status: string;
+  error?: string;
+  stats?: BackupImportResponse['stats'];
+  mode?: string;
+};
+
+const pollBackupImportJob = async (
+  jobId: string,
+  mode: 'replace' | 'merge'
+): Promise<BackupImportResponse> => {
+  // Keep polling bounded so we can fail fast when async import jobs stall.
+  const maxAttempts = 60;
+  for (let i = 0; i < maxAttempts; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    const job = await request<BackupImportJobStatusResponse>(`/settings/backup/status?jobId=${jobId}`);
+    if (job.status === 'completed') {
+      return {
+        mode: job.mode || mode,
+        importedAt: new Date().toISOString(),
+        stats: job.stats || { userItems: 0, portfolioItems: 0, aliases: 0, totalItems: 0 },
+      } as BackupImportResponse;
+    }
+    if (job.status === 'failed') {
+      throw new Error(job.error || 'Backup import failed');
+    }
+  }
+  throw new Error('Backup import timed out');
+};
+
+const uploadBackupAndRunImport = async (
+  content: BodyInit,
+  mode: 'replace' | 'merge'
+): Promise<BackupImportResponse> => {
+  // Always go through S3 for file imports to avoid API Gateway/Lambda body-size limits.
+  const { uploadUrl, s3Key } = await request<{ uploadUrl: string; s3Key: string }>(
+    '/settings/backup',
+    { method: 'PUT' }
+  );
+  const s3Response = await fetch(uploadUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: content,
+  });
+  if (!s3Response.ok) {
+    throw new Error(`S3 upload failed: ${s3Response.status} ${s3Response.statusText}`);
+  }
+
+  const { jobId } = await request<{ jobId: string; status: string }>(
+    '/settings/backup',
+    { method: 'POST', body: JSON.stringify({ mode, s3Key }) }
+  );
+  return pollBackupImportJob(jobId, mode);
+};
+
 export const api = {
   // Portfolios
   getPortfolios: () => request<Portfolio[]>('/portfolios'),
@@ -1075,50 +1162,32 @@ export const api = {
   getDropdownSettings: () => request<DropdownSettings>('/settings/dropdowns'),
   updateDropdownSettings: (data: DropdownSettings) =>
     request<DropdownSettings>('/settings/dropdowns', { method: 'PUT', body: JSON.stringify(data) }),
-  exportBackup: () => request<BackupSnapshot>('/settings/backup'),
+  exportBackup: async (): Promise<BackupSnapshot> => {
+    const result = await request<BackupSnapshot & { downloadUrl?: string }>('/settings/backup');
+    if (result.downloadUrl) {
+      const response = await fetch(result.downloadUrl);
+      if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+      return response.json();
+    }
+    return result;
+  },
   importBackup: async (
     backup: BackupSnapshot | Record<string, unknown>,
     mode: 'replace' | 'merge' = 'replace'
   ): Promise<BackupImportResponse> => {
     const payload = JSON.stringify({ mode, backup });
     if (payload.length > 4_000_000) {
-      const { uploadUrl, s3Key } = await request<{ uploadUrl: string; s3Key: string }>(
-        '/settings/backup',
-        { method: 'PUT' }
-      );
-      const s3Response = await fetch(uploadUrl, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(backup),
-      });
-      if (!s3Response.ok) {
-        throw new Error(`S3 upload failed: ${s3Response.status} ${s3Response.statusText}`);
-      }
-      const { jobId } = await request<{ jobId: string; status: string }>(
-        '/settings/backup',
-        { method: 'POST', body: JSON.stringify({ mode, s3Key }) }
-      );
-      // Poll for async job completion
-      const maxAttempts = 60;
-      for (let i = 0; i < maxAttempts; i++) {
-        await new Promise((r) => setTimeout(r, 2000));
-        const job = await request<{ jobId: string; status: string; error?: string }>(
-          `/settings/backup/status?jobId=${jobId}`
-        );
-        if (job.status === 'completed') {
-          return job as unknown as BackupImportResponse;
-        }
-        if (job.status === 'failed') {
-          throw new Error(job.error || 'Backup import failed');
-        }
-      }
-      throw new Error('Backup import timed out');
+      return uploadBackupAndRunImport(JSON.stringify(backup), mode);
     }
     return request<BackupImportResponse>('/settings/backup', {
       method: 'POST',
       body: payload,
     });
   },
+  importBackupFile: async (
+    backupFile: File,
+    mode: 'replace' | 'merge' = 'replace'
+  ): Promise<BackupImportResponse> => uploadBackupAndRunImport(backupFile, mode),
   getCacheDiagnostics: () => request<CacheDiagnosticsResponse>('/settings/cache'),
   clearCaches: (scope: 'all' | 'response' | 'scraper' = 'all') =>
     request<CacheClearResponse>('/settings/cache', {

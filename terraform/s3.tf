@@ -51,7 +51,7 @@ resource "aws_s3_bucket_cors_configuration" "data" {
 
   cors_rule {
     allowed_headers = ["*"]
-    allowed_methods = ["PUT"]
+    allowed_methods = ["GET", "PUT"]
     allowed_origins = concat(
       ["https://${var.primary_domain}"],
       [for d in var.alternative_domains : "https://${d}"]

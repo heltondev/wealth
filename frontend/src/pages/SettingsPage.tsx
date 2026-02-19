@@ -7,7 +7,6 @@ import SharedDropdown from '../components/SharedDropdown';
 import { usePortfolioData } from '../context/PortfolioDataContext';
 import {
   api,
-  type BackupSnapshot,
   type CacheDiagnosticsResponse,
   type UserSettings,
   type Alias,
@@ -511,9 +510,9 @@ const SettingsPage = () => {
 
     setImportingBackup(true);
     try {
-      const fileContent = await backupFile.text();
-      const parsedBackup = JSON.parse(fileContent) as BackupSnapshot;
-      const result = await api.importBackup(parsedBackup, backupMode);
+      // Send the raw JSON file to S3 and let the backend validate/parse it.
+      // This avoids large in-browser JSON parsing failures for big backups.
+      const result = await api.importBackupFile(backupFile, backupMode);
       showToast(
         t('settings.backup.messages.importSuccess', {
           total: result.stats.totalItems,

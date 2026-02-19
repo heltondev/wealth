@@ -1151,13 +1151,22 @@ async function handleSettingsDropdowns(method, userId, body) {
 
 async function handleSettingsBackup(method, userId, body) {
 	if (method === 'GET') {
-		const userItems = await queryAllItems({
-			TableName: TABLE_NAME,
-			KeyConditionExpression: 'PK = :pk',
-			ExpressionAttributeValues: {
-				':pk': `USER#${userId}`,
-			},
-		});
+		const [userItems, aliases] = await Promise.all([
+			queryAllItems({
+				TableName: TABLE_NAME,
+				KeyConditionExpression: 'PK = :pk',
+				ExpressionAttributeValues: {
+					':pk': `USER#${userId}`,
+				},
+			}),
+			scanAllItems({
+				TableName: TABLE_NAME,
+				FilterExpression: 'begins_with(PK, :prefix)',
+				ExpressionAttributeValues: {
+					':prefix': 'ALIAS#',
+				},
+			}),
+		]);
 
 		const portfolioIds = Array.from(
 			new Set(
@@ -1180,16 +1189,8 @@ async function handleSettingsBackup(method, userId, body) {
 		);
 		const portfolioItems = portfolioGroups.flat();
 
-		const aliases = await scanAllItems({
-			TableName: TABLE_NAME,
-			FilterExpression: 'begins_with(PK, :prefix)',
-			ExpressionAttributeValues: {
-				':prefix': 'ALIAS#',
-			},
-		});
-
 		const exportedAt = new Date().toISOString();
-		return {
+		const backup = {
 			schemaVersion: BACKUP_SCHEMA_VERSION,
 			exportedAt,
 			exportedBy: userId,
@@ -1206,6 +1207,30 @@ async function handleSettingsBackup(method, userId, body) {
 				totalItems: userItems.length + portfolioItems.length + aliases.length,
 			},
 		};
+
+		const backupJson = JSON.stringify(backup);
+
+		// If response exceeds 5MB, upload to S3 and return a presigned download URL
+		if (backupJson.length > 5_000_000) {
+			const s3Key = `backups/${userId}/${Date.now()}-backup-export.json`;
+			await s3Client.send(new PutObjectCommand({
+				Bucket: S3_BUCKET,
+				Key: s3Key,
+				ContentType: 'application/json',
+				Body: backupJson,
+			}));
+			const presignClient = new S3Client({
+				...buildAwsClientConfig({ service: 's3' }),
+				requestChecksumCalculation: 'WHEN_REQUIRED',
+			});
+			const downloadUrl = await getSignedUrl(presignClient, new GetObjectCommand({
+				Bucket: S3_BUCKET,
+				Key: s3Key,
+			}), { expiresIn: 300 });
+			return { downloadUrl, stats: backup.stats };
+		}
+
+		return backup;
 	}
 
 	if (method === 'PUT') {
@@ -1281,15 +1306,24 @@ async function runBackupImport(userId, s3Key, mode) {
 		Key: s3Key,
 	}));
 	const s3Body = await s3Response.Body.transformToString('utf-8');
-	const backupEnvelope = JSON.parse(s3Body);
+	const normalizedBody = String(s3Body || '').replace(/^\uFEFF/, '');
+	let backupEnvelope;
+	try {
+		backupEnvelope = JSON.parse(normalizedBody);
+	} catch {
+		throw errorResponse(400, 'Invalid backup JSON format');
+	}
 	s3Client.send(new DeleteObjectCommand({ Bucket: S3_BUCKET, Key: s3Key })).catch(() => {});
 	return runBackupImportFromEnvelope(userId, mode, backupEnvelope);
 }
 
 async function runBackupImportFromEnvelope(userId, mode, backupEnvelope) {
-	const backupData = isPlainObject(backupEnvelope.data)
-		? backupEnvelope.data
+	const envelope = isPlainObject(backupEnvelope?.backup)
+		? backupEnvelope.backup
 		: backupEnvelope;
+	const backupData = isPlainObject(envelope?.data)
+		? envelope.data
+		: envelope;
 
 	const rawUserItems = Array.isArray(backupData.userItems) ? backupData.userItems : [];
 	const rawPortfolioItems = Array.isArray(backupData.portfolioItems)
@@ -2311,13 +2345,18 @@ exports.handler = async (event) => {
 	if (event._asyncBackupImport) {
 		const { userId, s3Key, mode, jobId } = event._asyncBackupImport;
 		try {
-			await runBackupImport(userId, s3Key, mode);
+			const importResult = await runBackupImport(userId, s3Key, mode);
 			await dynamo.send(new UpdateCommand({
 				TableName: TABLE_NAME,
 				Key: { PK: `USER#${userId}`, SK: `BACKUP_JOB#${jobId}` },
-				UpdateExpression: 'SET #s = :s, completedAt = :t',
-				ExpressionAttributeNames: { '#s': 'status' },
-				ExpressionAttributeValues: { ':s': 'completed', ':t': new Date().toISOString() },
+				UpdateExpression: 'SET #s = :s, completedAt = :t, stats = :st, #m = :m',
+				ExpressionAttributeNames: { '#s': 'status', '#m': 'mode' },
+				ExpressionAttributeValues: {
+					':s': 'completed',
+					':t': new Date().toISOString(),
+					':st': importResult.stats,
+					':m': importResult.mode,
+				},
 			}));
 		} catch (err) {
 			const msg = err?.body ? JSON.parse(err.body).message : (err.message || 'Unknown error');
@@ -2632,6 +2671,8 @@ exports.handler = async (event) => {
 					jobId,
 					status: jobResult.Item.status,
 					error: jobResult.Item.error || undefined,
+					stats: jobResult.Item.stats || undefined,
+					mode: jobResult.Item.mode || undefined,
 					createdAt: jobResult.Item.createdAt,
 					completedAt: jobResult.Item.completedAt || undefined,
 				};
