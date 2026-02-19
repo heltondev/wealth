@@ -7255,6 +7255,14 @@ class PlatformService {
 			}))
 			.sort((left, right) => right.weight_pct - left.weight_pct);
 
+		const priceRowsByAssetId = new Map();
+		await Promise.all(
+			activeAssets.map(async (asset) => {
+				const rows = await this.#listAssetPriceRows(portfolioId, asset.assetId);
+				priceRowsByAssetId.set(asset.assetId, rows);
+			})
+		);
+
 		const byAssetReturns = {};
 		const volatilityByAsset = {};
 		const drawdownByAsset = {};
@@ -7262,7 +7270,7 @@ class PlatformService {
 		for (const asset of activeAssets) {
 			const ticker = String(asset.ticker || '').toUpperCase();
 			if (!ticker) continue;
-			const rows = await this.#listAssetPriceRows(portfolioId, asset.assetId);
+			const rows = priceRowsByAssetId.get(asset.assetId) || [];
 			const returns = this.#toReturns(rows);
 			byAssetReturns[ticker] = returns;
 			const onlyReturns = returns.map((item) => item.returnPct / 100);
@@ -7291,6 +7299,7 @@ class PlatformService {
 			{
 				fxRateByAssetId,
 				fallbackBrlByAssetId,
+				priceRowsByAssetId,
 			}
 		);
 		const portfolioValues = series.map((point) => numeric(point.value, 0));
@@ -10278,7 +10287,8 @@ class PlatformService {
 	async #buildPortfolioValueSeries(portfolioId, metricsAssets, days = 365, options = {}) {
 		const assetsSeries = await Promise.all(
 			metricsAssets.map(async (asset) => {
-				const rows = await this.#listAssetPriceRows(portfolioId, asset.assetId);
+				const rows = options.priceRowsByAssetId?.get(asset.assetId)
+					?? await this.#listAssetPriceRows(portfolioId, asset.assetId);
 				return {
 					assetId: asset.assetId,
 					rows,
