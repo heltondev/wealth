@@ -236,7 +236,16 @@ export const PortfolioDataProvider = ({ children }: { children: ReactNode }) => 
         });
       })
       .catch(() => {
-        // Keep cached values on transient errors.
+        // Keep cached values on transient errors, but clear if excessively stale.
+        setSelectedPortfolioRaw((current) => {
+          if (current === portfolioId) {
+            setMetrics((prev) => {
+              if (prev && (Date.now() - prev.fetchedAt) > METRICS_TTL_MS * 6) return null;
+              return prev;
+            });
+          }
+          return current;
+        });
       });
   }, []);
 

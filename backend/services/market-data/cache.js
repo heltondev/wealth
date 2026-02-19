@@ -1,10 +1,14 @@
+const DEFAULT_MAX_ENTRIES = 500;
+
 class MemoryCache {
-	constructor(defaultTtlMs = 15 * 60 * 1000) {
+	constructor(defaultTtlMs = 15 * 60 * 1000, maxEntries = DEFAULT_MAX_ENTRIES) {
 		this.defaultTtlMs = defaultTtlMs;
+		this.maxEntries = maxEntries;
 		this.items = new Map();
 		this.hitCount = 0;
 		this.missCount = 0;
 		this.setCount = 0;
+		this.evictCount = 0;
 		this.deleteCount = 0;
 		this.clearCount = 0;
 	}
@@ -15,6 +19,17 @@ class MemoryCache {
 			expiresAt: Date.now() + Math.max(0, ttlMs),
 		});
 		this.setCount += 1;
+		this.clearExpired();
+		if (this.items.size > this.maxEntries) {
+			const overflow = this.items.size - this.maxEntries;
+			const sorted = Array.from(this.items.entries())
+				.sort((a, b) => a[1].expiresAt - b[1].expiresAt)
+				.slice(0, overflow);
+			for (const [evictKey] of sorted) {
+				this.items.delete(evictKey);
+				this.evictCount += 1;
+			}
+		}
 	}
 
 	get(key) {
@@ -52,10 +67,12 @@ class MemoryCache {
 	stats() {
 		return {
 			entries: this.items.size,
+			maxEntries: this.maxEntries,
 			defaultTtlMs: this.defaultTtlMs,
 			hitCount: this.hitCount,
 			missCount: this.missCount,
 			setCount: this.setCount,
+			evictCount: this.evictCount,
 			deleteCount: this.deleteCount,
 			clearCount: this.clearCount,
 		};

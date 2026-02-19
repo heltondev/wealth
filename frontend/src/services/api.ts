@@ -1,6 +1,7 @@
 import { fetchAuthSession } from 'aws-amplify/auth';
 import { isAmplifyAuthConfigured } from '../aws-exports';
 import { logger } from '../utils/logger';
+import { clearAnalyticsCache } from './analyticsCache';
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 const API_GET_CACHE_TTL_MS = Number(import.meta.env.VITE_API_GET_CACHE_TTL_MS || 15_000);
@@ -52,6 +53,12 @@ const shouldCacheGetRequest = (path: string): boolean => {
 const clearApiGetCache = () => {
   apiGetCacheStore.clear();
   apiGetInFlightRequests.clear();
+};
+
+const clearServiceWorkerCache = () => {
+  if (navigator.serviceWorker?.controller) {
+    navigator.serviceWorker.controller.postMessage({ type: 'CLEAR_API_CACHE' });
+  }
 };
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -113,6 +120,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       pruneOverflowGetCacheEntries();
     } else if (method !== 'GET') {
       clearApiGetCache();
+      clearAnalyticsCache();
+      clearServiceWorkerCache();
     }
 
     return parsed as T;

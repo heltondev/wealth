@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
 const {
 	DynamoDBDocumentClient,
@@ -413,6 +414,27 @@ const resolveRouteResponseCacheTtlMs = (
 	}
 	if (resourceBase === 'portfolios' && !subResource) return 30 * 1000;
 	return RESPONSE_CACHE_DEFAULT_TTL_MS;
+};
+
+const computeETag = (body) => {
+	const hash = crypto.createHash('md5').update(body).digest('hex');
+	return `"${hash}"`;
+};
+
+const resolveHttpCacheControl = (requestMethod, resourceBase, subResource) => {
+	if (requestMethod !== 'GET') return 'no-store';
+	if (resourceBase === 'settings' && subResource === 'dropdowns') return 'private, max-age=300';
+	if (
+		resourceBase === 'portfolios'
+		&& ['dashboard', 'price-history', 'dividends', 'risk', 'benchmarks', 'multi-currency', 'rebalance'].includes(subResource)
+	) {
+		return 'private, max-age=30, stale-while-revalidate=60';
+	}
+	if (resourceBase === 'portfolios' && ['assets', 'transactions', 'tax', 'theses'].includes(subResource)) {
+		return 'private, max-age=15, stale-while-revalidate=30';
+	}
+	if (resourceBase === 'portfolios' && subResource === 'event-inbox') return 'private, max-age=5';
+	return 'private, max-age=10';
 };
 
 const toCacheDiagnosticsResponse = () => {
@@ -2224,6 +2246,8 @@ exports.handler = async (event) => {
 	let requestPath = '';
 	let requestUserId = 'anonymous';
 	let cacheConfig = null;
+	let routeResourceBase = '';
+	let routeSubResource = '';
 	const headers = {
 		'Content-Type': 'application/json',
 		'Access-Control-Allow-Origin': resolveCorsOrigin(event),
@@ -2263,6 +2287,8 @@ exports.handler = async (event) => {
 		const subResource = pathSegments[startIndex + 2];
 		const subId = pathSegments[startIndex + 3];
 		const subSubResource = pathSegments[startIndex + 4];
+		routeResourceBase = resourceBase || '';
+		routeSubResource = subResource || '';
 
 		if (
 			requestMethod === 'GET'
@@ -2281,7 +2307,14 @@ exports.handler = async (event) => {
 			};
 			const cached = responseCache.get(cacheConfig.key);
 			if (cached) {
+				const cachedETag = computeETag(cached.body);
+				const clientETag = event?.headers?.['if-none-match'] || event?.headers?.['If-None-Match'] || '';
 				headers['X-Cache'] = 'HIT';
+				headers['ETag'] = cachedETag;
+				headers['Cache-Control'] = resolveHttpCacheControl(requestMethod, resourceBase, subResource);
+				if (clientETag && clientETag === cachedETag) {
+					return { statusCode: 304, headers, body: '' };
+				}
 				return {
 					statusCode: cached.statusCode,
 					headers,
@@ -2545,6 +2578,20 @@ exports.handler = async (event) => {
 		headers['X-Cache-Invalidated'] = String(removed);
 	}
 
+	if (statusCode >= 200 && statusCode < 400) {
+		headers['Cache-Control'] = resolveHttpCacheControl(requestMethod, routeResourceBase, routeSubResource);
+		if (requestMethod === 'GET') {
+			const etag = computeETag(responseBody);
+			headers['ETag'] = etag;
+			const clientETag = event?.headers?.['if-none-match'] || event?.headers?.['If-None-Match'] || '';
+			if (clientETag && clientETag === etag) {
+				return { statusCode: 304, headers, body: '' };
+			}
+		}
+	} else {
+		headers['Cache-Control'] = 'no-store';
+	}
+
 	return {
 		statusCode,
 		headers,
@@ -2575,4 +2622,6 @@ exports._test = {
 	platformService,
 	responseCache,
 	clearResponseCache: () => responseCache.clear(),
+	computeETag,
+	resolveHttpCacheControl,
 };

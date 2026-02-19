@@ -3770,6 +3770,8 @@ class PlatformService {
 		this.s3 = this.useS3
 			? new S3Client(buildAwsClientConfig({ service: 's3' }))
 			: null;
+		this._fxMapCache = null;
+		this._fxMapCacheExpiresAt = 0;
 	}
 
 	async fetchEconomicIndicators() {
@@ -8907,6 +8909,11 @@ class PlatformService {
 	}
 
 	async #getLatestFxMap() {
+		const now = Date.now();
+		if (this._fxMapCache && now < this._fxMapCacheExpiresAt) {
+			return { ...this._fxMapCache };
+		}
+
 		const map = {};
 		for (const currency of ['USD', 'CAD']) {
 			const result = await this.dynamo.send(
@@ -8925,6 +8932,9 @@ class PlatformService {
 			if (latest) map[`${currency}/BRL`] = numeric(latest.rate, 0);
 		}
 		map['BRL/BRL'] = 1;
+
+		this._fxMapCache = { ...map };
+		this._fxMapCacheExpiresAt = now + 30_000;
 		return map;
 	}
 

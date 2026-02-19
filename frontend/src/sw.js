@@ -6,11 +6,13 @@ import { ExpirationPlugin } from 'workbox-expiration';
 
 precacheAndRoute(self.__WB_MANIFEST);
 
+const API_CACHE_NAME = 'invest-api-cache-v1';
+
 // Cache GET API responses for quick reload/navigation while still refreshing in background.
 registerRoute(
   ({ request, url }) => request.method === 'GET' && url.pathname.startsWith('/api/'),
   new StaleWhileRevalidate({
-    cacheName: 'invest-api-cache-v1',
+    cacheName: API_CACHE_NAME,
     plugins: [
       new CacheableResponsePlugin({
         statuses: [0, 200],
@@ -22,3 +24,10 @@ registerRoute(
     ],
   }),
 );
+
+// Listen for cache-clear messages from the main thread after mutations.
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'CLEAR_API_CACHE') {
+    caches.delete(API_CACHE_NAME);
+  }
+});
