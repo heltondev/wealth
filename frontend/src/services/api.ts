@@ -1076,17 +1076,49 @@ export const api = {
   updateDropdownSettings: (data: DropdownSettings) =>
     request<DropdownSettings>('/settings/dropdowns', { method: 'PUT', body: JSON.stringify(data) }),
   exportBackup: () => request<BackupSnapshot>('/settings/backup'),
-  importBackup: (
+  importBackup: async (
     backup: BackupSnapshot | Record<string, unknown>,
     mode: 'replace' | 'merge' = 'replace'
-  ) =>
-    request<BackupImportResponse>('/settings/backup', {
+  ): Promise<BackupImportResponse> => {
+    const payload = JSON.stringify({ mode, backup });
+    if (payload.length > 4_000_000) {
+      const { uploadUrl, s3Key } = await request<{ uploadUrl: string; s3Key: string }>(
+        '/settings/backup',
+        { method: 'PUT' }
+      );
+      const s3Response = await fetch(uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(backup),
+      });
+      if (!s3Response.ok) {
+        throw new Error(`S3 upload failed: ${s3Response.status} ${s3Response.statusText}`);
+      }
+      const { jobId } = await request<{ jobId: string; status: string }>(
+        '/settings/backup',
+        { method: 'POST', body: JSON.stringify({ mode, s3Key }) }
+      );
+      // Poll for async job completion
+      const maxAttempts = 60;
+      for (let i = 0; i < maxAttempts; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const job = await request<{ jobId: string; status: string; error?: string }>(
+          `/settings/backup/status?jobId=${jobId}`
+        );
+        if (job.status === 'completed') {
+          return job as unknown as BackupImportResponse;
+        }
+        if (job.status === 'failed') {
+          throw new Error(job.error || 'Backup import failed');
+        }
+      }
+      throw new Error('Backup import timed out');
+    }
+    return request<BackupImportResponse>('/settings/backup', {
       method: 'POST',
-      body: JSON.stringify({
-        mode,
-        backup,
-      }),
-    }),
+      body: payload,
+    });
+  },
   getCacheDiagnostics: () => request<CacheDiagnosticsResponse>('/settings/cache'),
   clearCaches: (scope: 'all' | 'response' | 'scraper' = 'all') =>
     request<CacheClearResponse>('/settings/cache', {

@@ -486,7 +486,10 @@ const SettingsPage = () => {
       const anchor = document.createElement('a');
       anchor.href = href;
       anchor.download = filename;
+      anchor.style.display = 'none';
+      document.body.appendChild(anchor);
       anchor.click();
+      document.body.removeChild(anchor);
       URL.revokeObjectURL(href);
       showToast(t('settings.backup.messages.exportSuccess'), 'success');
     } catch (reason) {

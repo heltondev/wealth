@@ -10,6 +10,9 @@ const {
 	BatchWriteCommand,
 	ScanCommand,
 } = require('@aws-sdk/lib-dynamodb');
+const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+const { LambdaClient, InvokeCommand } = require('@aws-sdk/client-lambda');
 const { AssetMarketDataService } = require('../services/market-data');
 const { MemoryCache } = require('../services/market-data/cache');
 const { PortfolioPriceHistoryService } = require('../services/price-history');
@@ -18,6 +21,7 @@ const { ApiResponseCache } = require('../services/cache/api-response-cache');
 const {
 	buildAwsClientConfig,
 	resolveTableName,
+	resolveS3BucketName,
 } = require('../config/aws');
 
 const TABLE_NAME = resolveTableName();
@@ -25,6 +29,8 @@ const ddbClient = new DynamoDBClient(
 	buildAwsClientConfig({ service: 'dynamodb' })
 );
 const dynamo = DynamoDBDocumentClient.from(ddbClient);
+const s3Client = new S3Client(buildAwsClientConfig({ service: 's3' }));
+const S3_BUCKET = resolveS3BucketName();
 const scraperCache = new MemoryCache(
 	Number(process.env.MARKET_DATA_SCRAPER_CACHE_TTL_MS || 15 * 60 * 1000)
 );
@@ -603,6 +609,29 @@ const normalizePortfolioItem = (item, userId) => {
 	return normalized;
 };
 
+const sendBatchWithRetry = async (pending, errorMsg) => {
+	let attempts = 0;
+	while (pending.length > 0) {
+		attempts += 1;
+		const response = await dynamo.send(
+			new BatchWriteCommand({
+				RequestItems: {
+					[TABLE_NAME]: pending,
+				},
+			})
+		);
+		const unprocessed = response?.UnprocessedItems?.[TABLE_NAME] || [];
+		if (!Array.isArray(unprocessed) || unprocessed.length === 0) break;
+		if (attempts >= 8) {
+			throw errorResponse(500, errorMsg);
+		}
+		pending = unprocessed;
+		await new Promise((resolve) => setTimeout(resolve, attempts * 60));
+	}
+};
+
+const BATCH_CONCURRENCY = 10;
+
 const deleteItemsByPrimaryKey = async (items = []) => {
 	const requests = [];
 	for (const item of items) {
@@ -617,26 +646,11 @@ const deleteItemsByPrimaryKey = async (items = []) => {
 	}
 	if (requests.length === 0) return;
 
-	for (const batch of chunkArray(requests, 25)) {
-		let pending = batch;
-		let attempts = 0;
-		while (pending.length > 0) {
-			attempts += 1;
-			const response = await dynamo.send(
-				new BatchWriteCommand({
-					RequestItems: {
-						[TABLE_NAME]: pending,
-					},
-				})
-			);
-			const unprocessed = response?.UnprocessedItems?.[TABLE_NAME] || [];
-			if (!Array.isArray(unprocessed) || unprocessed.length === 0) break;
-			if (attempts >= 8) {
-				throw errorResponse(500, 'Failed to delete all backup records after retries');
-			}
-			pending = unprocessed;
-			await new Promise((resolve) => setTimeout(resolve, attempts * 60));
-		}
+	const batches = chunkArray(requests, 25);
+	for (const group of chunkArray(batches, BATCH_CONCURRENCY)) {
+		await Promise.all(group.map((batch) =>
+			sendBatchWithRetry(batch, 'Failed to delete all backup records after retries')
+		));
 	}
 };
 
@@ -658,26 +672,11 @@ const putItemsByPrimaryKey = async (items = []) => {
 	}
 	if (requests.length === 0) return;
 
-	for (const batch of chunkArray(requests, 25)) {
-		let pending = batch;
-		let attempts = 0;
-		while (pending.length > 0) {
-			attempts += 1;
-			const response = await dynamo.send(
-				new BatchWriteCommand({
-					RequestItems: {
-						[TABLE_NAME]: pending,
-					},
-				})
-			);
-			const unprocessed = response?.UnprocessedItems?.[TABLE_NAME] || [];
-			if (!Array.isArray(unprocessed) || unprocessed.length === 0) break;
-			if (attempts >= 8) {
-				throw errorResponse(500, 'Failed to import all backup records after retries');
-			}
-			pending = unprocessed;
-			await new Promise((resolve) => setTimeout(resolve, attempts * 60));
-		}
+	const batches = chunkArray(requests, 25);
+	for (const group of chunkArray(batches, BATCH_CONCURRENCY)) {
+		await Promise.all(group.map((batch) =>
+			sendBatchWithRetry(batch, 'Failed to import all backup records after retries')
+		));
 	}
 };
 
@@ -1209,140 +1208,208 @@ async function handleSettingsBackup(method, userId, body) {
 		};
 	}
 
+	if (method === 'PUT') {
+		const s3Key = `backups/${userId}/${Date.now()}-backup-upload.json`;
+		const presignClient = new S3Client({
+			...buildAwsClientConfig({ service: 's3' }),
+			requestChecksumCalculation: 'WHEN_REQUIRED',
+		});
+		const command = new PutObjectCommand({
+			Bucket: S3_BUCKET,
+			Key: s3Key,
+			ContentType: 'application/json',
+		});
+		const uploadUrl = await getSignedUrl(presignClient, command, { expiresIn: 300 });
+		return { uploadUrl, s3Key };
+	}
+
 	if (method === 'POST') {
 		const payload = parseBody(body);
 		const mode = String(payload.mode || '').toLowerCase() === 'merge'
 			? 'merge'
 			: 'replace';
+		const s3Key = payload.s3Key;
+
+		// For S3-based imports, run asynchronously to avoid API Gateway 29s timeout
+		if (s3Key && typeof s3Key === 'string') {
+			const jobId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+			await dynamo.send(new PutCommand({
+				TableName: TABLE_NAME,
+				Item: {
+					PK: `USER#${userId}`,
+					SK: `BACKUP_JOB#${jobId}`,
+					status: 'processing',
+					mode,
+					s3Key,
+					createdAt: new Date().toISOString(),
+					ttl: Math.floor(Date.now() / 1000) + 86400, // auto-delete after 24h
+				},
+			}));
+
+			const lambdaClient = new LambdaClient(buildAwsClientConfig({ service: 'lambda' }));
+			await lambdaClient.send(new InvokeCommand({
+				FunctionName: process.env.AWS_LAMBDA_FUNCTION_NAME,
+				InvocationType: 'Event',
+				Payload: JSON.stringify({
+					_asyncBackupImport: { userId, s3Key, mode, jobId },
+				}),
+			}));
+
+			return { jobId, status: 'processing' };
+		}
+
+		// Small payloads: run synchronously
 		const backupEnvelope = isPlainObject(payload.backup)
 			? payload.backup
 			: isPlainObject(payload.payload)
 				? payload.payload
 				: payload;
-		const backupData = isPlainObject(backupEnvelope.data)
-			? backupEnvelope.data
-			: backupEnvelope;
 
-		const rawUserItems = Array.isArray(backupData.userItems) ? backupData.userItems : [];
-		const rawPortfolioItems = Array.isArray(backupData.portfolioItems)
-			? backupData.portfolioItems
-			: [];
-		const rawAliases = Array.isArray(backupData.aliases) ? backupData.aliases : [];
+		return runBackupImportFromEnvelope(userId, mode, backupEnvelope);
+	}
 
-		if (rawUserItems.length === 0 && rawPortfolioItems.length === 0 && rawAliases.length === 0) {
-			throw errorResponse(
-				400,
-				'Backup payload is empty. Expected data.userItems, data.portfolioItems, or data.aliases.'
-			);
-		}
+	if (method === 'GET' && body === '__STATUS__') {
+		// This branch is unused in normal flow; status is checked via query param on GET
+	}
 
-		const now = new Date().toISOString();
-		const normalizedUserItems = dedupeItemsByPrimaryKey(
-			rawUserItems
-				.map((item) => normalizeUserItem(item, userId))
-				.filter(Boolean)
+	throw errorResponse(405, 'Method not allowed');
+}
+
+async function runBackupImport(userId, s3Key, mode) {
+	const s3Response = await s3Client.send(new GetObjectCommand({
+		Bucket: S3_BUCKET,
+		Key: s3Key,
+	}));
+	const s3Body = await s3Response.Body.transformToString('utf-8');
+	const backupEnvelope = JSON.parse(s3Body);
+	s3Client.send(new DeleteObjectCommand({ Bucket: S3_BUCKET, Key: s3Key })).catch(() => {});
+	return runBackupImportFromEnvelope(userId, mode, backupEnvelope);
+}
+
+async function runBackupImportFromEnvelope(userId, mode, backupEnvelope) {
+	const backupData = isPlainObject(backupEnvelope.data)
+		? backupEnvelope.data
+		: backupEnvelope;
+
+	const rawUserItems = Array.isArray(backupData.userItems) ? backupData.userItems : [];
+	const rawPortfolioItems = Array.isArray(backupData.portfolioItems)
+		? backupData.portfolioItems
+		: [];
+	const rawAliases = Array.isArray(backupData.aliases) ? backupData.aliases : [];
+
+	if (rawUserItems.length === 0 && rawPortfolioItems.length === 0 && rawAliases.length === 0) {
+		throw errorResponse(
+			400,
+			'Backup payload is empty. Expected data.userItems, data.portfolioItems, or data.aliases.'
 		);
-		const normalizedPortfolioItems = dedupeItemsByPrimaryKey(
-			rawPortfolioItems
-				.map((item) => normalizePortfolioItem(item, userId))
-				.filter(Boolean)
-		);
-		const normalizedAliases = dedupeItemsByPrimaryKey(
-			rawAliases
-				.map((item) => normalizeAliasItem(item, now))
-				.filter(Boolean)
-		);
+	}
 
-		const portfolioIdsInItems = new Set(
-			normalizedPortfolioItems
-				.map((item) => derivePortfolioId(item))
-				.filter(Boolean)
-		);
-		const userPortfolioRecordIds = new Set(
-			normalizedUserItems
-				.filter((item) => String(item.SK || '').startsWith('PORTFOLIO#'))
-				.map((item) => derivePortfolioId(item))
-				.filter(Boolean)
-		);
+	const now = new Date().toISOString();
+	const normalizedUserItems = dedupeItemsByPrimaryKey(
+		rawUserItems
+			.map((item) => normalizeUserItem(item, userId))
+			.filter(Boolean)
+	);
+	const normalizedPortfolioItems = dedupeItemsByPrimaryKey(
+		rawPortfolioItems
+			.map((item) => normalizePortfolioItem(item, userId))
+			.filter(Boolean)
+	);
+	const normalizedAliases = dedupeItemsByPrimaryKey(
+		rawAliases
+			.map((item) => normalizeAliasItem(item, now))
+			.filter(Boolean)
+	);
 
-		for (const portfolioId of portfolioIdsInItems) {
-			if (userPortfolioRecordIds.has(portfolioId)) continue;
-			normalizedUserItems.push({
-				PK: `USER#${userId}`,
-				SK: `PORTFOLIO#${portfolioId}`,
-				portfolioId,
-				name: portfolioId,
-				description: '',
-				baseCurrency: 'BRL',
-				createdAt: now,
-				updatedAt: now,
-			});
-		}
+	const portfolioIdsInItems = new Set(
+		normalizedPortfolioItems
+			.map((item) => derivePortfolioId(item))
+			.filter(Boolean)
+	);
+	const userPortfolioRecordIds = new Set(
+		normalizedUserItems
+			.filter((item) => String(item.SK || '').startsWith('PORTFOLIO#'))
+			.map((item) => derivePortfolioId(item))
+			.filter(Boolean)
+	);
 
-		const dedupedUserItems = dedupeItemsByPrimaryKey(normalizedUserItems);
-		const allItemsToWrite = [
-			...dedupedUserItems,
-			...normalizedPortfolioItems,
-			...normalizedAliases,
-		];
+	for (const portfolioId of portfolioIdsInItems) {
+		if (userPortfolioRecordIds.has(portfolioId)) continue;
+		normalizedUserItems.push({
+			PK: `USER#${userId}`,
+			SK: `PORTFOLIO#${portfolioId}`,
+			portfolioId,
+			name: portfolioId,
+			description: '',
+			baseCurrency: 'BRL',
+			createdAt: now,
+			updatedAt: now,
+		});
+	}
 
-		if (mode === 'replace') {
-			const existingUserItems = await queryAllItems({
+	const dedupedUserItems = dedupeItemsByPrimaryKey(normalizedUserItems);
+	const allItemsToWrite = [
+		...dedupedUserItems,
+		...normalizedPortfolioItems,
+		...normalizedAliases,
+	];
+
+	if (mode === 'replace') {
+		const [existingUserItems, existingAliases] = await Promise.all([
+			queryAllItems({
 				TableName: TABLE_NAME,
 				KeyConditionExpression: 'PK = :pk',
 				ExpressionAttributeValues: {
 					':pk': `USER#${userId}`,
 				},
-			});
-			const existingPortfolioIds = Array.from(
-				new Set(
-					(existingUserItems || [])
-						.map((item) => derivePortfolioId(item))
-						.filter(Boolean)
-				)
-			);
-			const existingPortfolioGroups = await Promise.all(
-				existingPortfolioIds.map((portfolioId) =>
-					queryAllItems({
-						TableName: TABLE_NAME,
-						KeyConditionExpression: 'PK = :pk',
-						ExpressionAttributeValues: {
-							':pk': `PORTFOLIO#${portfolioId}`,
-						},
-					})
-				)
-			);
-			const existingPortfolioItems = existingPortfolioGroups.flat();
-			const existingAliases = await scanAllItems({
+			}),
+			scanAllItems({
 				TableName: TABLE_NAME,
 				FilterExpression: 'begins_with(PK, :prefix)',
 				ExpressionAttributeValues: {
 					':prefix': 'ALIAS#',
 				},
-			});
+			}),
+		]);
+		const existingPortfolioIds = Array.from(
+			new Set(
+				(existingUserItems || [])
+					.map((item) => derivePortfolioId(item))
+					.filter(Boolean)
+			)
+		);
+		const existingPortfolioGroups = await Promise.all(
+			existingPortfolioIds.map((portfolioId) =>
+				queryAllItems({
+					TableName: TABLE_NAME,
+					KeyConditionExpression: 'PK = :pk',
+					ExpressionAttributeValues: {
+						':pk': `PORTFOLIO#${portfolioId}`,
+					},
+				})
+			)
+		);
+		const existingPortfolioItems = existingPortfolioGroups.flat();
 
-			await deleteItemsByPrimaryKey([
-				...existingPortfolioItems,
-				...existingUserItems,
-				...existingAliases,
-			]);
-		}
-
-		await putItemsByPrimaryKey(allItemsToWrite);
-
-		return {
-			mode,
-			importedAt: now,
-			stats: {
-				userItems: dedupedUserItems.length,
-				portfolioItems: normalizedPortfolioItems.length,
-				aliases: normalizedAliases.length,
-				totalItems: allItemsToWrite.length,
-			},
-		};
+		await deleteItemsByPrimaryKey([
+			...existingPortfolioItems,
+			...existingUserItems,
+			...existingAliases,
+		]);
 	}
 
-	throw errorResponse(405, 'Method not allowed');
+	await putItemsByPrimaryKey(allItemsToWrite);
+
+	return {
+		mode,
+		importedAt: now,
+		stats: {
+			userItems: dedupedUserItems.length,
+			portfolioItems: normalizedPortfolioItems.length,
+			aliases: normalizedAliases.length,
+			totalItems: allItemsToWrite.length,
+		},
+	};
 }
 
 async function handleSettingsCache(method, userId, body) {
@@ -2240,6 +2307,31 @@ async function handleCommunity(method, id, userId, body, query = {}) {
 // --- Main Handler ---
 
 exports.handler = async (event) => {
+	// Handle async backup import (self-invoked)
+	if (event._asyncBackupImport) {
+		const { userId, s3Key, mode, jobId } = event._asyncBackupImport;
+		try {
+			await runBackupImport(userId, s3Key, mode);
+			await dynamo.send(new UpdateCommand({
+				TableName: TABLE_NAME,
+				Key: { PK: `USER#${userId}`, SK: `BACKUP_JOB#${jobId}` },
+				UpdateExpression: 'SET #s = :s, completedAt = :t',
+				ExpressionAttributeNames: { '#s': 'status' },
+				ExpressionAttributeValues: { ':s': 'completed', ':t': new Date().toISOString() },
+			}));
+		} catch (err) {
+			const msg = err?.body ? JSON.parse(err.body).message : (err.message || 'Unknown error');
+			await dynamo.send(new UpdateCommand({
+				TableName: TABLE_NAME,
+				Key: { PK: `USER#${userId}`, SK: `BACKUP_JOB#${jobId}` },
+				UpdateExpression: 'SET #s = :s, #e = :e, completedAt = :t',
+				ExpressionAttributeNames: { '#s': 'status', '#e': 'error' },
+				ExpressionAttributeValues: { ':s': 'failed', ':e': msg, ':t': new Date().toISOString() },
+			}));
+		}
+		return;
+	}
+
 	let body;
 	let statusCode = 200;
 	let requestMethod = '';
@@ -2528,6 +2620,21 @@ exports.handler = async (event) => {
 				if (httpMethod === 'POST' || httpMethod === 'PUT') {
 					body = await handleAliases(httpMethod, requestBody);
 				}
+			} else if (section === 'backup' && subResource === 'status') {
+				const jobId = query.jobId;
+				if (!jobId) throw errorResponse(400, 'Missing jobId query parameter');
+				const jobResult = await dynamo.send(new GetCommand({
+					TableName: TABLE_NAME,
+					Key: { PK: `USER#${userId}`, SK: `BACKUP_JOB#${jobId}` },
+				}));
+				if (!jobResult.Item) throw errorResponse(404, 'Backup job not found');
+				body = {
+					jobId,
+					status: jobResult.Item.status,
+					error: jobResult.Item.error || undefined,
+					createdAt: jobResult.Item.createdAt,
+					completedAt: jobResult.Item.completedAt || undefined,
+				};
 			} else if (section === 'backup') {
 				body = await handleSettingsBackup(httpMethod, userId, requestBody);
 			} else {

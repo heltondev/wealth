@@ -69,6 +69,22 @@ resource "aws_iam_role_policy" "lambda_s3" {
   })
 }
 
+resource "aws_iam_role_policy" "lambda_self_invoke" {
+  name = "lambda-self-invoke"
+  role = aws_iam_role.lambda.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = "lambda:InvokeFunction"
+        Resource = aws_lambda_function.api.arn
+      }
+    ]
+  })
+}
+
 resource "aws_iam_role_policy_attachment" "lambda_logs" {
   role       = aws_iam_role.lambda.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
@@ -80,7 +96,7 @@ resource "aws_lambda_function" "api" {
   handler       = "backend/handlers/wealth-lambda-handler.handler"
   runtime       = "nodejs20.x"
   memory_size   = 512
-  timeout       = 60
+  timeout       = 120
 
   filename         = "${path.module}/../lambda.zip"
   source_code_hash = filebase64sha256("${path.module}/../lambda.zip")
