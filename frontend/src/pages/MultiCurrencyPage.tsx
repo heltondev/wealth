@@ -116,6 +116,8 @@ const MultiCurrencyPage = () => {
     () => (payload?.evolution || []).map((row) => ({
       date: String(row.date || ''),
       valueBrl: toNumber(row.value_brl),
+      brlAssets: toNumber(row.value_brl_assets),
+      usdAssets: toNumber(row.value_usd_assets),
       valueOriginal: toNumber(row.value_original_brl),
       fxImpactBrl: toNumber(row.fx_impact_brl),
     })),
@@ -136,6 +138,13 @@ const MultiCurrencyPage = () => {
       .sort((left, right) => right.endValueBrl - left.endValueBrl),
     [payload?.by_currency]
   );
+
+  const fxImpactRows = useMemo(
+    () => byCurrencyRows.filter((row) => row.currency !== 'BRL'),
+    [byCurrencyRows]
+  );
+
+  const hasForeignCurrency = fxImpactRows.length > 0;
 
   const byAssetRows = useMemo(
     () => (payload?.by_asset || [])
@@ -249,7 +258,7 @@ const MultiCurrencyPage = () => {
               <header className="multi-currency-card__header">
                 <h2>{t('multiCurrency.sections.evolution')}</h2>
               </header>
-              {evolutionRows.length === 0 ? (
+              {evolutionRows.length === 0 || !hasForeignCurrency ? (
                 <p className="multi-currency-card__empty">{t('multiCurrency.noSeries')}</p>
               ) : (
                 <ResponsiveContainer width="100%" height={330}>
@@ -257,32 +266,42 @@ const MultiCurrencyPage = () => {
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.22)" />
                     <XAxis dataKey="date" tickFormatter={formatTickDate} stroke="var(--text-secondary)" />
                     <YAxis
-                      stroke="var(--text-secondary)"
+                      yAxisId="brl"
+                      stroke="#34d399"
                       tickFormatter={(value) => formatCurrency(toNumber(value), 'BRL', numberLocale)}
                       width={118}
                     />
+                    <YAxis
+                      yAxisId="usd"
+                      orientation="right"
+                      stroke="#60a5fa"
+                      tickFormatter={(value) => formatCurrency(toNumber(value), 'USD', numberLocale)}
+                      width={100}
+                    />
                     <Tooltip
                       labelFormatter={(value) => formatTickDate(String(value || ''))}
-                      formatter={(value: number | string | undefined, name?: string) => [
-                        formatCurrency(toNumber(value), 'BRL', numberLocale),
-                        String(name || ''),
-                      ]}
+                      formatter={(value: number | string | undefined, name?: string) => {
+                        const currency = String(name || '').includes('USD') ? 'USD' : 'BRL';
+                        return [formatCurrency(toNumber(value), currency, numberLocale), String(name || '')];
+                      }}
                     />
                     <Legend />
                     <Line
                       type="monotone"
-                      dataKey="valueBrl"
+                      yAxisId="brl"
+                      dataKey="brlAssets"
                       name={t('multiCurrency.series.valueBrl')}
-                      stroke="#22d3ee"
+                      stroke="#34d399"
                       strokeWidth={2.5}
                       dot={false}
                       isAnimationActive={false}
                     />
                     <Line
                       type="monotone"
-                      dataKey="valueOriginal"
+                      yAxisId="usd"
+                      dataKey="usdAssets"
                       name={t('multiCurrency.series.valueOriginal')}
-                      stroke="#818cf8"
+                      stroke="#60a5fa"
                       strokeWidth={2}
                       dot={false}
                       isAnimationActive={false}
@@ -296,11 +315,11 @@ const MultiCurrencyPage = () => {
               <header className="multi-currency-card__header">
                 <h2>{t('multiCurrency.sections.currencyFxImpact')}</h2>
               </header>
-              {byCurrencyRows.length === 0 ? (
+              {fxImpactRows.length === 0 ? (
                 <p className="multi-currency-card__empty">{t('multiCurrency.noSeries')}</p>
               ) : (
                 <ResponsiveContainer width="100%" height={290}>
-                  <BarChart data={byCurrencyRows} margin={{ top: 8, right: 12, bottom: 4, left: 0 }}>
+                  <BarChart data={fxImpactRows} margin={{ top: 8, right: 12, bottom: 4, left: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.22)" />
                     <XAxis dataKey="currency" stroke="var(--text-secondary)" />
                     <YAxis
@@ -311,7 +330,7 @@ const MultiCurrencyPage = () => {
                     <Tooltip formatter={(value: number | string | undefined) => formatCurrency(toNumber(value), 'BRL', numberLocale)} />
                     <ReferenceLine y={0} stroke="rgba(148, 163, 184, 0.4)" />
                     <Bar dataKey="fxImpactBrl" name={t('multiCurrency.table.fxImpactBrl')} isAnimationActive={false}>
-                      {byCurrencyRows.map((row) => (
+                      {fxImpactRows.map((row) => (
                         <Cell key={`fx-impact-${row.currency}`} fill={row.fxImpactBrl >= 0 ? '#34d399' : '#f87171'} />
                       ))}
                     </Bar>

@@ -9,6 +9,7 @@ const {
 	DeleteCommand,
 	GetCommand,
 	ScanCommand,
+	BatchWriteCommand,
 } = require('@aws-sdk/lib-dynamodb');
 
 const {
@@ -7545,8 +7546,16 @@ class PlatformService {
 		const toDate = dates[dates.length - 1];
 
 		const currencies = Array.from(
-			new Set(normalizedAssets.map((asset) => String(asset.currency || 'BRL').toUpperCase()))
+			new Set([
+				...normalizedAssets.map((asset) => String(asset.currency || 'BRL').toUpperCase()),
+				'USD',
+			])
 		).sort();
+		await Promise.all(
+			currencies
+				.filter((c) => c !== 'BRL')
+				.map((currency) => this.#ensureFxHistory(currency, fromDate, toDate))
+		);
 		const fxRowsByCurrency = new Map(
 			await Promise.all(
 				currencies.map(async (currency) => [
@@ -7618,8 +7627,10 @@ class PlatformService {
 				}
 			}
 
-			let valueBrl = 0;
+				let valueBrl = 0;
 			let valueOriginalBrl = 0;
+			let brlAssetsNative = 0;
+			let usdAssetsNative = 0;
 			for (const asset of normalizedAssets) {
 				const tracker = priceTrackByAssetId.get(asset.assetId);
 				while (tracker.index < tracker.rows.length && tracker.rows[tracker.index].date <= date) {
@@ -7652,6 +7663,12 @@ class PlatformService {
 				valueBrl += assetValueBrl;
 				valueOriginalBrl += assetValueOriginalBrl;
 
+				if (currency === 'BRL') {
+					brlAssetsNative += nativeValue;
+				} else if (currency === 'USD') {
+					usdAssetsNative += nativeValue;
+				}
+
 				const snapshot = byAssetState.get(asset.assetId);
 				if (snapshot) {
 					if (dateIndex === 0) {
@@ -7669,6 +7686,8 @@ class PlatformService {
 			evolution.push({
 				date,
 				value_brl: valueBrl,
+				value_brl_assets: brlAssetsNative,
+				value_usd_assets: usdAssetsNative,
 				value_original_brl: valueOriginalBrl,
 				fx_impact_brl: valueBrl - valueOriginalBrl,
 			});
@@ -8812,6 +8831,79 @@ class PlatformService {
 		}
 
 		return null;
+	}
+
+	async #ensureFxHistory(currency, fromDate, toDate) {
+		const normalizedCurrency = String(currency || '').toUpperCase();
+		if (!normalizedCurrency || normalizedCurrency === 'BRL') return;
+
+		const existing = await this.#listFxHistory(normalizedCurrency);
+		const from = normalizeDate(fromDate);
+		const to = normalizeDate(toDate);
+		if (!from || !to) return;
+
+		const hasStart = existing.some((row) => row.date <= from);
+		const hasEnd = existing.some((row) => row.date >= to || row.date >= addDays(to, -5));
+		if (hasStart && hasEnd) return;
+
+		const startDate = new Date(`${from}T00:00:00Z`);
+		const endDate = new Date(`${to}T00:00:00Z`);
+		if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) return;
+
+		const url =
+			`https://olinda.bcb.gov.br/olinda/servico/PTAX/versao/v1/odata/CotacaoMoedaPeriodo` +
+			`(moeda='${normalizedCurrency}',dataInicial='${formatMonthDayYear(startDate)}',dataFinalCotacao='${formatMonthDayYear(endDate)}')` +
+			`?$orderby=dataHoraCotacao%20asc&$format=json`;
+
+		try {
+			const response = await withRetry(
+				() => fetchWithTimeout(url, { timeoutMs: 25000 }),
+				{ retries: 2, baseDelayMs: 500, factor: 2 }
+			);
+			if (!response.ok) return;
+			const json = await response.json();
+			const items = Array.isArray(json.value) ? json.value : [];
+
+			const byDate = new Map();
+			for (const item of items) {
+				const rate = numeric(item.cotacaoVenda, 0);
+				const date = normalizeDate(item.dataHoraCotacao);
+				if (!date || !(rate > 0)) continue;
+				byDate.set(date, rate);
+			}
+
+			const existingDates = new Set(existing.map((row) => row.date));
+			const writes = [];
+			for (const [date, rate] of byDate.entries()) {
+				if (existingDates.has(date)) continue;
+				writes.push({
+					PK: `FX#${normalizedCurrency}#BRL`,
+					SK: `RATE#${date}`,
+					entityType: 'FX_RATE',
+					base: normalizedCurrency,
+					quote: 'BRL',
+					date,
+					rate,
+					data_source: 'bcb_ptax_backfill',
+					fetched_at: nowIso(),
+					is_scraped: false,
+					updatedAt: nowIso(),
+				});
+			}
+
+			for (let i = 0; i < writes.length; i += 25) {
+				const batch = writes.slice(i, i + 25);
+				await this.dynamo.send(
+					new BatchWriteCommand({
+						RequestItems: {
+							[this.tableName]: batch.map((item) => ({ PutRequest: { Item: item } })),
+						},
+					})
+				);
+			}
+		} catch {
+			// best-effort backfill
+		}
 	}
 
 	async #getLatestFxMap() {

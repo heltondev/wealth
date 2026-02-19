@@ -325,8 +325,8 @@
     "loadError": "Falha ao carregar dados de risco e exposição.",
     "noSeries": "Sem dados para esta seção.",
     "kpis": {
-      "portfolioVolatility": "Volatilidade da Carteira (Anualizada)",
-      "maxDrawdown": "Drawdown Máximo da Carteira",
+      "portfolioVolatility": "Volatilidade Anual.",
+      "maxDrawdown": "Drawdown Máximo",
       "concentrationAlerts": "Alertas de Concentração",
       "largestPosition": "Maior Posição"
     },
@@ -358,7 +358,7 @@
       "foreignExposure": "Exposição Externa (BRL)",
       "foreignShare": "Parcela Externa",
       "dominantCurrency": "Moeda Dominante",
-      "estimatedImpactPlus5": "Impacto Estimado (+5% câmbio)",
+      "estimatedImpactPlus5": "Impacto Est. (+5% FX)",
       "byCurrencyChart": "Exposição por Moeda",
       "localVsForeign": "Local vs Externo",
       "byClassChart": "Exposição por Classe de Ativo",
@@ -415,7 +415,7 @@
     "portfolioSeries": "Carteira",
     "kpis": {
       "portfolioReturn": "Retorno da Carteira",
-      "selectedBenchmarkReturn": "Retorno do Benchmark Selecionado",
+      "selectedBenchmarkReturn": "Retorno do Benchmark",
       "alpha": "Alpha",
       "range": "Intervalo"
     },
@@ -563,20 +563,20 @@
     "noSeries": "Sem dados para esta seção.",
     "kpis": {
       "returnBrl": "Rentabilidade em BRL",
-      "returnOriginal": "Rentabilidade na Moeda Original",
-      "fxImpact": "Impacto Cambial Isolado",
-      "foreignExposure": "Exposição Internacional",
+      "returnOriginal": "Rent. Moeda Original",
+      "fxImpact": "Impacto Cambial",
+      "foreignExposure": "Expos. Internacional",
       "range": "Intervalo"
     },
     "sections": {
-      "evolution": "Evolução da Carteira: BRL vs Moeda Original",
+      "evolution": "Evolução da Carteira: Real vs Dólar",
       "currencyFxImpact": "Impacto Cambial por Moeda",
       "currencyReturns": "Rentabilidade por Moeda",
       "assets": "Impacto Cambial por Ativo"
     },
     "series": {
-      "valueBrl": "Valor da Carteira (BRL)",
-      "valueOriginal": "Valor da Carteira (Moeda Original)"
+      "valueBrl": "Valor em Real (BRL)",
+      "valueOriginal": "Valor em Dólar (USD)"
     },
     "table": {
       "asset": "Ativo",
@@ -613,9 +613,9 @@
     "kpis": {
       "annualTaxDue": "DARF Estimado (Ano)",
       "taxableJcp": "JCP Tributável (Ano)",
-      "exemptDividends": "Dividendos Isentos (Ano)",
+      "exemptDividends": "Div. Isentos (Ano)",
       "monthsWithDarf": "Meses com DARF",
-      "stockExemptMonths": "Meses com Isenção em Ações"
+      "stockExemptMonths": "Meses Isentos (Ações)"
     },
     "sections": {
       "gainByClass": "Ganho/Perda Mensal por Classe",

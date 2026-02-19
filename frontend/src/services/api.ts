@@ -764,6 +764,8 @@ export interface MultiCurrencyPortfolioSummary {
 export interface MultiCurrencyEvolutionPoint {
   date: string;
   value_brl: number;
+  value_brl_assets: number;
+  value_usd_assets: number;
   value_original_brl: number;
   fx_impact_brl: number;
 }
