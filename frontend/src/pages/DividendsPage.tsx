@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Bar,
@@ -31,6 +31,7 @@ import {
 import SharedDropdown from '../components/SharedDropdown';
 import { usePortfolioData } from '../context/PortfolioDataContext';
 import { formatCurrency, formatDate } from '../utils/formatters';
+import useMediaQuery from '../hooks/useMediaQuery';
 import {
   normalizeMethodOptions,
   normalizeNumericOptions,
@@ -244,6 +245,16 @@ const DividendsPage = () => {
   const [calendarLoading, setCalendarLoading] = useState(false);
   const calendarCacheRef = useRef(new Map<string, DividendCalendarEvent[]>());
   const [calendarRawEvents, setCalendarRawEvents] = useState<DividendCalendarEvent[]>([]);
+  const isMobile = useMediaQuery('(max-width: 768px)');
+  const [expandedEventIds, setExpandedEventIds] = useState<Set<string>>(new Set());
+  const toggleEventExpansion = useCallback((eventId: string) => {
+    setExpandedEventIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(eventId)) next.delete(eventId);
+      else next.add(eventId);
+      return next;
+    });
+  }, []);
   const numberLocale = i18n.language?.startsWith('pt') ? 'pt-BR' : 'en-US';
   const portfolioOptions = useMemo(
     () =>
@@ -1212,77 +1223,79 @@ const DividendsPage = () => {
                   <p className="dividends-card__empty">{t('dividends.noCalendarEvents', { defaultValue: 'No provents in selected month.' })}</p>
                 )}
 
-                <div className="provents-calendar__weekdays">
-                  {weekdayLabels.map((label) => (
-                    <span key={label} className="provents-calendar__weekday">{label}</span>
-                  ))}
-                </div>
+                <div className="provents-calendar__scroll">
+                  <div className="provents-calendar__weekdays">
+                    {weekdayLabels.map((label) => (
+                      <span key={label} className="provents-calendar__weekday">{label}</span>
+                    ))}
+                  </div>
 
-                <div className="provents-calendar__grid">
-                  {calendarCells.map((cell, index) => (
-                    <article
-                      key={`${cell.date || 'empty'}-${index}`}
-                      className={`provents-calendar__cell ${cell.date ? '' : 'provents-calendar__cell--placeholder'} ${cell.date && selectedCalendarDate === cell.date ? 'provents-calendar__cell--selected' : ''}`.trim()}
-                      onClick={() => {
-                        if (cell.date) selectCalendarDay(cell.date);
-                      }}
-                    >
-                      {cell.day ? (
-                        <>
-                          <header className="provents-calendar__cell-header">
-                            <button
-                              type="button"
-                              className={`provents-calendar__cell-day ${cell.date && selectedCalendarDate === cell.date ? 'provents-calendar__cell-day--selected' : ''}`.trim()}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                if (cell.date) selectCalendarDay(cell.date);
-                              }}
-                            >
-                              {cell.day}
-                            </button>
-                          </header>
-                          <div className="provents-calendar__cell-events">
-                            {(cell.date && expandedDates[cell.date] ? cell.events : cell.events.slice(0, 3)).map((entry, eventIndex) => (
+                  <div className="provents-calendar__grid">
+                    {calendarCells.map((cell, index) => (
+                      <article
+                        key={`${cell.date || 'empty'}-${index}`}
+                        className={`provents-calendar__cell ${cell.date ? '' : 'provents-calendar__cell--placeholder'} ${cell.date && selectedCalendarDate === cell.date ? 'provents-calendar__cell--selected' : ''}`.trim()}
+                        onClick={() => {
+                          if (cell.date) selectCalendarDay(cell.date);
+                        }}
+                      >
+                        {cell.day ? (
+                          <>
+                            <header className="provents-calendar__cell-header">
                               <button
                                 type="button"
-                                key={`${cell.date}-${entry.ticker}-${entry.eventType}-${eventIndex}`}
-                                className={`provents-calendar__event provents-calendar__event--${entry.status} ${selectedCalendarEventId === entry.id ? 'provents-calendar__event--selected' : ''}`.trim()}
-                                title={`${entry.ticker} ${entry.eventType} - ${entry.eventDate}`}
+                                className={`provents-calendar__cell-day ${cell.date && selectedCalendarDate === cell.date ? 'provents-calendar__cell-day--selected' : ''}`.trim()}
                                 onClick={(event) => {
                                   event.stopPropagation();
-                                  if (cell.date) selectCalendarEvent(cell.date, entry.id);
+                                  if (cell.date) selectCalendarDay(cell.date);
                                 }}
                               >
-                                <span className="provents-calendar__event-ticker">{entry.ticker}</span>
-                                {(() => {
-                                  const amt = entry.expectedGross ?? entry.amountPerUnit ?? null;
-                                  return amt !== null && Math.abs(amt) >= 0.005 ? (
-                                    <span className="provents-calendar__event-amount">
-                                      {formatCurrency(amt, entry.currency, numberLocale)}
-                                    </span>
-                                  ) : null;
-                                })()}
+                                {cell.day}
                               </button>
-                            ))}
-                            {cell.events.length > 3 && (
-                              <button
-                                type="button"
-                                className="provents-calendar__more"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  if (cell.date) toggleDateExpansion(cell.date);
-                                }}
-                              >
-                                {cell.date && expandedDates[cell.date]
-                                  ? t('common.showLess', { defaultValue: 'Show less' })
-                                  : `+${cell.events.length - 3}`}
-                              </button>
-                            )}
-                          </div>
-                        </>
-                      ) : null}
-                    </article>
-                  ))}
+                            </header>
+                            <div className="provents-calendar__cell-events">
+                              {(cell.date && expandedDates[cell.date] ? cell.events : cell.events.slice(0, 3)).map((entry, eventIndex) => (
+                                <button
+                                  type="button"
+                                  key={`${cell.date}-${entry.ticker}-${entry.eventType}-${eventIndex}`}
+                                  className={`provents-calendar__event provents-calendar__event--${entry.status} ${selectedCalendarEventId === entry.id ? 'provents-calendar__event--selected' : ''}`.trim()}
+                                  title={`${entry.ticker} ${entry.eventType} - ${entry.eventDate}`}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    if (cell.date) selectCalendarEvent(cell.date, entry.id);
+                                  }}
+                                >
+                                  <span className="provents-calendar__event-ticker">{entry.ticker}</span>
+                                  {(() => {
+                                    const amt = entry.expectedGross ?? entry.amountPerUnit ?? null;
+                                    return amt !== null && Math.abs(amt) >= 0.005 ? (
+                                      <span className="provents-calendar__event-amount">
+                                        {formatCurrency(amt, entry.currency, numberLocale)}
+                                      </span>
+                                    ) : null;
+                                  })()}
+                                </button>
+                              ))}
+                              {cell.events.length > 3 && (
+                                <button
+                                  type="button"
+                                  className="provents-calendar__more"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    if (cell.date) toggleDateExpansion(cell.date);
+                                  }}
+                                >
+                                  {cell.date && expandedDates[cell.date]
+                                    ? t('common.showLess', { defaultValue: 'Show less' })
+                                    : `+${cell.events.length - 3}`}
+                                </button>
+                              )}
+                            </div>
+                          </>
+                        ) : null}
+                      </article>
+                    ))}
+                  </div>
                 </div>
               </section>
 
@@ -1299,17 +1312,25 @@ const DividendsPage = () => {
                   <div className="dividends-list">
                     {listMonthEvents.slice(0, 60).map((event) => {
                       const tickerInsight = tickerInsightByTicker.get(event.ticker);
+                      const isEventExpanded = expandedEventIds.has(event.id);
                       return (
                         <article
                           key={event.id}
                           className="dividends-list__item"
                         >
-                          <div className="dividends-list__row">
+                          <div
+                            className="dividends-list__row"
+                            onClick={isMobile ? () => toggleEventExpansion(event.id) : undefined}
+                            role={isMobile ? 'button' : undefined}
+                            tabIndex={isMobile ? 0 : undefined}
+                            onKeyDown={isMobile ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleEventExpansion(event.id); } } : undefined}
+                          >
                             <Link
                               to={event.assetId
                                 ? `/assets/${encodeURIComponent(event.assetId)}?portfolioId=${encodeURIComponent(selectedPortfolio)}`
                                 : `/assets?portfolioId=${encodeURIComponent(selectedPortfolio)}&ticker=${encodeURIComponent(event.ticker)}`}
                               className="dividends-list__ticker dividends-list__ticker--link"
+                              onClick={(e) => { if (isMobile) e.stopPropagation(); }}
                             >
                               {event.ticker}
                             </Link>
@@ -1330,10 +1351,13 @@ const DividendsPage = () => {
                                   {t('dividends.revision')}
                                 </span>
                               )}
+                              {isMobile && (
+                                <span className={`dividends-list__chevron ${isEventExpanded ? 'dividends-list__chevron--expanded' : ''}`} aria-hidden="true" />
+                              )}
                             </div>
                           </div>
 
-                          <div className="dividends-list__groups">
+                          {(!isMobile || isEventExpanded) && <div className="dividends-list__groups">
                             <section className="dividends-list__group">
                               <h3 className="dividends-list__group-title">{t('dividends.groups.event')}</h3>
                               <div className="dividends-list__group-items">
@@ -1399,7 +1423,7 @@ const DividendsPage = () => {
                                 <div className="dividends-list__hint">{t(event.revisionNoteKey)}</div>
                               )}
                             </section>
-                          </div>
+                          </div>}
                         </article>
                       );
                     })}

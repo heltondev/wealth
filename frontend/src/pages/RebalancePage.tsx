@@ -13,6 +13,7 @@ import {
   type ThesisRecord,
 } from '../services/api';
 import { formatCurrency } from '../utils/formatters';
+import useMediaQuery from '../hooks/useMediaQuery';
 import './RebalancePage.scss';
 
 type RebalanceScope = 'assetClass' | 'asset';
@@ -126,6 +127,17 @@ const RebalancePage = () => {
   const [savingTargets, setSavingTargets] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const isMobile = useMediaQuery('(max-width: 768px)');
+  const [collapsedCards, setCollapsedCards] = useState<Set<string>>(new Set());
+  const toggleCard = useCallback((cardId: string) => {
+    setCollapsedCards((prev) => {
+      const next = new Set(prev);
+      if (next.has(cardId)) next.delete(cardId);
+      else next.add(cardId);
+      return next;
+    });
+  }, []);
+  const isCardExpanded = useCallback((cardId: string) => !isMobile || !collapsedCards.has(cardId), [isMobile, collapsedCards]);
   const [thesisItems, setThesisItems] = useState<ThesisRecord[]>([]);
   const [loadingTheses, setLoadingTheses] = useState(false);
   const [thesesError, setThesesError] = useState<string | null>(null);
@@ -656,7 +668,7 @@ const RebalancePage = () => {
 
             <div className="rebalance-page__grid">
               <section className="rebalance-card rebalance-card--wide">
-                <header className="rebalance-card__header">
+                <header className="rebalance-card__header" onClick={isMobile ? () => toggleCard('targets') : undefined} role={isMobile ? 'button' : undefined} tabIndex={isMobile ? 0 : undefined}>
                   <div className="rebalance-card__header-copy">
                     <h2>{t('rebalance.targetEditorTitle')}</h2>
                     <p>
@@ -664,103 +676,111 @@ const RebalancePage = () => {
                       <strong>{percentSum.toLocaleString(numberLocale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%</strong>
                     </p>
                   </div>
-                  <div className="rebalance-card__actions">
-                    <button
-                      className="rebalance-page__button rebalance-page__button--secondary"
-                      type="button"
-                      onClick={handleAddTarget}
-                      disabled={scope === 'asset' && assetOptions.length === 0}
-                    >
-                      {t('rebalance.addTarget')}
-                    </button>
-                    <button
-                      className="rebalance-page__button"
-                      type="button"
-                      onClick={handleSaveTargets}
-                      disabled={savingTargets || hasAnyInvalidRows}
-                    >
-                      {t('rebalance.saveTargets')}
-                    </button>
+                  <div className="rebalance-card__header-right">
+                    <div className="rebalance-card__actions">
+                      <button
+                        className="rebalance-page__button rebalance-page__button--secondary"
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); handleAddTarget(); }}
+                        disabled={scope === 'asset' && assetOptions.length === 0}
+                      >
+                        {t('rebalance.addTarget')}
+                      </button>
+                      <button
+                        className="rebalance-page__button"
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); handleSaveTargets(); }}
+                        disabled={savingTargets || hasAnyInvalidRows}
+                      >
+                        {t('rebalance.saveTargets')}
+                      </button>
+                    </div>
+                    {isMobile && <span className={`rebalance-card__chevron ${isCardExpanded('targets') ? 'rebalance-card__chevron--expanded' : ''}`} aria-hidden="true" />}
                   </div>
                 </header>
 
-                {scope === 'asset' && assetOptions.length === 0 ? (
-                  <p className="rebalance-card__empty">{t('rebalance.messages.noAssets')}</p>
-                ) : (
-                  <div className="rebalance-table-wrapper">
-                    <table className="rebalance-table">
-                      <thead>
-                        <tr>
-                          <th>{scope === 'assetClass' ? t('rebalance.table.class') : t('rebalance.table.asset')}</th>
-                          <th>{t('rebalance.table.percent')}</th>
-                          <th>{t('rebalance.table.actions')}</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {currentRows.map((row) => {
-                          const duplicate = valueDuplicates.has(String(row.value || '').trim().toLowerCase());
-                          const percentInvalid = toNumber(row.percent) <= 0;
-                          return (
-                            <tr key={row.localId}>
-                              <td className={duplicate ? 'rebalance-table__cell rebalance-table__cell--error' : 'rebalance-table__cell'}>
-                                <SharedDropdown
-                                  value={row.value}
-                                  options={currentOptions}
-                                  onChange={(value) => handleTargetChange(row.localId, { value })}
-                                  ariaLabel={scope === 'assetClass' ? t('rebalance.table.class') : t('rebalance.table.asset')}
-                                  size="sm"
-                                  disabled={currentOptions.length === 0}
-                                />
-                              </td>
-                              <td className={percentInvalid ? 'rebalance-table__cell rebalance-table__cell--error' : 'rebalance-table__cell'}>
-                                <input
-                                  className="rebalance-page__input"
-                                  value={row.percent}
-                                  onChange={(event) => handleTargetChange(row.localId, { percent: event.target.value })}
-                                  inputMode="decimal"
-                                  type="number"
-                                  min="0"
-                                  step="0.01"
-                                />
-                              </td>
-                              <td>
-                                <button
-                                  type="button"
-                                  className="rebalance-page__button rebalance-page__button--danger"
-                                  onClick={() => handleRemoveTarget(row.localId)}
-                                >
-                                  {t('common.delete')}
-                                </button>
-                              </td>
+                {isCardExpanded('targets') && (
+                  <>
+                    {scope === 'asset' && assetOptions.length === 0 ? (
+                      <p className="rebalance-card__empty">{t('rebalance.messages.noAssets')}</p>
+                    ) : (
+                      <div className="rebalance-table-wrapper">
+                        <table className="rebalance-table">
+                          <thead>
+                            <tr>
+                              <th>{scope === 'assetClass' ? t('rebalance.table.class') : t('rebalance.table.asset')}</th>
+                              <th>{t('rebalance.table.percent')}</th>
+                              <th>{t('rebalance.table.actions')}</th>
                             </tr>
-                          );
-                        })}
-                        {currentRows.length === 0 && (
-                          <tr>
-                            <td colSpan={3} className="rebalance-table__empty">{t('rebalance.emptyTargets')}</td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+                          </thead>
+                          <tbody>
+                            {currentRows.map((row) => {
+                              const duplicate = valueDuplicates.has(String(row.value || '').trim().toLowerCase());
+                              const percentInvalid = toNumber(row.percent) <= 0;
+                              return (
+                                <tr key={row.localId}>
+                                  <td className={duplicate ? 'rebalance-table__cell rebalance-table__cell--error' : 'rebalance-table__cell'}>
+                                    <SharedDropdown
+                                      value={row.value}
+                                      options={currentOptions}
+                                      onChange={(value) => handleTargetChange(row.localId, { value })}
+                                      ariaLabel={scope === 'assetClass' ? t('rebalance.table.class') : t('rebalance.table.asset')}
+                                      size="sm"
+                                      disabled={currentOptions.length === 0}
+                                    />
+                                  </td>
+                                  <td className={percentInvalid ? 'rebalance-table__cell rebalance-table__cell--error' : 'rebalance-table__cell'}>
+                                    <input
+                                      className="rebalance-page__input"
+                                      value={row.percent}
+                                      onChange={(event) => handleTargetChange(row.localId, { percent: event.target.value })}
+                                      inputMode="decimal"
+                                      type="number"
+                                      min="0"
+                                      step="0.01"
+                                    />
+                                  </td>
+                                  <td>
+                                    <button
+                                      type="button"
+                                      className="rebalance-page__button rebalance-page__button--danger"
+                                      onClick={() => handleRemoveTarget(row.localId)}
+                                    >
+                                      {t('common.delete')}
+                                    </button>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                            {currentRows.length === 0 && (
+                              <tr>
+                                <td colSpan={3} className="rebalance-table__empty">{t('rebalance.emptyTargets')}</td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
 
-                <footer className="rebalance-card__footer">
-                  <span className={`rebalance-badge rebalance-badge--${targetSumState}`}>
-                    {t(`rebalance.targetSumState.${targetSumState}`)}
-                  </span>
-                  {currentScopeHasInvalidRows && (
-                    <span className="rebalance-badge rebalance-badge--danger">{t('rebalance.messages.invalidTargets')}</span>
-                  )}
-                  {notice && <span className="rebalance-badge rebalance-badge--success">{notice}</span>}
-                </footer>
+                    <footer className="rebalance-card__footer">
+                      <span className={`rebalance-badge rebalance-badge--${targetSumState}`}>
+                        {t(`rebalance.targetSumState.${targetSumState}`)}
+                      </span>
+                      {currentScopeHasInvalidRows && (
+                        <span className="rebalance-badge rebalance-badge--danger">{t('rebalance.messages.invalidTargets')}</span>
+                      )}
+                      {notice && <span className="rebalance-badge rebalance-badge--success">{notice}</span>}
+                    </footer>
+                  </>
+                )}
               </section>
 
               <section className="rebalance-card">
-                <header className="rebalance-card__header">
+                <header className="rebalance-card__header" onClick={isMobile ? () => toggleCard('suggestion') : undefined} role={isMobile ? 'button' : undefined} tabIndex={isMobile ? 0 : undefined}>
                   <h2>{t('rebalance.suggestionTitle')}</h2>
+                  {isMobile && <span className={`rebalance-card__chevron ${isCardExpanded('suggestion') ? 'rebalance-card__chevron--expanded' : ''}`} aria-hidden="true" />}
                 </header>
-                <div className="rebalance-page__contribution">
+                {isCardExpanded('suggestion') && <div className="rebalance-page__contribution">
                   <label htmlFor="rebalance-contribution-brl">{t('rebalance.amountBrl')}</label>
                   <input
                     id="rebalance-contribution-brl"
@@ -803,14 +823,15 @@ const RebalancePage = () => {
                   >
                     {t('rebalance.refreshSuggestion')}
                   </button>
-                </div>
+                </div>}
               </section>
 
               <section className="rebalance-card rebalance-card--wide">
-                <header className="rebalance-card__header">
+                <header className="rebalance-card__header" onClick={isMobile ? () => toggleCard('thesis') : undefined} role={isMobile ? 'button' : undefined} tabIndex={isMobile ? 0 : undefined}>
                   <h2>{t('rebalance.thesis.title')}</h2>
+                  {isMobile && <span className={`rebalance-card__chevron ${isCardExpanded('thesis') ? 'rebalance-card__chevron--expanded' : ''}`} aria-hidden="true" />}
                 </header>
-                {!thesisDiagnostics ? (
+                {isCardExpanded('thesis') && (!thesisDiagnostics ? (
                   <p className="rebalance-card__empty">{t('rebalance.thesis.unavailable')}</p>
                 ) : (
                   <div className="rebalance-thesis">
@@ -873,14 +894,15 @@ const RebalancePage = () => {
                     )}
 
                   </div>
-                )}
+                ))}
               </section>
 
               <section className="rebalance-card rebalance-card--wide">
-                <header className="rebalance-card__header">
+                <header className="rebalance-card__header" onClick={isMobile ? () => toggleCard('drift') : undefined} role={isMobile ? 'button' : undefined} tabIndex={isMobile ? 0 : undefined}>
                   <h2>{t('rebalance.driftTitle')}</h2>
+                  {isMobile && <span className={`rebalance-card__chevron ${isCardExpanded('drift') ? 'rebalance-card__chevron--expanded' : ''}`} aria-hidden="true" />}
                 </header>
-                {driftRows.length === 0 ? (
+                {isCardExpanded('drift') && (driftRows.length === 0 ? (
                   <p className="rebalance-card__empty">{t('rebalance.messages.emptyDrift')}</p>
                 ) : (
                   <div className="rebalance-table-wrapper">
@@ -911,14 +933,15 @@ const RebalancePage = () => {
                       </tbody>
                     </table>
                   </div>
-                )}
+                ))}
               </section>
 
               <section className="rebalance-card rebalance-card--wide">
-                <header className="rebalance-card__header">
+                <header className="rebalance-card__header" onClick={isMobile ? () => toggleCard('contributions') : undefined} role={isMobile ? 'button' : undefined} tabIndex={isMobile ? 0 : undefined}>
                   <h2>{t('rebalance.table.recommendedContribution')}</h2>
+                  {isMobile && <span className={`rebalance-card__chevron ${isCardExpanded('contributions') ? 'rebalance-card__chevron--expanded' : ''}`} aria-hidden="true" />}
                 </header>
-                {suggestionRows.length === 0 ? (
+                {isCardExpanded('contributions') && (suggestionRows.length === 0 ? (
                   <p className="rebalance-card__empty">{t('rebalance.messages.emptySuggestion')}</p>
                 ) : (
                   <>
@@ -977,14 +1000,15 @@ const RebalancePage = () => {
                       </table>
                     </div>
                   </>
-                )}
+                ))}
               </section>
 
               <section className="rebalance-card rebalance-card--wide">
-                <header className="rebalance-card__header">
+                <header className="rebalance-card__header" onClick={isMobile ? () => toggleCard('thesislist') : undefined} role={isMobile ? 'button' : undefined} tabIndex={isMobile ? 0 : undefined}>
                   <h2>{t('rebalance.thesis.activeListTitle')}</h2>
+                  {isMobile && <span className={`rebalance-card__chevron ${isCardExpanded('thesislist') ? 'rebalance-card__chevron--expanded' : ''}`} aria-hidden="true" />}
                 </header>
-                {loadingTheses ? (
+                {isCardExpanded('thesislist') && (loadingTheses ? (
                   <p className="rebalance-card__empty">{t('common.loading')}</p>
                 ) : thesesError ? (
                   <p className="rebalance-card__empty">{t('rebalance.thesis.loadError')}</p>
@@ -1041,7 +1065,7 @@ const RebalancePage = () => {
                       </tbody>
                     </table>
                   </div>
-                )}
+                ))}
               </section>
             </div>
           </>

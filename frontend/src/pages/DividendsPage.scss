@@ -366,6 +366,21 @@
     line-height: 1.35;
   }
 
+  &__chevron {
+    display: inline-block;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    transform: rotate(45deg);
+    transition: transform 200ms ease;
+    flex-shrink: 0;
+
+    &--expanded {
+      transform: rotate(-135deg);
+    }
+  }
+
   &__groups {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -606,6 +621,13 @@
     border: 1px solid rgba(148, 163, 184, 0.2);
   }
 
+  &__scroll {
+    @media (max-width: $breakpoint-tablet) {
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+  }
+
   @media (max-width: $breakpoint-tablet) {
     &__weekdays,
     &__grid {
@@ -623,6 +645,12 @@
 
     &__filters {
       width: 100%;
+    }
+  }
+
+  .dividends-list {
+    &__row {
+      cursor: pointer;
     }
   }
 }

@@ -184,6 +184,27 @@
     }
   }
 
+  &__header-right {
+    display: flex;
+    align-items: center;
+    gap: $spacing-sm;
+  }
+
+  &__chevron {
+    display: inline-block;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-right: 2px solid var(--text-secondary);
+    border-bottom: 2px solid var(--text-secondary);
+    transform: rotate(45deg);
+    transition: transform 200ms ease;
+    flex-shrink: 0;
+
+    &--expanded {
+      transform: rotate(-135deg);
+    }
+  }
+
   &__empty {
     margin: auto 0;
     text-align: center;
@@ -528,6 +549,12 @@
 
     &__tabs {
       width: 100%;
+    }
+  }
+
+  .risk-card {
+    &__header {
+      cursor: pointer;
     }
   }
 }

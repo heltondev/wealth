@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import useMediaQuery from '../hooks/useMediaQuery';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import {
@@ -56,6 +57,7 @@ const MultiCurrencyPage = () => {
   const [error, setError] = useState<string | null>(null);
   const [payload, setPayload] = useState<MultiCurrencyResponse | null>(null);
 
+  const isMobile = useMediaQuery('(max-width: 768px)');
   const numberLocale = i18n.language?.startsWith('pt') ? 'pt-BR' : 'en-US';
 
   const formatSignedPercent = (value: number, fractionDigits = 2): string =>
@@ -269,14 +271,14 @@ const MultiCurrencyPage = () => {
                       yAxisId="brl"
                       stroke="#34d399"
                       tickFormatter={(value) => formatCurrency(toNumber(value), 'BRL', numberLocale)}
-                      width={118}
+                      width={isMobile ? 70 : 118}
                     />
                     <YAxis
                       yAxisId="usd"
                       orientation="right"
                       stroke="#60a5fa"
                       tickFormatter={(value) => formatCurrency(toNumber(value), 'USD', numberLocale)}
-                      width={100}
+                      width={isMobile ? 60 : 100}
                     />
                     <Tooltip
                       labelFormatter={(value) => formatTickDate(String(value || ''))}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Bar,
@@ -27,6 +27,7 @@ import {
   getOrFetchCachedAnalytics,
 } from '../services/analyticsCache';
 import { formatCurrency } from '../utils/formatters';
+import useMediaQuery from '../hooks/useMediaQuery';
 import {
   classifyReturnValue,
   filterScatterRowsByReturn,
@@ -125,6 +126,17 @@ const RiskPage = () => {
   const [historyPeriod, setHistoryPeriod] = useState<(typeof PERIOD_OPTIONS)[number]>('1Y');
   const [scatterFilter, setScatterFilter] = useState<(typeof RETURN_FILTERS)[number]>('all');
   const [activeTab, setActiveTab] = useState<(typeof RISK_TABS)[number]>('concentration');
+  const isMobile = useMediaQuery('(max-width: 768px)');
+  const [collapsedCards, setCollapsedCards] = useState<Set<string>>(new Set());
+  const toggleCard = useCallback((cardId: string) => {
+    setCollapsedCards((prev) => {
+      const next = new Set(prev);
+      if (next.has(cardId)) next.delete(cardId);
+      else next.add(cardId);
+      return next;
+    });
+  }, []);
+  const isCardExpanded = useCallback((cardId: string) => !isMobile || !collapsedCards.has(cardId), [isMobile, collapsedCards]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [risk, setRisk] = useState<RiskResponse | null>(null);
@@ -715,10 +727,11 @@ const RiskPage = () => {
             <div className="risk-page__panel">
               {activeTab === 'concentration' && (
                 <section className="risk-card">
-                <header className="risk-card__header">
+                <header className="risk-card__header" onClick={isMobile ? () => toggleCard('concentration') : undefined} role={isMobile ? 'button' : undefined} tabIndex={isMobile ? 0 : undefined}>
                   <h2>{t('risk.sections.concentration')}</h2>
+                  {isMobile && <span className={`risk-card__chevron ${isCardExpanded('concentration') ? 'risk-card__chevron--expanded' : ''}`} aria-hidden="true" />}
                 </header>
-                {concentrationRows.length === 0 ? (
+                {isCardExpanded('concentration') && (concentrationRows.length === 0 ? (
                   <p className="risk-card__empty">{t('risk.noSeries')}</p>
                 ) : (
                   <div className="risk-table-wrapper">
@@ -761,16 +774,17 @@ const RiskPage = () => {
                       </tbody>
                     </table>
                   </div>
-                )}
+                ))}
                 </section>
               )}
 
               {activeTab === 'fxExposure' && (
                 <section className="risk-card">
-                <header className="risk-card__header">
+                <header className="risk-card__header" onClick={isMobile ? () => toggleCard('fxExposure') : undefined} role={isMobile ? 'button' : undefined} tabIndex={isMobile ? 0 : undefined}>
                   <h2>{t('risk.sections.fxExposure')}</h2>
+                  {isMobile && <span className={`risk-card__chevron ${isCardExpanded('fxExposure') ? 'risk-card__chevron--expanded' : ''}`} aria-hidden="true" />}
                 </header>
-                {fxRows.length === 0 ? (
+                {isCardExpanded('fxExposure') && (fxRows.length === 0 ? (
                   <p className="risk-card__empty">{t('risk.noSeries')}</p>
                 ) : (
                   <>
@@ -1012,16 +1026,17 @@ const RiskPage = () => {
                       </div>
                     </div>
                   </>
-                )}
+                ))}
                 </section>
               )}
 
               {activeTab === 'drawdownByAsset' && (
                 <section className="risk-card">
-                <header className="risk-card__header">
+                <header className="risk-card__header" onClick={isMobile ? () => toggleCard('drawdown') : undefined} role={isMobile ? 'button' : undefined} tabIndex={isMobile ? 0 : undefined}>
                   <h2>{t('risk.sections.drawdownByAsset')}</h2>
+                  {isMobile && <span className={`risk-card__chevron ${isCardExpanded('drawdown') ? 'risk-card__chevron--expanded' : ''}`} aria-hidden="true" />}
                 </header>
-                {drawdownRows.length === 0 ? (
+                {isCardExpanded('drawdown') && (drawdownRows.length === 0 ? (
                   <p className="risk-card__empty">{t('risk.noSeries')}</p>
                 ) : (
                   <>
@@ -1065,16 +1080,17 @@ const RiskPage = () => {
                       </table>
                     </div>
                   </>
-                )}
+                ))}
                 </section>
               )}
 
               {activeTab === 'correlation' && (
                 <section className="risk-card">
-                <header className="risk-card__header">
+                <header className="risk-card__header" onClick={isMobile ? () => toggleCard('correlation') : undefined} role={isMobile ? 'button' : undefined} tabIndex={isMobile ? 0 : undefined}>
                   <h2>{t('risk.sections.correlation')}</h2>
+                  {isMobile && <span className={`risk-card__chevron ${isCardExpanded('correlation') ? 'risk-card__chevron--expanded' : ''}`} aria-hidden="true" />}
                 </header>
-                {correlationTickers.length < 2 ? (
+                {isCardExpanded('correlation') && (correlationTickers.length < 2 ? (
                   <p className="risk-card__empty">{t('risk.noSeries')}</p>
                 ) : (
                   <div className="risk-correlation-wrapper">
@@ -1112,14 +1128,15 @@ const RiskPage = () => {
                       </tbody>
                     </table>
                   </div>
-                )}
+                ))}
                 </section>
               )}
 
               {activeTab === 'riskReturn' && (
                 <section className="risk-card">
-                <header className="risk-card__header">
+                <header className="risk-card__header" onClick={isMobile ? () => toggleCard('riskReturn') : undefined} role={isMobile ? 'button' : undefined} tabIndex={isMobile ? 0 : undefined}>
                   <h2>{t('risk.sections.riskReturn')}</h2>
+                  <div className="risk-card__header-right">
                   <div className="risk-return-filters" role="group" aria-label={t('risk.returnFilter.ariaLabel')}>
                     {scatterFilterOptions.map((option) => (
                       <button
@@ -1132,8 +1149,10 @@ const RiskPage = () => {
                       </button>
                     ))}
                   </div>
+                  {isMobile && <span className={`risk-card__chevron ${isCardExpanded('riskReturn') ? 'risk-card__chevron--expanded' : ''}`} aria-hidden="true" />}
+                  </div>
                 </header>
-                {scatterRowsFiltered.length === 0 ? (
+                {isCardExpanded('riskReturn') && (scatterRowsFiltered.length === 0 ? (
                   <p className="risk-card__empty">{t('risk.noSeries')}</p>
                 ) : (
                   <>
@@ -1192,16 +1211,17 @@ const RiskPage = () => {
                       </table>
                     </div>
                   </>
-                )}
+                ))}
                 </section>
               )}
 
               {activeTab === 'purchasingPower' && (
                 <section className="risk-card">
-                <header className="risk-card__header">
+                <header className="risk-card__header" onClick={isMobile ? () => toggleCard('purchasing') : undefined} role={isMobile ? 'button' : undefined} tabIndex={isMobile ? 0 : undefined}>
                   <h2>{t('risk.sections.purchasingPower')}</h2>
+                  {isMobile && <span className={`risk-card__chevron ${isCardExpanded('purchasing') ? 'risk-card__chevron--expanded' : ''}`} aria-hidden="true" />}
                 </header>
-                {inflationSeries.length === 0 ? (
+                {isCardExpanded('purchasing') && (inflationSeries.length === 0 ? (
                   <p className="risk-card__empty">{t('risk.noSeries')}</p>
                 ) : (
                   <ResponsiveContainer width="100%" height={320}>
@@ -1241,16 +1261,17 @@ const RiskPage = () => {
                       />
                     </LineChart>
                   </ResponsiveContainer>
-                )}
+                ))}
                 </section>
               )}
 
               {activeTab === 'sensitivity' && (
                 <section className="risk-card">
-                <header className="risk-card__header">
+                <header className="risk-card__header" onClick={isMobile ? () => toggleCard('sensitivity') : undefined} role={isMobile ? 'button' : undefined} tabIndex={isMobile ? 0 : undefined}>
                   <h2>{t('risk.sections.sensitivity')}</h2>
+                  {isMobile && <span className={`risk-card__chevron ${isCardExpanded('sensitivity') ? 'risk-card__chevron--expanded' : ''}`} aria-hidden="true" />}
                 </header>
-                <p className="risk-card__empty risk-card__empty--left">{t('risk.sensitivityUnavailable')}</p>
+                {isCardExpanded('sensitivity') && <p className="risk-card__empty risk-card__empty--left">{t('risk.sensitivityUnavailable')}</p>}
                 </section>
               )}
             </div>

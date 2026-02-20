@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useState } from 'react';
+import useMediaQuery from '../hooks/useMediaQuery';
 import './DataTable.scss';
 
 export type TableSortDirection = 'asc' | 'desc';
@@ -104,6 +105,9 @@ function DataTable<Row>({
   rowClassName,
 }: DataTableProps<Row>) {
   const searchId = useId();
+  const isMobile = useMediaQuery('(max-width: 768px)');
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const activeFilterCount = filters.filter((f) => f.value && f.value !== 'all' && f.value !== '').length;
   const defaultSortKey = defaultSort?.key || columns.find((column) => column.sortable)?.key || columns[0]?.key;
   const defaultSortDirection = defaultSort?.direction || 'asc';
   const [sortKey, setSortKey] = useState(defaultSortKey);
@@ -191,37 +195,54 @@ function DataTable<Row>({
           />
         </div>
 
-        {filters.map((filter) => (
-          <div key={filter.key} className="data-table__filter-group">
-            <label htmlFor={`${searchId}-${filter.key}`}>{filter.label}</label>
-            <select
-              id={`${searchId}-${filter.key}`}
-              value={filter.value}
-              onChange={(event) => filter.onChange(event.target.value)}
-            >
-              {filter.options.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </div>
-        ))}
-
-        <div className="data-table__filter-group">
-          <label htmlFor={`${searchId}-page-size`}>{labels.itemsPerPage}</label>
-          <select
-            id={`${searchId}-page-size`}
-            value={itemsPerPage}
-            onChange={(event) => onItemsPerPageChange(Number(event.target.value))}
+        {isMobile && (filters.length > 0 || pageSizeOptions.length > 0) && (
+          <button
+            type="button"
+            className="data-table__filters-toggle"
+            onClick={() => setFiltersOpen((prev) => !prev)}
           >
-            {pageSizeOptions.map((size) => (
-              <option key={size} value={size}>
-                {size}
-              </option>
+            {filtersOpen ? 'Hide filters' : 'Filters'}
+            {activeFilterCount > 0 && (
+              <span className="data-table__filters-badge">{activeFilterCount}</span>
+            )}
+          </button>
+        )}
+
+        {(!isMobile || filtersOpen) && (
+          <>
+            {filters.map((filter) => (
+              <div key={filter.key} className="data-table__filter-group">
+                <label htmlFor={`${searchId}-${filter.key}`}>{filter.label}</label>
+                <select
+                  id={`${searchId}-${filter.key}`}
+                  value={filter.value}
+                  onChange={(event) => filter.onChange(event.target.value)}
+                >
+                  {filter.options.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
             ))}
-          </select>
-        </div>
+
+            <div className="data-table__filter-group">
+              <label htmlFor={`${searchId}-page-size`}>{labels.itemsPerPage}</label>
+              <select
+                id={`${searchId}-page-size`}
+                value={itemsPerPage}
+                onChange={(event) => onItemsPerPageChange(Number(event.target.value))}
+              >
+                {pageSizeOptions.map((size) => (
+                  <option key={size} value={size}>
+                    {size}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </>
+        )}
       </div>
 
       {processedRows.length === 0 ? (
