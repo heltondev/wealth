@@ -190,6 +190,33 @@
     gap: $spacing-sm;
   }
 
+  &__header-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  &__close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border: 1px solid var(--glass-border-strong);
+    border-radius: 8px;
+    background: rgba(239, 68, 68, 0.12);
+    color: #fca5a5;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: background $transition-fast, border-color $transition-fast;
+
+    &:hover {
+      background: rgba(239, 68, 68, 0.24);
+      border-color: rgba(248, 113, 113, 0.52);
+    }
+  }
+
   &__logo {
     margin: 0;
     font-size: 1.5rem;

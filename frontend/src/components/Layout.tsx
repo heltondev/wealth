@@ -62,12 +62,11 @@ const Layout = ({ children }: LayoutProps) => {
         <span className="layout-bg__noise" />
       </div>
 
-      {isMobile && (
+      {isMobile && !sidebarOpen && (
         <button
           className="layout__hamburger"
-          onClick={() => setSidebarOpen((prev) => !prev)}
-          aria-label={sidebarOpen ? 'Close menu' : 'Open menu'}
-          aria-expanded={sidebarOpen}
+          onClick={() => setSidebarOpen(true)}
+          aria-label="Open menu"
         >
           <span className="layout__hamburger-bar" />
           <span className="layout__hamburger-bar" />
@@ -85,7 +84,18 @@ const Layout = ({ children }: LayoutProps) => {
 
       <aside className={`sidebar${isMobile && sidebarOpen ? ' sidebar--open' : ''}`}>
         <div className="sidebar__header">
-          <h1 className="sidebar__logo">Invest</h1>
+          <div className="sidebar__header-top">
+            <h1 className="sidebar__logo">Invest</h1>
+            {isMobile && (
+              <button
+                className="sidebar__close"
+                onClick={() => setSidebarOpen(false)}
+                aria-label="Close menu"
+              >
+                ✕
+              </button>
+            )}
+          </div>
           <div className="sidebar__notice">
             <span className={`sidebar__notice-dot ${
               todayCount > 0
