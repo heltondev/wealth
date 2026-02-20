@@ -1,8 +1,10 @@
-import { NavLink, useNavigate } from 'react-router';
+import { useState, useEffect } from 'react';
+import { NavLink, useNavigate, useLocation } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import { usePortfolioData } from '../context/PortfolioDataContext';
 import { useTheme } from '../context/ThemeContext';
 import { useTranslation } from 'react-i18next';
+import useMediaQuery from '../hooks/useMediaQuery';
 import './Layout.scss';
 
 interface LayoutProps {
@@ -15,8 +17,19 @@ const Layout = ({ children }: LayoutProps) => {
   const { theme, toggleTheme } = useTheme();
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const location = useLocation();
+  const isMobile = useMediaQuery('(max-width: 768px)');
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const todayCount = Number(eventNotices?.unread_today_count ?? eventNotices?.today_count ?? 0);
   const weekCount = Number(eventNotices?.unread_week_count ?? eventNotices?.week_count ?? 0);
+
+  useEffect(() => {
+    if (isMobile) setSidebarOpen(false);
+  }, [location.pathname, isMobile]);
+
+  useEffect(() => {
+    if (!isMobile) setSidebarOpen(false);
+  }, [isMobile]);
 
   const handleLogout = () => {
     logout();
@@ -49,7 +62,28 @@ const Layout = ({ children }: LayoutProps) => {
         <span className="layout-bg__noise" />
       </div>
 
-      <aside className="sidebar">
+      {isMobile && (
+        <button
+          className="layout__hamburger"
+          onClick={() => setSidebarOpen((prev) => !prev)}
+          aria-label={sidebarOpen ? 'Close menu' : 'Open menu'}
+          aria-expanded={sidebarOpen}
+        >
+          <span className="layout__hamburger-bar" />
+          <span className="layout__hamburger-bar" />
+          <span className="layout__hamburger-bar" />
+        </button>
+      )}
+
+      {isMobile && sidebarOpen && (
+        <div
+          className="layout__overlay"
+          onClick={() => setSidebarOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
+      <aside className={`sidebar${isMobile && sidebarOpen ? ' sidebar--open' : ''}`}>
         <div className="sidebar__header">
           <h1 className="sidebar__logo">Invest</h1>
           <div className="sidebar__notice">

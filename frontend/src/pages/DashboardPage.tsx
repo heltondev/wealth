@@ -17,6 +17,7 @@ import {
   YAxis,
 } from 'recharts';
 import Layout from '../components/Layout';
+import useMediaQuery from '../hooks/useMediaQuery';
 import RecordDetailsModal, { type RecordDetailsSection } from '../components/RecordDetailsModal';
 import {
   api,
@@ -162,6 +163,7 @@ const DashboardPage = () => {
     setEventNoticeRead,
     markAllEventNoticesRead,
   } = usePortfolioData();
+  const isMobile = useMediaQuery('(max-width: 768px)');
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -423,8 +425,10 @@ const DashboardPage = () => {
     return Math.min(320, Math.max(120, Math.round((longestLabelLength * 8.6) + 26)));
   }, [activeAssetAllocationData]);
   const activeAssetChartMinWidth = useMemo(() => (
-    Math.max(920, activeAssetAxisWidth + 560)
-  ), [activeAssetAxisWidth]);
+    isMobile
+      ? Math.max(480, activeAssetAxisWidth + 200)
+      : Math.max(920, activeAssetAxisWidth + 560)
+  ), [activeAssetAxisWidth, isMobile]);
   const todayTotalCount = Number(eventNotices?.today_count || 0);
   const weekTotalCount = Number(eventNotices?.week_count || 0);
   const unreadTodayCount = Number(eventNotices?.unread_today_count ?? 0);

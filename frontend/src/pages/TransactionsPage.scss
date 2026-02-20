@@ -122,3 +122,22 @@
     color: #94a3b8;
   }
 }
+
+@media (max-width: $breakpoint-tablet) {
+  .transactions-page {
+    &__header {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+
+    &__controls {
+      width: 100%;
+      flex-wrap: wrap;
+    }
+
+    &__select {
+      width: 100%;
+      min-width: 0;
+    }
+  }
+}

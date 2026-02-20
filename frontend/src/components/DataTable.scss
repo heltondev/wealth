@@ -183,4 +183,34 @@
     font-size: 0.85rem;
     color: var(--text-secondary);
   }
+
+  @media (max-width: $breakpoint-tablet) {
+    &__controls {
+      flex-direction: column;
+    }
+
+    &__filter-group {
+      width: 100%;
+      min-width: 0;
+      flex: unset;
+
+      &:first-child {
+        flex: unset;
+      }
+    }
+
+    &__table {
+      th,
+      td {
+        padding: 0.42rem 0.5rem;
+        font-size: 0.78rem;
+      }
+    }
+
+    &__pagination {
+      flex-direction: column;
+      align-items: stretch;
+      text-align: center;
+    }
+  }
 }
